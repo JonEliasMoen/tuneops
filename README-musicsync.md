@@ -12,6 +12,8 @@ tracks are kept and tracks are never removed.
 - `music_tools/ui.py` owns the shared application shell, sidebar, and styling.
 - `music_tools/playlist_sync/page.py` owns the playlist-sync page, its Dash
   layout, authentication routes, and callbacks.
+- `music_tools/liked_tracks/` owns the TIDAL liked-tracks browser and its
+  provider-to-table data mapping.
 
 New sidebar tools should live in their own `music_tools/<tool_name>/` package.
 Shared navigation and presentation belong in `music_tools/ui.py`; reusable

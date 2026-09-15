@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from music_tools.liked_tracks import content as liked_tracks_content
+from music_tools.liked_tracks import register_callbacks as register_liked_tracks_callbacks
 from music_tools.ui import INDEX_STRING, shell
 
 
@@ -15,7 +17,7 @@ def create_app(engine):
     except ImportError as exc:
         raise RuntimeError("Install dependencies first: pip install -r requirements.txt") from exc
 
-    app = Dash(__name__, title="Spotify ↔ TIDAL Sync")
+    app = Dash(__name__, title="Music tools", suppress_callback_exceptions=True)
 
     @app.server.get("/spotify/login")
     def spotify_login_route():
@@ -167,7 +169,7 @@ def create_app(engine):
 
     spotify_badge = engine._connection_badge("spotify", engine.SPOTIFY_CACHE)
     tidal_badge = engine._connection_badge("tidal", engine.TIDAL_CACHE)
-    app.layout = shell(
+    playlist_sync_layout = shell(
         html,
         "playlist-sync",
         [
@@ -200,6 +202,16 @@ def create_app(engine):
             html.P(f"Configuration: {engine.CONFIG_PATH}", className="hint"),
         ],
     )
+
+    app.layout = html.Div([dcc.Location(id="app-url"), html.Div(id="page-root")])
+
+    @callback(Output("page-root", "children"), Input("app-url", "pathname"))
+    def route_page(pathname: str | None):
+        if pathname == "/liked-tracks":
+            return shell(html, "liked-tracks", liked_tracks_content(html, dcc))
+        return playlist_sync_layout
+
+    register_liked_tracks_callbacks(app, callback, Input, Output, html, engine)
 
     @callback(Output("mapping-list", "children"), Input("mapping-store", "data"))
     def render_mappings(rows: list[dict[str, Any]]):
