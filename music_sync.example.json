@@ -1,0 +1,17 @@
+{
+  "settings": {
+    "country_code": "NO",
+    "search_limit": 8,
+    "spotify_search_delay_seconds": 0.75
+  },
+  "playlists": [
+    {
+      "enabled": true,
+      "name": "My playlist sync",
+      "direction": "spotify_to_tidal",
+      "spotify": "https://open.spotify.com/playlist/PASTE_ID_HERE",
+      "tidal": "",
+      "tidal_name": ""
+    }
+  ]
+}

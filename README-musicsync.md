@@ -1,0 +1,76 @@
+# Spotify → TIDAL music sync
+
+This is a local Dash app that copies missing tracks in either direction between
+Spotify and TIDAL playlists. It is deliberately non-destructive: existing
+tracks are kept and tracks are never removed.
+
+## Project structure
+
+- `musicsync.py` contains the reusable sync engine and remains the command-line
+  entry point.
+- `startup_sync.py` runs that engine without loading the web interface.
+- `music_tools/ui.py` owns the shared application shell, sidebar, and styling.
+- `music_tools/playlist_sync/page.py` owns the playlist-sync page, its Dash
+  layout, authentication routes, and callbacks.
+
+New sidebar tools should live in their own `music_tools/<tool_name>/` package.
+Shared navigation and presentation belong in `music_tools/ui.py`; reusable
+service logic should remain independent of Dash so startup jobs can import it.
+
+## Setup
+
+1. Install Python 3.10 or newer and run `pip install -r requirements.txt`.
+2. Register a Spotify Web API app. Add
+   `http://127.0.0.1:8888/callback` as a redirect URI. Port 8888 is reserved
+   for the short-lived OAuth callback while Dash runs on port 8050.
+3. Set `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, and
+   `SPOTIPY_REDIRECT_URI` in your user environment. `.env.example` shows the
+   names; the program intentionally does not load or store secrets in JSON.
+4. Run `python musicsync.py`, open `http://127.0.0.1:8050`, and connect both
+   accounts. TIDAL uses a device-link login and saves refreshable credentials
+   locally in `.tidal_session.json`.
+5. Add playlist mappings, choose **Spotify → TIDAL** or **TIDAL → Spotify**,
+   save, and click **Sync now**. Leave the target service ID blank to create a
+   playlist during the first sync; the new ID is saved.
+
+Changing to bidirectional support adds Spotify playlist-write permissions. Use
+**Connect Spotify** again once after upgrading so the cached token receives the
+new scopes.
+
+Spotify playlists may be entered as IDs or URLs. TIDAL targets may likewise be
+IDs or URLs. Matching prefers ISRC and falls back to normalized title + artist.
+Unmatched counts are shown after every run.
+
+For TIDAL → Spotify, `spotify_search_delay_seconds` in `music_sync.json`
+controls the pause before each Spotify catalogue search (default `0.75`). This
+reduces request bursts but does not reduce total daily quota consumption.
+
+Tracks that fail catalogue matching are saved under the mapping's `unmatched`
+object in `music_sync.json`. Later runs count them as unmatched but do not
+search for them again. To retry after a catalogue or matching change, delete
+that mapping's relevant `spotify_to_tidal` or `tidal_to_spotify` unmatched list.
+
+After a successful mapping run, the app saves `last_sync` and `source_version`
+in `music_sync.json`. Spotify's source version is its API `snapshot_id`; TIDAL's
+is a local fingerprint of the ordered source tracks. Unchanged sources are
+skipped before destination comparison or catalogue searches. Delete either
+field to force a full sync of that mapping.
+
+## Startup sync
+
+After one successful interactive login to each service, run:
+
+```powershell
+python startup_sync.py
+```
+
+Use that command in Windows Task Scheduler with the script directory as the
+working directory. Select “Run only when user is logged on” for the simplest
+access to the same environment variables and token files. Output is written to
+`music_sync.log`. The script runs every enabled mapping from `music_sync.json`,
+does not start Dash, and exits with code 1 if authentication or any mapping
+fails.
+
+The TIDAL integration currently uses the unofficial `tidalapi` Python package.
+Keep the dependency updated, and expect that TIDAL service changes can
+occasionally require a package update.
