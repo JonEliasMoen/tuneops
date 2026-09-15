@@ -177,8 +177,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "a332b5bb1e56ab57457f218cb5cdf3a902e58b8cba3d0c22e7faf289ae4be296",
-      "last_sync": "2026-09-14T15:49:24.743784+00:00"
+      "source_version": "bb95238d35145a7b4ae56d5be2819d750c0bae40316c26c0917f71481152fc89",
+      "last_sync": "2026-09-15T21:13:50.360091+00:00"
     },
     {
       "enabled": true,
@@ -197,8 +197,8 @@
           }
         ]
       },
-      "source_version": "1e1c942e7186194d85d678f716a6a30a2d4ad3a56ff2e5dac961c393322115a1",
-      "last_sync": "2026-09-15T17:04:30.372173+00:00"
+      "source_version": "1df84eb7117a66d3e5344c6f97420475576d6df308df3f9f211a8a0deb2f7154",
+      "last_sync": "2026-09-15T21:13:53.094381+00:00"
     },
     {
       "enabled": true,
@@ -344,6 +344,66 @@
       },
       "source_version": "7db31d311963d6c0ff89bafe593c3a4f9f538ee0fdcfeb22844dc6ac39cd6f50",
       "last_sync": "2026-09-14T15:50:14.327092+00:00"
+    },
+    {
+      "enabled": true,
+      "name": "acid techno",
+      "direction": "tidal_cache",
+      "spotify": "",
+      "tidal": "https://tidal.com/playlist/ec9db1ff-3135-4dc7-bd56-9d660919ed3a",
+      "tidal_name": "",
+      "source_version": "2026-08-31 19:23:00.317000+00:00",
+      "last_sync": "2026-09-15T20:36:09.995370+00:00"
+    },
+    {
+      "enabled": true,
+      "name": "progressive",
+      "direction": "tidal_cache",
+      "spotify": "",
+      "tidal": "https://tidal.com/playlist/67d8ba91-841e-4355-9dab-3d8824e154fb",
+      "tidal_name": "",
+      "source_version": "2026-09-15 17:09:40.865000+00:00",
+      "last_sync": "2026-09-15T20:40:21.477734+00:00"
+    },
+    {
+      "enabled": true,
+      "name": "darkgroove",
+      "direction": "tidal_cache",
+      "spotify": "",
+      "tidal": "https://tidal.com/playlist/81b04eb5-f92f-46db-ac51-3d8b9947351c",
+      "tidal_name": "",
+      "source_version": "2026-09-15 09:24:41.891000+00:00",
+      "last_sync": "2026-09-15T20:40:21.758336+00:00"
+    },
+    {
+      "enabled": true,
+      "name": "deep groove",
+      "direction": "tidal_cache",
+      "spotify": "",
+      "tidal": "https://tidal.com/playlist/409c9a77-9854-4036-8d07-0b9e96e04f0e",
+      "tidal_name": "",
+      "source_version": "2026-09-13 12:53:53.982000+00:00",
+      "last_sync": "2026-09-15T20:40:22.038797+00:00"
+    },
+    {
+      "enabled": true,
+      "name": "techno progressive",
+      "direction": "tidal_cache",
+      "spotify": "",
+      "tidal": "https://tidal.com/playlist/e873d913-f9b7-4425-bda4-186ba4b40957",
+      "tidal_name": "",
+      "source_version": "2026-09-15 20:54:08.254000+00:00",
+      "last_sync": "2026-09-15T21:13:56.386264+00:00"
+    },
+    {
+      "enabled": true,
+      "name": "minimal techno",
+      "direction": "tidal_cache",
+      "spotify": "",
+      "tidal": "https://tidal.com/playlist/722cd210-7ad1-400d-b012-197b94b65708",
+      "tidal_name": "",
+      "source_version": "2026-09-13 12:38:50.146000+00:00",
+      "last_sync": "2026-09-15T20:40:22.776835+00:00"
     }
   ]
 }

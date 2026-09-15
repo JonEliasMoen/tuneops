@@ -4,6 +4,11 @@ This is a local Dash app that copies missing tracks in either direction between
 Spotify and TIDAL playlists. It is deliberately non-destructive: existing
 tracks are kept and tracks are never removed.
 
+The **TIDAL cache** mapping direction only indexes the specified TIDAL playlist
+in SQLite. It performs no Spotify reads or writes, participates in normal
+manual and startup runs, and uses TIDAL's `last_updated` value to avoid fetching
+unchanged playlist contents.
+
 ## Project structure
 
 - `musicsync.py` contains the reusable sync engine and remains the command-line

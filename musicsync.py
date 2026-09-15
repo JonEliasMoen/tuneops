@@ -121,6 +121,7 @@ class SyncResult:
     error: str = ""
     label: str = ""
     skipped: bool = False
+    cached: int = 0
 
 
 def default_config() -> dict[str, Any]:
@@ -780,6 +781,36 @@ def sync_tidal_to_spotify(spotify: Any, tidal: Any, entry: dict[str, Any], setti
     return result
 
 
+def cache_tidal_playlist(tidal: Any, entry: dict[str, Any]) -> SyncResult:
+    """Index one TIDAL playlist locally without syncing to another provider."""
+    source_playlist, source_tracks = tidal_tracks(tidal, entry.get("tidal", ""))
+    last_updated = getattr(source_playlist, "last_updated", None)
+    source_version = str(last_updated) if last_updated else hashlib.sha256(
+        "\n".join(str(track.get("id", "")) for track in source_tracks).encode("utf-8")
+    ).hexdigest()
+    result = SyncResult(
+        source=f"{getattr(source_playlist, 'name', source_playlist.id)} ({source_playlist.id})",
+        target="SQLite cache",
+        cached=len(source_tracks),
+    )
+    if entry.get("last_sync") and entry.get("source_version") == source_version:
+        result.skipped = True
+        LOGGER.info(
+            "sync.mapping unchanged provider=tidal_cache last_updated=%s tracks=%d",
+            last_updated,
+            len(source_tracks),
+        )
+        return result
+    entry["source_version"] = source_version
+    LOGGER.info(
+        "sync.playlist cached_only playlist_id=%s tracks=%d last_updated=%s",
+        source_playlist.id,
+        len(source_tracks),
+        last_updated,
+    )
+    return result
+
+
 def sync_one(spotify: Any, tidal: Any, entry: dict[str, Any], settings: dict[str, Any]) -> SyncResult:
     direction = entry.get("direction", "spotify_to_tidal")
     LOGGER.info("sync.playlist dispatch name=%r direction=%s", entry.get("name", ""), direction)
@@ -787,6 +818,8 @@ def sync_one(spotify: Any, tidal: Any, entry: dict[str, Any], settings: dict[str
         result = sync_spotify_to_tidal(spotify, tidal, entry, settings)
     elif direction == "tidal_to_spotify":
         result = sync_tidal_to_spotify(spotify, tidal, entry, settings)
+    elif direction == "tidal_cache":
+        result = cache_tidal_playlist(tidal, entry)
     else:
         raise ValueError(f"Unknown sync direction: {direction!r}")
     result.label = entry.get("name", "")
@@ -803,10 +836,17 @@ def run_all_syncs(path: Path = CONFIG_PATH, progress: Callable[[str], None] | No
     LOGGER.info("sync.run start config=%s enabled_playlists=%d", path, len(enabled))
     if not enabled:
         return []
-    progress("Connecting to Spotify…")
-    spotify = spotify_client()
-    profile = _call("spotify", "current_user", spotify.current_user)
-    LOGGER.info("spotify.auth connected user_id=%s display_name=%r", profile.get("id"), profile.get("display_name"))
+    directions = {item.get("direction", "spotify_to_tidal") for item in enabled}
+    spotify = None
+    if directions & {"spotify_to_tidal", "tidal_to_spotify"}:
+        progress("Connecting to Spotify…")
+        spotify = spotify_client()
+        profile = _call("spotify", "current_user", spotify.current_user)
+        LOGGER.info(
+            "spotify.auth connected user_id=%s display_name=%r",
+            profile.get("id"),
+            profile.get("display_name"),
+        )
     progress("Connecting to TIDAL…")
     tidal = tidal_client(interactive=False)
     results: list[SyncResult] = []

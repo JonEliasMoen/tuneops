@@ -47,10 +47,19 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .library-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;align-items:start}
 .track-list-pane{min-width:0}
 .library-layout .track-table-wrap{height:calc(100vh - 220px);max-height:none}
+.track-table th:nth-child(3),.track-table td:nth-child(3){width:140px;max-width:140px;overflow:hidden;text-overflow:ellipsis}
 .liked-track-row{cursor:pointer;outline:none}
 .track-table tbody .liked-track-row.selected{background:#2c4655}
 .track-table tbody .liked-track-row.selected:hover{background:#2c4655}
-.track-details{position:sticky;top:20px;box-sizing:border-box;min-height:300px;padding:20px;background:#18222d;border:1px solid #344252;border-radius:9px}
+.inspector-column{position:sticky;top:20px;display:grid;gap:14px}
+.track-details{box-sizing:border-box;min-height:300px;padding:20px;background:#18222d;border:1px solid #344252;border-radius:9px}
+.track-actions{box-sizing:border-box;padding:18px;background:#18222d;border:1px solid #344252;border-radius:9px}
+.track-actions h2{margin:0 0 12px;font-size:18px}
+.action-prompt{margin-bottom:10px;color:#91a0af;font-size:13px}
+.action-option{padding:9px 10px;margin:3px 0;border:1px solid transparent;border-radius:7px;color:#c7d0d9;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.action-option:hover{background:#202d39}
+.action-option.selected{border-color:#4fcf98;background:#17372c;color:#82edbd}
+.action-feedback{min-height:18px;margin-top:10px;color:#82edbd;font-size:13px}
 .detail-eyebrow{color:#7f91a1;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
 .detail-title{margin:12px 0 5px;color:#fff;font-size:22px;line-height:1.2}
 .detail-artist{color:#bdc8d2;margin-bottom:24px}
@@ -62,7 +71,8 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .detail-playlists{grid-template-columns:1fr}
 .playlist-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .playlist-tag{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;padding:5px 8px;border:1px solid #3e6255;border-radius:999px;background:#17372c;color:#78e8b6;font-size:12px;white-space:nowrap}
+.table-playlist-tags{flex-wrap:nowrap;margin-top:0;max-width:320px;overflow:hidden}
 .scroll-sentinel{padding:14px;text-align:center;color:#7f91a1;font-size:13px}
-@media(max-width:1000px){.library-layout{grid-template-columns:1fr}.library-layout .track-table-wrap{height:60vh}.track-details{position:static;min-height:0}}
+@media(max-width:1000px){.library-layout{grid-template-columns:1fr}.library-layout .track-table-wrap{height:60vh}.inspector-column{position:static}.track-details{min-height:0}}
 </style>
 </head><body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""

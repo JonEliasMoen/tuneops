@@ -95,6 +95,7 @@ def create_app(engine):
                     options=[
                         {"label": "Spotify → TIDAL", "value": "spotify_to_tidal"},
                         {"label": "TIDAL → Spotify", "value": "tidal_to_spotify"},
+                        {"label": "TIDAL cache", "value": "tidal_cache"},
                     ],
                     value=row.get("direction", "spotify_to_tidal"),
                     clearable=False,
@@ -345,6 +346,8 @@ def create_app(engine):
                     lines.append(f"{prefix}skipped — source playlist has not changed since the last sync")
                 elif result.error:
                     lines.append(f"{prefix}FAILED {result.source}: {result.error}")
+                elif result.cached:
+                    lines.append(f"{prefix}{result.source}: cached {result.cached} tracks in SQLite")
                 else:
                     lines.append(
                         f"{prefix}{result.target}: added {result.added}, already present "

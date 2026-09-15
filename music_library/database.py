@@ -284,6 +284,125 @@ def tidal_playlists_for_track(
         return [dict(row) for row in rows]
 
 
+def tidal_playlists_for_tracks(
+    track_ids: list[str], path: Path = DATABASE_PATH
+) -> dict[str, list[dict[str, str]]]:
+    """Batch reverse-membership lookup for a set of TIDAL track IDs."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    result: dict[str, list[dict[str, str]]] = {track_id: [] for track_id in unique_ids}
+    if not unique_ids or not path.exists():
+        return result
+    initialize(path)
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT pt.provider_track_id AS track_id,
+                            p.provider_playlist_id AS id, p.name
+            FROM playlist_tracks pt
+            JOIN playlists p
+              ON p.provider=pt.provider AND p.provider_playlist_id=pt.provider_playlist_id
+            WHERE pt.provider='tidal'
+              AND pt.provider_track_id IN ({placeholders})
+            ORDER BY p.name COLLATE NOCASE
+            """,
+            unique_ids,
+        ).fetchall()
+    for row in rows:
+        result[row["track_id"]].append({"id": row["id"], "name": row["name"]})
+    return result
+
+
+def tidal_indexed_playlists(path: Path = DATABASE_PATH) -> list[dict[str, str]]:
+    """Return every locally indexed TIDAL playlist in display order."""
+    if not path.exists():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT provider_playlist_id AS id, name
+            FROM playlists
+            WHERE provider='tidal'
+            ORDER BY name COLLATE NOCASE
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def add_tidal_playlist_membership(
+    playlist_id: str, track_id: str, path: Path = DATABASE_PATH
+) -> None:
+    """Mirror a successful provider add in the local membership index."""
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as connection:
+        exists = connection.execute(
+            """
+            SELECT 1 FROM playlist_tracks
+            WHERE provider='tidal' AND provider_playlist_id=? AND provider_track_id=?
+            LIMIT 1
+            """,
+            (str(playlist_id), str(track_id)),
+        ).fetchone()
+        if exists is None:
+            position = connection.execute(
+                """
+                SELECT COALESCE(MAX(position), -1) + 1
+                FROM playlist_tracks
+                WHERE provider='tidal' AND provider_playlist_id=?
+                """,
+                (str(playlist_id),),
+            ).fetchone()[0]
+            connection.execute(
+                """
+                INSERT INTO playlist_tracks(
+                    provider, provider_playlist_id, position, provider_track_id
+                ) VALUES('tidal', ?, ?, ?)
+                """,
+                (str(playlist_id), position, str(track_id)),
+            )
+        connection.execute(
+            """
+            UPDATE playlists SET source_last_updated=NULL, indexed_at=?
+            WHERE provider='tidal' AND provider_playlist_id=?
+            """,
+            (now, str(playlist_id)),
+        )
+
+
+def remove_tidal_playlist_membership(
+    playlist_id: str, track_id: str, path: Path = DATABASE_PATH
+) -> None:
+    """Mirror one successful provider removal in the local membership index."""
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT position FROM playlist_tracks
+            WHERE provider='tidal' AND provider_playlist_id=? AND provider_track_id=?
+            ORDER BY position LIMIT 1
+            """,
+            (str(playlist_id), str(track_id)),
+        ).fetchone()
+        if row is not None:
+            connection.execute(
+                """
+                DELETE FROM playlist_tracks
+                WHERE provider='tidal' AND provider_playlist_id=? AND position=?
+                """,
+                (str(playlist_id), row["position"]),
+            )
+        connection.execute(
+            """
+            UPDATE playlists SET source_last_updated=NULL, indexed_at=?
+            WHERE provider='tidal' AND provider_playlist_id=?
+            """,
+            (now, str(playlist_id)),
+        )
+
+
 def cached_tidal_liked_tracks(
     user_id: str,
     limit: int = 10,
