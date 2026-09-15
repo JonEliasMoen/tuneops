@@ -29,7 +29,7 @@ def content(html: Any, dcc: Any):
                 html.Div(
                     [
                         html.H1("TIDAL liked tracks"),
-                        html.P("Your 10 most recently liked TIDAL tracks."),
+                        html.P("Your liked TIDAL tracks, newest first."),
                     ]
                 ),
                 html.Button("Refresh", id="liked-refresh", className="primary"),
@@ -39,47 +39,64 @@ def content(html: Any, dcc: Any):
         dcc.Interval(id="liked-initial-load", interval=250, max_intervals=1, n_intervals=0),
         dcc.Store(id="liked-rows", data=[]),
         dcc.Store(id="liked-selected", data=None),
+        dcc.Store(id="liked-has-more", data=True),
+        dcc.Store(id="liked-load-next", data=0),
         html.Div(id="liked-keyboard-ready", style={"display": "none"}),
-        dcc.Loading(
+        html.Div("Loading liked tracks…", id="liked-status", className="track-status"),
+        html.Div(
             [
-                html.Div("Loading liked tracks…", id="liked-status", className="track-status"),
                 html.Div(
-                    [
-                        html.Div(id="liked-table"),
-                        html.Aside(
-                            html.Div("Select a track", className="detail-empty"),
-                            id="liked-details",
-                            className="track-details",
-                        ),
-                    ],
-                    className="library-layout",
+                    dcc.Loading(html.Div(id="liked-table"), type="circle"),
+                    className="track-list-pane",
+                ),
+                html.Aside(
+                    html.Div("Select a track", className="detail-empty"),
+                    id="liked-details",
+                    className="track-details",
                 ),
             ],
-            type="circle",
+            className="library-layout",
         ),
     ]
 
 
 def register_callbacks(
-    app: Any, callback: Any, Input: Any, Output: Any, html: Any, ctx: Any, engine: Any
+    app: Any, callback: Any, Input: Any, Output: Any, State: Any,
+    html: Any, ctx: Any, engine: Any
 ) -> None:
     @callback(
         Output("liked-table", "children"),
         Output("liked-status", "children"),
         Output("liked-rows", "data"),
         Output("liked-selected", "data"),
+        Output("liked-has-more", "data"),
         Input("liked-initial-load", "n_intervals"),
         Input("liked-refresh", "n_clicks"),
+        Input("liked-load-next", "data"),
+        State("liked-rows", "data"),
+        State("liked-selected", "data"),
     )
-    def load_tracks(_initial: int, _refresh: int | None):
+    def load_tracks(
+        _initial: int,
+        _refresh: int | None,
+        _load_next: int,
+        existing_rows: list[dict[str, str]] | None,
+        current_selection: int | None,
+    ):
+        existing_rows = existing_rows or []
+        append = ctx.triggered_id == "liked-load-next" and bool(existing_rows)
+        offset = len(existing_rows) if append else 0
         try:
-            rows = fetch_liked_tracks(
+            page, has_more = fetch_liked_tracks(
                 engine,
+                offset=offset,
                 force_refresh=ctx.triggered_id == "liked-refresh",
             )
         except Exception as exc:
             engine.LOGGER.exception("ui.liked_tracks load_failed")
-            return html.Div(), f"Could not load liked tracks: {exc}", [], None
+            return html.Div(), f"Could not load liked tracks: {exc}", [], None, False
+
+        rows = existing_rows + page if append else page
 
         def cell_style(key: str, value: str) -> dict[str, str] | None:
             if key != "key" or len(value) != 3 or not value[:2].isdigit():
@@ -113,11 +130,24 @@ def register_callbacks(
             ]
         )
         table = html.Div(
-            html.Table([header, body], className="track-table"),
+            [
+                html.Table([header, body], className="track-table"),
+                html.Div(
+                    "Loading more…" if has_more else "End of liked tracks",
+                    id="liked-scroll-sentinel",
+                    className="scroll-sentinel",
+                ),
+            ],
             className="track-table-wrap",
         )
-        selected = 0 if rows else None
-        return table, f"{len(rows):,} liked track{'s' if len(rows) != 1 else ''}", rows, selected
+        selected = current_selection if append else (0 if rows else None)
+        return (
+            table,
+            f"{len(rows):,} liked track{'s' if len(rows) != 1 else ''} loaded",
+            rows,
+            selected,
+            has_more,
+        )
 
     @callback(
         Output("liked-details", "children"),
@@ -163,9 +193,11 @@ def register_callbacks(
 
     app.clientside_callback(
         """
-        function(selected, rows) {
+        function(selected, rows, hasMore) {
+            var previousCount = window.__likedTracksCount || 0;
             window.__likedTracksCount = (rows || []).length;
             window.__likedTracksSelected = selected;
+            var rowsChanged = previousCount !== window.__likedTracksCount;
 
             function paintSelection() {
                 document.querySelectorAll('[data-liked-index]').forEach(function(row) {
@@ -198,11 +230,39 @@ def register_callbacks(
                     window.dash_clientside.set_props('liked-selected', {data: next});
                 });
             }
-            window.setTimeout(paintSelection, 0);
+            window.setTimeout(function() {
+                var viewport = document.querySelector('.track-table-wrap');
+                if (rowsChanged && viewport && Number.isFinite(window.__likedTracksScrollTop)) {
+                    viewport.scrollTop = window.__likedTracksScrollTop;
+                }
+                paintSelection();
+            }, 0);
+
+            if (window.__likedTracksObserver) {
+                window.__likedTracksObserver.disconnect();
+            }
+            if (hasMore) {
+                window.setTimeout(function() {
+                    var sentinel = document.getElementById('liked-scroll-sentinel');
+                    var viewport = sentinel && sentinel.closest('.track-table-wrap');
+                    if (!sentinel || !viewport) return;
+                    window.__likedTracksObserver = new IntersectionObserver(function(entries) {
+                        if (!entries.some(function(entry) { return entry.isIntersecting; })) return;
+                        window.__likedTracksObserver.disconnect();
+                        window.__likedTracksScrollTop = viewport.scrollTop;
+                        window.__likedTracksLoadToken = (window.__likedTracksLoadToken || 0) + 1;
+                        window.dash_clientside.set_props('liked-load-next', {
+                            data: window.__likedTracksLoadToken
+                        });
+                    }, {root: viewport, rootMargin: '120px 0px'});
+                    window.__likedTracksObserver.observe(sentinel);
+                }, 0);
+            }
             return '';
         }
         """,
         Output("liked-keyboard-ready", "children"),
         Input("liked-selected", "data"),
         Input("liked-rows", "data"),
+        Input("liked-has-more", "data"),
     )

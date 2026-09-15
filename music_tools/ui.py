@@ -45,7 +45,8 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 <style>
 .page-content{width:100%;max-width:none;min-height:100vh;margin:0;border-radius:0}
 .library-layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;align-items:start}
-.library-layout .track-table-wrap{max-height:calc(100vh - 220px)}
+.track-list-pane{min-width:0}
+.library-layout .track-table-wrap{height:calc(100vh - 220px);max-height:none}
 .liked-track-row{cursor:pointer;outline:none}
 .track-table tbody .liked-track-row.selected{background:#2c4655}
 .track-table tbody .liked-track-row.selected:hover{background:#2c4655}
@@ -61,6 +62,7 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .detail-playlists{grid-template-columns:1fr}
 .playlist-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .playlist-tag{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;padding:5px 8px;border:1px solid #3e6255;border-radius:999px;background:#17372c;color:#78e8b6;font-size:12px;white-space:nowrap}
-@media(max-width:1000px){.library-layout{grid-template-columns:1fr}.track-details{position:static;min-height:0}}
+.scroll-sentinel{padding:14px;text-align:center;color:#7f91a1;font-size:13px}
+@media(max-width:1000px){.library-layout{grid-template-columns:1fr}.library-layout .track-table-wrap{height:60vh}.track-details{position:static;min-height:0}}
 </style>
 </head><body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""

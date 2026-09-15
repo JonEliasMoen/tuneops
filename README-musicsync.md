@@ -35,9 +35,10 @@ separate from user-owned metadata. Tables for star ratings, notes, tags, and
 track-to-tag relationships are already present for future features.
 
 The liked-tracks page stores its latest per-user snapshot in SQLite. Automatic
-loads reuse snapshots up to five minutes old; **Refresh** always requests the
-newest tracks from TIDAL. Its inspector uses the same database to list every
-indexed playlist containing the selected TIDAL track ID.
+loads reuse snapshots up to five minutes old; **Refresh** always starts again
+with the newest tracks from TIDAL. More pages are retrieved and appended to the
+cache as the table reaches its scroll boundary. Its inspector uses the same
+database to list every indexed playlist containing the selected TIDAL track ID.
 
 ## Setup
 

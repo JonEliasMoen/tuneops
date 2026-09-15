@@ -289,6 +289,7 @@ def cached_tidal_liked_tracks(
     limit: int = 10,
     max_age_seconds: int = 300,
     path: Path = DATABASE_PATH,
+    offset: int = 0,
 ) -> list[dict[str, Any]] | None:
     """Return a recent liked-tracks snapshot, or None when it needs refreshing."""
     if not path.exists():
@@ -316,9 +317,9 @@ def cached_tidal_liked_tracks(
               ON t.provider=lt.provider AND t.provider_track_id=lt.provider_track_id
             WHERE lt.provider='tidal' AND lt.provider_user_id=?
             ORDER BY lt.position
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
-            (str(user_id), int(limit)),
+            (str(user_id), int(limit), int(offset)),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -327,23 +328,26 @@ def store_tidal_liked_tracks(
     user_id: str,
     tracks: list[Any],
     path: Path = DATABASE_PATH,
+    offset: int = 0,
 ) -> None:
-    """Atomically replace one user's cached liked-track snapshot."""
+    """Store one ordered page of a user's liked-track snapshot."""
     initialize(path)
     now = datetime.now(timezone.utc).isoformat()
     records = [(tidal_track_record(track), track) for track in tracks]
     with connect(path) as connection:
+        if offset == 0:
+            connection.execute(
+                """
+                INSERT INTO liked_track_snapshots(provider, provider_user_id, cached_at)
+                VALUES('tidal', ?, ?)
+                ON CONFLICT(provider, provider_user_id) DO UPDATE SET cached_at=excluded.cached_at
+                """,
+                (str(user_id), now),
+            )
         connection.execute(
-            """
-            INSERT INTO liked_track_snapshots(provider, provider_user_id, cached_at)
-            VALUES('tidal', ?, ?)
-            ON CONFLICT(provider, provider_user_id) DO UPDATE SET cached_at=excluded.cached_at
-            """,
-            (str(user_id), now),
-        )
-        connection.execute(
-            "DELETE FROM liked_tracks WHERE provider='tidal' AND provider_user_id=?",
-            (str(user_id),),
+            "DELETE FROM liked_tracks "
+            "WHERE provider='tidal' AND provider_user_id=? AND position>=?",
+            (str(user_id), int(offset)),
         )
         for position, (record, track) in enumerate(records):
             track_id = record["id"]
@@ -377,5 +381,5 @@ def store_tidal_liked_tracks(
                     provider, provider_user_id, position, provider_track_id, date_added
                 ) VALUES('tidal', ?, ?, ?, ?)
                 """,
-                (str(user_id), position, track_id, _timestamp(added)),
+                (str(user_id), offset + position, track_id, _timestamp(added)),
             )

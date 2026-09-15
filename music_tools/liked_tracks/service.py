@@ -152,33 +152,51 @@ def _cached_track_row(record: dict[str, Any]) -> dict[str, str]:
 
 def fetch_liked_tracks(
     engine: Any,
-    limit: int = 10,
+    limit: int = 30,
+    offset: int = 0,
     force_refresh: bool = False,
     cache_seconds: int = 300,
-) -> list[dict[str, str]]:
-    """Load recent liked tracks from SQLite, refreshing TIDAL when needed."""
+) -> tuple[list[dict[str, str]], bool]:
+    """Load one liked-track page and report whether another may exist."""
     from tidalapi.user import ItemOrder, OrderDirection
 
     session = engine.tidal_client(interactive=False)
     user_id = str(session.user.id)
     if not force_refresh:
-        cached = cached_tidal_liked_tracks(user_id, limit, cache_seconds)
-        if cached is not None:
-            engine.LOGGER.info("tidal.liked_tracks cache_hit user_id=%s tracks=%d", user_id, len(cached))
-            return [_cached_track_row(record) for record in cached]
-    engine.LOGGER.info("tidal.liked_tracks cache_miss user_id=%s force=%s", user_id, force_refresh)
+        cached = cached_tidal_liked_tracks(
+            user_id,
+            limit=limit,
+            max_age_seconds=cache_seconds,
+            offset=offset,
+        )
+        if cached:
+            engine.LOGGER.info(
+                "tidal.liked_tracks cache_hit user_id=%s offset=%d tracks=%d",
+                user_id,
+                offset,
+                len(cached),
+            )
+            # A partial older snapshot may contain fewer than the new page size;
+            # let the scroll sentinel probe TIDAL for the following page.
+            return [_cached_track_row(record) for record in cached], bool(cached)
+    engine.LOGGER.info(
+        "tidal.liked_tracks cache_miss user_id=%s force=%s offset=%d",
+        user_id,
+        force_refresh,
+        offset,
+    )
     tracks = engine._call(
         "tidal",
         "favorite_tracks",
         lambda: session.user.favorites.tracks(
             limit=limit,
-            offset=0,
+            offset=offset,
             order=ItemOrder.Date,
             order_direction=OrderDirection.Descending,
         ),
         limit=limit,
-        offset=0,
+        offset=offset,
         order="date_descending",
     )
-    store_tidal_liked_tracks(user_id, tracks)
-    return [track_row(track) for track in tracks]
+    store_tidal_liked_tracks(user_id, tracks, offset=offset)
+    return [track_row(track) for track in tracks], len(tracks) == limit
