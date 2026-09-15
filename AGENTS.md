@@ -97,6 +97,9 @@ revalidation on the following run.
   playlists; Remove lists only current memberships. Choosing a playlist calls
   TIDAL first, then mirrors a successful add/removal into SQLite and marks the
   cached playlist version for revalidation.
+- Do not enumerate `session.user.playlists()` for each liked-track action. The
+  installed `tidalapi` factory already returns a writable `UserPlaylist` for an
+  owned playlist; the enumeration can take tens of seconds.
 - The loading spinner wraps only the track table; selecting a track should not
   flash or reload the surrounding page.
 

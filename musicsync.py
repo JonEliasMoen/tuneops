@@ -504,6 +504,8 @@ def _target_playlist(session: Any, playlist_id: str, name: str):
     if playlist_id:
         target_id = _id(playlist_id)
         playlist = _call("tidal", "get_playlist", lambda: session.playlist(target_id), playlist_id=target_id)
+        if hasattr(playlist, "add"):
+            return playlist
         # Fetching through user playlists returns the writable subclass on versions
         # where session.playlist only returns a read-only Playlist.
         user_playlists = _call("tidal", "user_playlists", session.user.playlists)

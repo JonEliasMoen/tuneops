@@ -29,6 +29,69 @@ COLUMNS = [
 ]
 
 
+def render_track_table(html: Any, rows: list[dict[str, Any]], has_more: bool):
+    """Render the table exclusively from its backing store."""
+    hues = [168, 145, 100, 48, 20, 350, 330, 305, 275, 230, 195, 180]
+
+    def cell_style(key: str, value: str) -> dict[str, str] | None:
+        if key != "key" or len(value) != 3 or not value[:2].isdigit():
+            return None
+        position = int(value[:2])
+        is_minor = value.endswith("A")
+        return {
+            "color": f"hsl({hues[position - 1]}, {'68%' if is_minor else '82%'}, {'76%' if is_minor else '66%'})",
+            "fontWeight": "700",
+        }
+
+    def cell_content(key: str, row: dict[str, Any]):
+        if key != "playlists":
+            return row.get(key) or "—"
+        playlists = row.get("playlists") or []
+        if not playlists:
+            return "—"
+        return html.Div(
+            [
+                html.Span(
+                    playlist.get("name") or playlist.get("id"),
+                    className="playlist-tag",
+                    title=playlist.get("id", ""),
+                )
+                for playlist in playlists
+            ],
+            className="playlist-tags table-playlist-tags",
+        )
+
+    header = html.Thead(html.Tr([html.Th(label) for _, label in COLUMNS]))
+    body = html.Tbody(
+        [
+            html.Tr(
+                [
+                    html.Td(
+                        cell_content(key, row),
+                        className="numeric" if key in {"length", "bpm", "year", "date_added"} else "",
+                        style=cell_style(key, row.get(key, "")),
+                    )
+                    for key, _ in COLUMNS
+                ],
+                className="liked-track-row",
+                **{"data-liked-index": str(index)},
+            )
+            for index, row in enumerate(rows)
+        ]
+    )
+    return html.Div(
+        [
+            html.Table([header, body], className="track-table"),
+            html.Div(
+                "Loading more…" if has_more else "End of liked tracks",
+                id="liked-scroll-sentinel",
+                className="scroll-sentinel",
+            ),
+        ],
+        className="track-table-wrap",
+    )
+
+
 def content(html: Any, dcc: Any):
     return [
         html.Div(
@@ -126,67 +189,7 @@ def register_callbacks(
 
         rows = existing_rows + page if append else page
 
-        def cell_style(key: str, value: str) -> dict[str, str] | None:
-            if key != "key" or len(value) != 3 or not value[:2].isdigit():
-                return None
-            position = int(value[:2])
-            # Camelot wheel palette: turquoise at 1, clockwise through green,
-            # yellow, orange, pink, purple and blue, then cyan at 12.
-            hues = [168, 145, 100, 48, 20, 350, 330, 305, 275, 230, 195, 180]
-            is_minor = value.endswith("A")
-            return {
-                "color": f"hsl({hues[position - 1]}, {'68%' if is_minor else '82%'}, {'76%' if is_minor else '66%'})",
-                "fontWeight": "700",
-            }
-
-        header = html.Thead(html.Tr([html.Th(label) for _, label in COLUMNS]))
-
-        def cell_content(key: str, row: dict[str, Any]):
-            if key != "playlists":
-                return row.get(key) or "—"
-            playlists = row.get("playlists") or []
-            if not playlists:
-                return "—"
-            return html.Div(
-                [
-                    html.Span(
-                        playlist.get("name") or playlist.get("id"),
-                        className="playlist-tag",
-                        title=playlist.get("id", ""),
-                    )
-                    for playlist in playlists
-                ],
-                className="playlist-tags table-playlist-tags",
-            )
-
-        body = html.Tbody(
-            [
-                html.Tr(
-                    [
-                        html.Td(
-                            cell_content(key, row),
-                            className="numeric" if key in {"length", "bpm", "year", "date_added"} else "",
-                            style=cell_style(key, row.get(key, "")),
-                        )
-                        for key, _ in COLUMNS
-                    ],
-                    className="liked-track-row",
-                    **{"data-liked-index": str(index)},
-                )
-                for index, row in enumerate(rows)
-            ]
-        )
-        table = html.Div(
-            [
-                html.Table([header, body], className="track-table"),
-                html.Div(
-                    "Loading more…" if has_more else "End of liked tracks",
-                    id="liked-scroll-sentinel",
-                    className="scroll-sentinel",
-                ),
-            ],
-            className="track-table-wrap",
-        )
+        table = render_track_table(html, rows, has_more)
         selected = current_selection if append else (0 if rows else None)
         return (
             table,
@@ -304,31 +307,42 @@ def register_callbacks(
     @callback(
         Output("liked-action-feedback", "children"),
         Output("liked-rows", "data", allow_duplicate=True),
+        Output("liked-table", "children", allow_duplicate=True),
         Output("liked-focus", "data"),
         Output("liked-action-mode", "data"),
         Output("liked-action-selected", "data"),
         Input("liked-action-request", "data"),
         State("liked-rows", "data"),
         State("liked-selected", "data"),
+        State("liked-has-more", "data"),
         prevent_initial_call=True,
     )
     def execute_action(
         request: dict[str, Any] | None,
         rows: list[dict[str, Any]] | None,
         selected: int | None,
+        has_more: bool,
     ):
         rows = rows or []
         if not request or selected is None or not 0 <= selected < len(rows):
-            return "", rows, "tracks", None, 0
+            return "", rows, render_track_table(html, rows, has_more), "tracks", None, 0
         action = request.get("action")
         playlist_id = str(request.get("playlist_id") or "")
         track_id = str(rows[selected].get("id") or "")
         if action not in {"add", "remove"} or not playlist_id or not track_id:
-            return "Invalid playlist action.", rows, "actions", action, 0
+            return "Invalid playlist action.", rows, render_track_table(html, rows, has_more), "actions", action, 0
 
         try:
             session = engine.tidal_client(interactive=False)
-            playlist = engine._target_playlist(session, playlist_id, "")
+            playlist = engine._call(
+                "tidal",
+                "get_writable_playlist",
+                lambda: session.playlist(playlist_id),
+                playlist_id=playlist_id,
+            )
+            required_method = "add" if action == "add" else "remove_by_id"
+            if not hasattr(playlist, required_method):
+                raise RuntimeError("That playlist is not writable by the connected TIDAL account")
             if action == "add":
                 engine._call(
                     "tidal",
@@ -361,7 +375,14 @@ def register_callbacks(
                 track_id,
                 playlist_id,
             )
-            return message, updated_rows, "tracks", None, 0
+            return (
+                message,
+                updated_rows,
+                render_track_table(html, updated_rows, has_more),
+                "tracks",
+                None,
+                0,
+            )
         except Exception as exc:
             engine.LOGGER.exception(
                 "ui.liked_tracks action_failed action=%s track_id=%s playlist_id=%s",
@@ -369,7 +390,14 @@ def register_callbacks(
                 track_id,
                 playlist_id,
             )
-            return f"Action failed: {exc}", rows, "actions", action, 0
+            return (
+                f"Action failed: {exc}",
+                rows,
+                render_track_table(html, rows, has_more),
+                "actions",
+                action,
+                0,
+            )
 
     app.clientside_callback(
         """
