@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from music_library.database import tidal_playlists_for_track
+
 from .service import fetch_liked_tracks
 
 
@@ -58,7 +60,9 @@ def content(html: Any, dcc: Any):
     ]
 
 
-def register_callbacks(app: Any, callback: Any, Input: Any, Output: Any, html: Any, engine: Any) -> None:
+def register_callbacks(
+    app: Any, callback: Any, Input: Any, Output: Any, html: Any, ctx: Any, engine: Any
+) -> None:
     @callback(
         Output("liked-table", "children"),
         Output("liked-status", "children"),
@@ -69,7 +73,10 @@ def register_callbacks(app: Any, callback: Any, Input: Any, Output: Any, html: A
     )
     def load_tracks(_initial: int, _refresh: int | None):
         try:
-            rows = fetch_liked_tracks(engine)
+            rows = fetch_liked_tracks(
+                engine,
+                force_refresh=ctx.triggered_id == "liked-refresh",
+            )
         except Exception as exc:
             engine.LOGGER.exception("ui.liked_tracks load_failed")
             return html.Div(), f"Could not load liked tracks: {exc}", [], None
@@ -122,6 +129,18 @@ def register_callbacks(app: Any, callback: Any, Input: Any, Output: Any, html: A
         if selected is None or not 0 <= selected < len(rows):
             return html.Div("Select a track", className="detail-empty")
         row = rows[selected]
+        playlists = tidal_playlists_for_track(row.get("id", "")) if row.get("id") else []
+        playlist_tags = (
+            [
+                html.Span(
+                    playlist.get("name") or playlist.get("id"),
+                    className="playlist-tag",
+                    title=playlist.get("id", ""),
+                )
+                for playlist in playlists
+            ]
+            or [html.Span("Not in an indexed playlist", className="detail-empty")]
+        )
         return [
             html.Div("Selected track", className="detail-eyebrow"),
             html.H2(row.get("title") or "—", className="detail-title"),
@@ -135,6 +154,10 @@ def register_callbacks(app: Any, callback: Any, Input: Any, Output: Any, html: A
                     for key, label in COLUMNS[2:]
                 ],
                 className="detail-fields",
+            ),
+            html.Div(
+                [html.Span("Playlists"), html.Div(playlist_tags, className="playlist-tags")],
+                className="detail-field detail-playlists",
             ),
         ]
 

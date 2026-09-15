@@ -34,6 +34,11 @@ look up every indexed playlist containing a track. Provider metadata is kept
 separate from user-owned metadata. Tables for star ratings, notes, tags, and
 track-to-tag relationships are already present for future features.
 
+The liked-tracks page stores its latest per-user snapshot in SQLite. Automatic
+loads reuse snapshots up to five minutes old; **Refresh** always requests the
+newest tracks from TIDAL. Its inspector uses the same database to list every
+indexed playlist containing the selected TIDAL track ID.
+
 ## Setup
 
 1. Install Python 3.10 or newer and run `pip install -r requirements.txt`.

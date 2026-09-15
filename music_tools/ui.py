@@ -58,6 +58,9 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .detail-field span{color:#7f91a1}
 .detail-field strong{overflow-wrap:anywhere;color:#e8edf2;font-weight:500}
 .detail-empty{color:#7f91a1}
+.detail-playlists{grid-template-columns:1fr}
+.playlist-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.playlist-tag{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;padding:5px 8px;border:1px solid #3e6255;border-radius:999px;background:#17372c;color:#78e8b6;font-size:12px;white-space:nowrap}
 @media(max-width:1000px){.library-layout{grid-template-columns:1fr}.track-details{position:static;min-height:0}}
 </style>
 </head><body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""

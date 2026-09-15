@@ -211,7 +211,7 @@ def create_app(engine):
             return shell(html, "liked-tracks", liked_tracks_content(html, dcc))
         return playlist_sync_layout
 
-    register_liked_tracks_callbacks(app, callback, Input, Output, html, engine)
+    register_liked_tracks_callbacks(app, callback, Input, Output, html, ctx, engine)
 
     @callback(Output("mapping-list", "children"), Input("mapping-store", "data"))
     def render_mappings(rows: list[dict[str, Any]]):

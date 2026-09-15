@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import Any
+
+from music_library.database import cached_tidal_liked_tracks, store_tidal_liked_tracks
 
 
 def _text(value: Any) -> str:
@@ -98,6 +101,7 @@ def track_row(track: Any) -> dict[str, str]:
     except (TypeError, ValueError):
         bpm_text = _text(bpm)
     return {
+        "id": _text(getattr(track, "id", "")),
         "title": _text(getattr(track, "name", "") or getattr(track, "full_name", "")),
         "artist": _artists(track),
         "remix": _text(getattr(track, "version", "")),
@@ -110,11 +114,59 @@ def track_row(track: Any) -> dict[str, str]:
     }
 
 
-def fetch_liked_tracks(engine: Any, limit: int = 10) -> list[dict[str, str]]:
-    """Fetch only the most recently liked TIDAL tracks."""
+def _cached_track_row(record: dict[str, Any]) -> dict[str, str]:
+    """Map a SQLite provider record into the same shape as a live track."""
+    bpm = record.get("bpm")
+    try:
+        bpm_text = f"{float(bpm):g}" if bpm not in (None, "") else ""
+    except (TypeError, ValueError):
+        bpm_text = _text(bpm)
+
+    added = _text(record.get("date_added"))
+    if added:
+        try:
+            parsed_added = datetime.fromisoformat(added.replace("Z", "+00:00"))
+            if parsed_added.tzinfo is not None:
+                parsed_added = parsed_added.astimezone()
+            added = parsed_added.strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            added = added[:16].replace("T", " ")
+    return {
+        "id": _text(record.get("id")),
+        "title": _text(record.get("title")),
+        "artist": _text(record.get("artist")),
+        "remix": _text(record.get("remix")),
+        "album": _text(record.get("album")),
+        "length": _duration(record.get("duration_seconds")),
+        "bpm": bpm_text,
+        "key": _key(
+            SimpleNamespace(
+                key=record.get("musical_key", ""),
+                key_scale=record.get("key_scale", ""),
+            )
+        ),
+        "year": _text(record.get("year")),
+        "date_added": added,
+    }
+
+
+def fetch_liked_tracks(
+    engine: Any,
+    limit: int = 10,
+    force_refresh: bool = False,
+    cache_seconds: int = 300,
+) -> list[dict[str, str]]:
+    """Load recent liked tracks from SQLite, refreshing TIDAL when needed."""
     from tidalapi.user import ItemOrder, OrderDirection
 
     session = engine.tidal_client(interactive=False)
+    user_id = str(session.user.id)
+    if not force_refresh:
+        cached = cached_tidal_liked_tracks(user_id, limit, cache_seconds)
+        if cached is not None:
+            engine.LOGGER.info("tidal.liked_tracks cache_hit user_id=%s tracks=%d", user_id, len(cached))
+            return [_cached_track_row(record) for record in cached]
+    engine.LOGGER.info("tidal.liked_tracks cache_miss user_id=%s force=%s", user_id, force_refresh)
     tracks = engine._call(
         "tidal",
         "favorite_tracks",
@@ -128,4 +180,5 @@ def fetch_liked_tracks(engine: Any, limit: int = 10) -> list[dict[str, str]]:
         offset=0,
         order="date_descending",
     )
+    store_tidal_liked_tracks(user_id, tracks)
     return [track_row(track) for track in tracks]
