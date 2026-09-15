@@ -12,7 +12,7 @@ from music_library.database import (
     tidal_playlists_for_tracks,
 )
 
-from .service import fetch_liked_tracks
+from .service import fetch_indexed_playlist_tracks, fetch_liked_tracks
 
 
 COLUMNS = [
@@ -92,14 +92,20 @@ def render_track_table(html: Any, rows: list[dict[str, Any]], has_more: bool):
     )
 
 
-def content(html: Any, dcc: Any):
+def content(html: Any, dcc: Any, collection: dict[str, str] | None = None):
+    collection = collection or {"type": "liked", "name": "TIDAL liked tracks"}
+    is_liked = collection.get("type") == "liked"
     return [
         html.Div(
             [
                 html.Div(
                     [
-                        html.H1("TIDAL liked tracks"),
-                        html.P("Your liked TIDAL tracks, newest first."),
+                        html.H1(collection.get("name") or "TIDAL playlist"),
+                        html.P(
+                            "Your liked TIDAL tracks, newest first."
+                            if is_liked
+                            else "Tracks from the local TIDAL playlist index."
+                        ),
                     ]
                 ),
                 html.Button("Refresh", id="liked-refresh", className="primary"),
@@ -115,6 +121,7 @@ def content(html: Any, dcc: Any):
         dcc.Store(id="liked-action-mode", data=None),
         dcc.Store(id="liked-action-selected", data=0),
         dcc.Store(id="liked-action-request", data=None),
+        dcc.Store(id="track-collection", data=collection),
         html.Div(id="liked-keyboard-ready", style={"display": "none"}),
         html.Div("Loading liked tracks…", id="liked-status", className="track-status"),
         html.Div(
@@ -162,6 +169,7 @@ def register_callbacks(
         Input("liked-load-next", "data"),
         State("liked-rows", "data"),
         State("liked-selected", "data"),
+        State("track-collection", "data"),
     )
     def load_tracks(
         _initial: int,
@@ -169,16 +177,22 @@ def register_callbacks(
         _load_next: int,
         existing_rows: list[dict[str, str]] | None,
         current_selection: int | None,
+        collection: dict[str, str] | None,
     ):
         existing_rows = existing_rows or []
         append = ctx.triggered_id == "liked-load-next" and bool(existing_rows)
         offset = len(existing_rows) if append else 0
         try:
-            page, has_more = fetch_liked_tracks(
-                engine,
-                offset=offset,
-                force_refresh=ctx.triggered_id == "liked-refresh",
-            )
+            if (collection or {}).get("type") == "playlist":
+                page, has_more = fetch_indexed_playlist_tracks(
+                    (collection or {}).get("id", ""), offset=offset
+                )
+            else:
+                page, has_more = fetch_liked_tracks(
+                    engine,
+                    offset=offset,
+                    force_refresh=ctx.triggered_id == "liked-refresh",
+                )
         except Exception as exc:
             engine.LOGGER.exception("ui.liked_tracks load_failed")
             return html.Div(), f"Could not load liked tracks: {exc}", [], None, False
@@ -193,7 +207,7 @@ def register_callbacks(
         selected = current_selection if append else (0 if rows else None)
         return (
             table,
-            f"{len(rows):,} liked track{'s' if len(rows) != 1 else ''} loaded",
+            f"{len(rows):,} track{'s' if len(rows) != 1 else ''} loaded",
             rows,
             selected,
             has_more,
@@ -222,6 +236,17 @@ def register_callbacks(
             or [html.Span("Not in an indexed playlist", className="detail-empty")]
         )
         return [
+            *(
+                [
+                    html.Img(
+                        src=row["album_art_url"],
+                        alt=f"{row.get('album') or row.get('title') or 'Album'} cover",
+                        className="selected-album-art",
+                    )
+                ]
+                if row.get("album_art_url")
+                else []
+            ),
             html.Div("Selected track", className="detail-eyebrow"),
             html.H2(row.get("title") or "—", className="detail-title"),
             html.Div(row.get("artist") or "—", className="detail-artist"),
@@ -311,10 +336,12 @@ def register_callbacks(
         Output("liked-focus", "data"),
         Output("liked-action-mode", "data"),
         Output("liked-action-selected", "data"),
+        Output("liked-selected", "data", allow_duplicate=True),
         Input("liked-action-request", "data"),
         State("liked-rows", "data"),
         State("liked-selected", "data"),
         State("liked-has-more", "data"),
+        State("track-collection", "data"),
         prevent_initial_call=True,
     )
     def execute_action(
@@ -322,15 +349,16 @@ def register_callbacks(
         rows: list[dict[str, Any]] | None,
         selected: int | None,
         has_more: bool,
+        collection: dict[str, str] | None,
     ):
         rows = rows or []
         if not request or selected is None or not 0 <= selected < len(rows):
-            return "", rows, render_track_table(html, rows, has_more), "tracks", None, 0
+            return "", rows, render_track_table(html, rows, has_more), "tracks", None, 0, selected
         action = request.get("action")
         playlist_id = str(request.get("playlist_id") or "")
         track_id = str(rows[selected].get("id") or "")
         if action not in {"add", "remove"} or not playlist_id or not track_id:
-            return "Invalid playlist action.", rows, render_track_table(html, rows, has_more), "actions", action, 0
+            return "Invalid playlist action.", rows, render_track_table(html, rows, has_more), "actions", action, 0, selected
 
         try:
             session = engine.tidal_client(interactive=False)
@@ -369,6 +397,15 @@ def register_callbacks(
             updated_rows = [dict(row) for row in rows]
             memberships = tidal_playlists_for_track(track_id)
             updated_rows[selected]["playlists"] = memberships
+            updated_selection = selected
+            viewing_modified_playlist = (
+                (collection or {}).get("type") == "playlist"
+                and str((collection or {}).get("id")) == playlist_id
+            )
+            still_in_playlist = any(str(item.get("id")) == playlist_id for item in memberships)
+            if action == "remove" and viewing_modified_playlist and not still_in_playlist:
+                updated_rows.pop(selected)
+                updated_selection = min(selected, len(updated_rows) - 1) if updated_rows else None
             engine.LOGGER.info(
                 "ui.liked_tracks action_ok action=%s track_id=%s playlist_id=%s",
                 action,
@@ -382,6 +419,7 @@ def register_callbacks(
                 "tracks",
                 None,
                 0,
+                updated_selection,
             )
         except Exception as exc:
             engine.LOGGER.exception(
@@ -397,6 +435,7 @@ def register_callbacks(
                 "actions",
                 action,
                 0,
+                selected,
             )
 
     app.clientside_callback(
@@ -426,13 +465,20 @@ def register_callbacks(
                         Number(option.dataset.actionOption) === window.__likedActionSelected
                     );
                 });
+                document.querySelectorAll('[data-sidebar-index]').forEach(function(item) {
+                    item.classList.toggle(
+                        'keyboard-selected',
+                        window.__likedTracksFocus === 'sidebar' &&
+                        Number(item.dataset.sidebarIndex) === window.__likedSidebarSelected
+                    );
+                });
             }
 
             if (!window.__likedTracksNavigationInstalled) {
                 window.__likedTracksNavigationInstalled = true;
                 document.addEventListener('click', function(event) {
                     var row = event.target.closest('[data-liked-index]');
-                    if (!row || window.location.pathname !== '/liked-tracks') return;
+                    if (!row || (window.location.pathname !== '/liked-tracks' && !window.location.pathname.startsWith('/playlists/'))) return;
                     window.dash_clientside.set_props('liked-selected', {
                         data: Number(row.dataset.likedIndex)
                     });
@@ -440,7 +486,7 @@ def register_callbacks(
                 });
                 document.addEventListener('click', function(event) {
                     var option = event.target.closest('[data-action-option]');
-                    if (!option || window.location.pathname !== '/liked-tracks') return;
+                    if (!option || (window.location.pathname !== '/liked-tracks' && !window.location.pathname.startsWith('/playlists/'))) return;
                     var index = Number(option.dataset.actionOption);
                     window.dash_clientside.set_props('liked-focus', {data: 'actions'});
                     window.dash_clientside.set_props('liked-action-selected', {data: index});
@@ -460,8 +506,52 @@ def register_callbacks(
                     }
                 });
                 document.addEventListener('keydown', function(event) {
-                    if (window.location.pathname !== '/liked-tracks') return;
+                    if (window.location.pathname !== '/liked-tracks' && !window.location.pathname.startsWith('/playlists/')) return;
                     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return;
+                    if (window.__likedTracksFocus === 'sidebar') {
+                        var navItems = Array.from(
+                            document.querySelectorAll('[data-sidebar-index]')
+                        ).filter(function(item) { return item.offsetParent !== null; });
+                        if (!navItems.length) return;
+                        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                            event.preventDefault();
+                            var navDelta = event.key === 'ArrowDown' ? 1 : -1;
+                            var currentNavPosition = navItems.findIndex(function(item) {
+                                return Number(item.dataset.sidebarIndex) === window.__likedSidebarSelected;
+                            });
+                            if (currentNavPosition < 0) currentNavPosition = 0;
+                            var nextNavPosition = Math.max(
+                                0,
+                                Math.min(navItems.length - 1, currentNavPosition + navDelta)
+                            );
+                            window.__likedSidebarSelected = Number(
+                                navItems[nextNavPosition].dataset.sidebarIndex
+                            );
+                            paintSelection();
+                            navItems[nextNavPosition].scrollIntoView({block: 'nearest'});
+                            return;
+                        }
+                        if (event.key === 'ArrowRight' || event.key === 'Enter') {
+                            event.preventDefault();
+                            var navItem = navItems.find(function(item) {
+                                return Number(item.dataset.sidebarIndex) === window.__likedSidebarSelected;
+                            }) || navItems[0];
+                            if (navItem.dataset.sidebarToggle) {
+                                var group = navItem.closest('details');
+                                if (group) group.open = !group.open;
+                                window.setTimeout(paintSelection, 0);
+                                return;
+                            }
+                            var href = navItem && navItem.dataset.sidebarHref;
+                            if (!href) return;
+                            if (window.location.pathname === href) {
+                                window.dash_clientside.set_props('liked-focus', {data: 'tracks'});
+                            } else {
+                                window.location.assign(href);
+                            }
+                        }
+                        return;
+                    }
                     if (window.__likedTracksFocus === 'actions') {
                         var options = document.querySelectorAll('[data-action-option]');
                         if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
@@ -515,6 +605,14 @@ def register_callbacks(
                         window.dash_clientside.set_props('liked-focus', {data: 'actions'});
                         window.dash_clientside.set_props('liked-action-mode', {data: null});
                         window.dash_clientside.set_props('liked-action-selected', {data: 0});
+                        return;
+                    }
+                    if (event.key === 'ArrowLeft') {
+                        event.preventDefault();
+                        var activeNav = document.querySelector('[data-sidebar-index].active');
+                        window.__likedSidebarSelected = activeNav
+                            ? Number(activeNav.dataset.sidebarIndex) : 0;
+                        window.dash_clientside.set_props('liked-focus', {data: 'sidebar'});
                         return;
                     }
                     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;

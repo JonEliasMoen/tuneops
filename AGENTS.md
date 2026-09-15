@@ -63,8 +63,8 @@ Core tables:
 
 - `tracks`: provider metadata keyed by provider and provider track ID.
 - `playlists`: indexed playlist names and provider `last_updated` values.
-- `playlist_tracks`: ordered membership with an index supporting
-  track-to-playlists queries.
+- `playlist_tracks`: ordered membership and per-playlist `date_added`, with an
+  index supporting track-to-playlists queries.
 - `liked_track_snapshots` and `liked_tracks`: per-user ordered liked-track cache.
 - `track_user_metadata`: reserved for star ratings and notes.
 - `tags` and `track_tags`: normalized future tagging support.
@@ -78,6 +78,12 @@ revalidation on the following run.
 ## Liked tracks UI
 
 - Route: `/liked-tracks`.
+- Indexed TIDAL playlists appear below the main sidebar tools and open at
+  `/playlists/<tidal-id>`. These routes reuse the liked-tracks table, inspector,
+  actions, selection, and local 30-row pagination, reading tracks from SQLite.
+- Indexed playlist links live inside a collapsible **Playlists** sidebar node.
+  Click or Enter toggles it, hidden children are skipped by keyboard navigation,
+  and the node opens automatically on an active playlist route.
 - Sorted by TIDAL favorite date, newest first.
 - Loads 30 rows at a time; an `IntersectionObserver` requests the next offset
   near the bottom of the table.
@@ -89,14 +95,21 @@ revalidation on the following run.
   according to the Camelot wheel palette.
 - Rows support mouse selection and Up/Down keyboard navigation. Selection
   follows the visible scroll area. Appending rows preserves scroll position.
+- From tracks, Left Arrow enters the sidebar and Right Arrow enters Actions.
+  In the sidebar, Up/Down navigates tools and playlists; Right Arrow or Enter
+  opens the highlighted destination and returns focus to its track list.
 - The right inspector displays selected-track metadata plus green playlist tags
-  for every currently indexed TIDAL playlist containing that track ID.
+  for every currently indexed TIDAL playlist containing that track ID. A 320px
+  TIDAL album-art URL is cached with track metadata and shown above the details.
 - An Actions panel sits below the inspector. Right Arrow moves keyboard focus
   from the selected track into Add/Remove actions; Up/Down navigates, Enter or
   Right Arrow opens an action, and Left Arrow backs out. Add lists all indexed
   playlists; Remove lists only current memberships. Choosing a playlist calls
   TIDAL first, then mirrors a successful add/removal into SQLite and marks the
   cached playlist version for revalidation.
+- When removing a track while viewing that same indexed playlist, remove its
+  row from the visible backing store immediately (unless another duplicate
+  membership remains) and select the nearest remaining row.
 - Do not enumerate `session.user.playlists()` for each liked-track action. The
   installed `tidalapi` factory already returns a writable `UserPlaylist` for an
   owned playlist; the enumeration can take tens of seconds.

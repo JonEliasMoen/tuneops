@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     artist TEXT NOT NULL DEFAULT '',
     remix TEXT NOT NULL DEFAULT '',
     album TEXT NOT NULL DEFAULT '',
+    album_art_url TEXT NOT NULL DEFAULT '',
     duration_seconds REAL,
     bpm REAL,
     musical_key TEXT NOT NULL DEFAULT '',
@@ -48,6 +49,7 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
     provider_playlist_id TEXT NOT NULL,
     position INTEGER NOT NULL,
     provider_track_id TEXT NOT NULL,
+    date_added TEXT,
     PRIMARY KEY (provider, provider_playlist_id, position),
     FOREIGN KEY (provider, provider_playlist_id)
         REFERENCES playlists(provider, provider_playlist_id) ON DELETE CASCADE,
@@ -135,6 +137,27 @@ def connect(path: Path = DATABASE_PATH) -> Iterator[sqlite3.Connection]:
 def initialize(path: Path = DATABASE_PATH) -> None:
     with connect(path) as connection:
         connection.executescript(SCHEMA)
+        columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(playlist_tracks)")
+        }
+        if "date_added" not in columns:
+            connection.execute("ALTER TABLE playlist_tracks ADD COLUMN date_added TEXT")
+            # Existing memberships predate this field and must be fetched once
+            # more before their per-playlist added timestamps are trustworthy.
+            connection.execute(
+                "UPDATE playlists SET source_last_updated=NULL WHERE provider='tidal'"
+            )
+        track_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(tracks)")
+        }
+        if "album_art_url" not in track_columns:
+            connection.execute(
+                "ALTER TABLE tracks ADD COLUMN album_art_url TEXT NOT NULL DEFAULT ''"
+            )
+            connection.execute(
+                "UPDATE playlists SET source_last_updated=NULL WHERE provider='tidal'"
+            )
+            connection.execute("DELETE FROM liked_track_snapshots WHERE provider='tidal'")
 
 
 def tidal_track_record(track: Any) -> dict[str, Any]:
@@ -146,6 +169,10 @@ def tidal_track_record(track: Any) -> dict[str, Any]:
         getattr(getattr(track, "artist", None), "name", "") or ""
     )
     album = getattr(track, "album", None)
+    try:
+        album_art_url = album.image(320) if album else ""
+    except (AttributeError, TypeError, ValueError):
+        album_art_url = ""
     release = getattr(album, "release_date", None) or getattr(track, "tidal_release_date", None)
     release_text = _timestamp(release) or ""
     year = int(release_text[:4]) if len(release_text) >= 4 and release_text[:4].isdigit() else None
@@ -155,12 +182,16 @@ def tidal_track_record(track: Any) -> dict[str, Any]:
         "artist": artist,
         "remix": str(getattr(track, "version", "") or ""),
         "album": str(getattr(album, "name", "") or ""),
+        "album_art_url": album_art_url,
         "duration_seconds": getattr(track, "duration", None),
         "bpm": getattr(track, "bpm", None),
         "musical_key": str(getattr(track, "key", "") or ""),
         "key_scale": str(getattr(track, "key_scale", "") or ""),
         "year": year,
         "isrc": str(getattr(track, "isrc", "") or ""),
+        "date_added": _timestamp(
+            getattr(track, "user_date_added", None) or getattr(track, "date_added", None)
+        ),
     }
 
 
@@ -184,7 +215,7 @@ def cached_tidal_playlist(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
                    t.duration_seconds, t.bpm, t.musical_key, t.key_scale,
-                   t.release_year AS year, t.isrc
+                   t.release_year AS year, t.isrc, t.album_art_url, pt.date_added
             FROM playlist_tracks pt
             JOIN tracks t
               ON t.provider = pt.provider AND t.provider_track_id = pt.provider_track_id
@@ -236,13 +267,14 @@ def store_tidal_playlist(
             connection.execute(
                 """
                 INSERT INTO tracks(
-                    provider, provider_track_id, title, artist, remix, album,
+                    provider, provider_track_id, title, artist, remix, album, album_art_url,
                     duration_seconds, bpm, musical_key, key_scale, release_year,
                     isrc, refreshed_at
-                ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(provider, provider_track_id) DO UPDATE SET
                     title=excluded.title, artist=excluded.artist, remix=excluded.remix,
-                    album=excluded.album, duration_seconds=excluded.duration_seconds,
+                    album=excluded.album, album_art_url=excluded.album_art_url,
+                    duration_seconds=excluded.duration_seconds,
                     bpm=excluded.bpm, musical_key=excluded.musical_key,
                     key_scale=excluded.key_scale, release_year=excluded.release_year,
                     isrc=excluded.isrc, refreshed_at=excluded.refreshed_at
@@ -250,15 +282,16 @@ def store_tidal_playlist(
                 (
                     track_id, record.get("title", ""), record.get("artist", ""),
                     record.get("remix", ""), record.get("album", ""),
+                    record.get("album_art_url", ""),
                     record.get("duration_seconds"), record.get("bpm"),
                     record.get("musical_key", ""), record.get("key_scale", ""),
                     record.get("year"), record.get("isrc", ""), now,
                 ),
             )
             connection.execute(
-                "INSERT INTO playlist_tracks(provider, provider_playlist_id, position, provider_track_id) "
-                "VALUES('tidal', ?, ?, ?)",
-                (playlist_id, position, track_id),
+                "INSERT INTO playlist_tracks(provider, provider_playlist_id, position, provider_track_id, date_added) "
+                "VALUES('tidal', ?, ?, ?, ?)",
+                (playlist_id, position, track_id, record.get("date_added")),
             )
 
 
@@ -326,6 +359,34 @@ def tidal_indexed_playlists(path: Path = DATABASE_PATH) -> list[dict[str, str]]:
             WHERE provider='tidal'
             ORDER BY name COLLATE NOCASE
             """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def tidal_playlist_tracks_page(
+    playlist_id: str,
+    limit: int = 30,
+    offset: int = 0,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Read one ordered page from an indexed TIDAL playlist."""
+    if not path.exists():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
+                   t.duration_seconds, t.bpm, t.musical_key, t.key_scale,
+                   t.release_year AS year, t.isrc, t.album_art_url, pt.date_added
+            FROM playlist_tracks pt
+            JOIN tracks t
+              ON t.provider=pt.provider AND t.provider_track_id=pt.provider_track_id
+            WHERE pt.provider='tidal' AND pt.provider_playlist_id=?
+            ORDER BY pt.position
+            LIMIT ? OFFSET ?
+            """,
+            (str(playlist_id), int(limit), int(offset)),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -430,7 +491,7 @@ def cached_tidal_liked_tracks(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
                    t.duration_seconds, t.bpm, t.musical_key, t.key_scale,
-                   t.release_year AS year, t.isrc, lt.date_added
+                   t.release_year AS year, t.isrc, t.album_art_url, lt.date_added
             FROM liked_tracks lt
             JOIN tracks t
               ON t.provider=lt.provider AND t.provider_track_id=lt.provider_track_id
@@ -475,20 +536,22 @@ def store_tidal_liked_tracks(
             connection.execute(
                 """
                 INSERT INTO tracks(
-                    provider, provider_track_id, title, artist, remix, album,
+                    provider, provider_track_id, title, artist, remix, album, album_art_url,
                     duration_seconds, bpm, musical_key, key_scale, release_year,
                     isrc, refreshed_at
-                ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(provider, provider_track_id) DO UPDATE SET
                     title=excluded.title, artist=excluded.artist, remix=excluded.remix,
-                    album=excluded.album, duration_seconds=excluded.duration_seconds,
+                    album=excluded.album, album_art_url=excluded.album_art_url,
+                    duration_seconds=excluded.duration_seconds,
                     bpm=excluded.bpm, musical_key=excluded.musical_key,
                     key_scale=excluded.key_scale, release_year=excluded.release_year,
                     isrc=excluded.isrc, refreshed_at=excluded.refreshed_at
                 """,
                 (
                     track_id, record["title"], record["artist"], record["remix"],
-                    record["album"], record["duration_seconds"], record["bpm"],
+                    record["album"], record["album_art_url"],
+                    record["duration_seconds"], record["bpm"],
                     record["musical_key"], record["key_scale"], record["year"],
                     record["isrc"], now,
                 ),

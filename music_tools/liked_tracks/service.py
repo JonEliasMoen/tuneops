@@ -6,7 +6,11 @@ from datetime import date, datetime
 from types import SimpleNamespace
 from typing import Any
 
-from music_library.database import cached_tidal_liked_tracks, store_tidal_liked_tracks
+from music_library.database import (
+    cached_tidal_liked_tracks,
+    store_tidal_liked_tracks,
+    tidal_playlist_tracks_page,
+)
 
 
 def _text(value: Any) -> str:
@@ -100,12 +104,17 @@ def track_row(track: Any) -> dict[str, str]:
         bpm_text = f"{float(bpm):g}" if bpm not in (None, "") else ""
     except (TypeError, ValueError):
         bpm_text = _text(bpm)
+    try:
+        album_art_url = album.image(320) if album else ""
+    except (AttributeError, TypeError, ValueError):
+        album_art_url = ""
     return {
         "id": _text(getattr(track, "id", "")),
         "title": _text(getattr(track, "name", "") or getattr(track, "full_name", "")),
         "artist": _artists(track),
         "remix": _text(getattr(track, "version", "")),
         "album": _text(getattr(album, "name", "")),
+        "album_art_url": album_art_url,
         "length": _duration(getattr(track, "duration", None)),
         "bpm": bpm_text,
         "key": _key(track),
@@ -137,6 +146,7 @@ def _cached_track_row(record: dict[str, Any]) -> dict[str, str]:
         "artist": _text(record.get("artist")),
         "remix": _text(record.get("remix")),
         "album": _text(record.get("album")),
+        "album_art_url": _text(record.get("album_art_url")),
         "length": _duration(record.get("duration_seconds")),
         "bpm": bpm_text,
         "key": _key(
@@ -200,3 +210,11 @@ def fetch_liked_tracks(
     )
     store_tidal_liked_tracks(user_id, tracks, offset=offset)
     return [track_row(track) for track in tracks], len(tracks) == limit
+
+
+def fetch_indexed_playlist_tracks(
+    playlist_id: str, limit: int = 30, offset: int = 0
+) -> tuple[list[dict[str, str]], bool]:
+    """Read one playlist page entirely from the local SQLite index."""
+    records = tidal_playlist_tracks_page(playlist_id, limit=limit, offset=offset)
+    return [_cached_track_row(record) for record in records], len(records) == limit

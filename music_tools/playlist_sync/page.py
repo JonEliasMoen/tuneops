@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from music_library.database import tidal_indexed_playlists
 from music_tools.liked_tracks import content as liked_tracks_content
 from music_tools.liked_tracks import register_callbacks as register_liked_tracks_callbacks
 from music_tools.ui import INDEX_STRING, shell
@@ -210,6 +211,21 @@ def create_app(engine):
     def route_page(pathname: str | None):
         if pathname == "/liked-tracks":
             return shell(html, "liked-tracks", liked_tracks_content(html, dcc))
+        if pathname and pathname.startswith("/playlists/"):
+            playlist_id = pathname.removeprefix("/playlists/").strip("/")
+            indexed = {item["id"]: item for item in tidal_indexed_playlists()}
+            playlist = indexed.get(playlist_id)
+            if playlist:
+                collection = {
+                    "type": "playlist",
+                    "id": playlist_id,
+                    "name": playlist.get("name") or playlist_id,
+                }
+                return shell(
+                    html,
+                    f"playlist:{playlist_id}",
+                    liked_tracks_content(html, dcc, collection),
+                )
         return playlist_sync_layout
 
     register_liked_tracks_callbacks(app, callback, Input, Output, State, html, ctx, engine)
