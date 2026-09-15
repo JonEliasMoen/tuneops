@@ -35,8 +35,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "1c68d00ca17e5d11e7a9f31f7478a5d4a16290559fd8d621b8060363139ee4ca",
-      "last_sync": "2026-08-27T11:10:38.705430+00:00"
+      "source_version": "c9d23bcc700cec972c1a67d5815beebed3de4791e7d795eed06f7f618f6b2783",
+      "last_sync": "2026-09-15T18:31:34.742116+00:00"
     },
     {
       "enabled": true,
@@ -164,8 +164,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "1653f9d5a16ae951ea8fa8766d86138e63f8ea8e9583ed85df24ab75c1c8fb72",
-      "last_sync": "2026-09-06T13:38:18.879769+00:00"
+      "source_version": "9a6f6e50dffcb2f9deb5ad7a718e8fcdd47c7afaaa7fa3c3167d499e88521c48",
+      "last_sync": "2026-09-15T18:31:39.218077+00:00"
     },
     {
       "enabled": true,

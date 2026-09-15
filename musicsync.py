@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-
 ROOT = Path(__file__).resolve().parent
 
 
@@ -43,6 +42,13 @@ def _load_dotenv(path: Path) -> None:
 
 
 _load_dotenv(ROOT / ".env")
+
+from music_library.database import (  # noqa: E402 - local .env configures its path
+    cached_tidal_playlist,
+    store_tidal_playlist,
+    tidal_track_record,
+)
+
 CONFIG_PATH = Path(os.getenv("MUSICSYNC_CONFIG", ROOT / "music_sync.json"))
 SPOTIFY_CACHE = ROOT / ".spotify_cache"
 TIDAL_CACHE = ROOT / ".tidal_session.json"
@@ -258,12 +264,7 @@ def _remember_unmatched(records: list[dict[str, str]], track: dict[str, Any]) ->
 
 
 def _tidal_track_data(track: Any) -> dict[str, Any]:
-    return {
-        "title": getattr(track, "name", ""),
-        "artist": getattr(getattr(track, "artist", None), "name", ""),
-        "album": getattr(getattr(track, "album", None), "name", ""),
-        "isrc": getattr(track, "isrc", "") or "",
-    }
+    return tidal_track_record(track)
 
 
 def _spotify_track_data(track: dict[str, Any]) -> dict[str, Any]:
@@ -519,13 +520,36 @@ def _target_playlist(session: Any, playlist_id: str, name: str):
     )
 
 
+def _tidal_playlist_track_records(playlist: Any, action: str) -> list[dict[str, Any]]:
+    playlist_id = str(playlist.id)
+    last_updated = getattr(playlist, "last_updated", None)
+    cached = cached_tidal_playlist(playlist_id, last_updated)
+    if cached is not None:
+        LOGGER.info(
+            "tidal.playlist cache_hit playlist_id=%s last_updated=%s tracks=%d",
+            playlist_id,
+            last_updated,
+            len(cached),
+        )
+        return cached
+    LOGGER.info(
+        "tidal.playlist cache_miss playlist_id=%s last_updated=%s",
+        playlist_id,
+        last_updated,
+    )
+    items = _call("tidal", action, playlist.tracks, playlist_id=playlist_id)
+    records = [tidal_track_record(track) for track in items]
+    store_tidal_playlist(playlist, records)
+    LOGGER.info("tidal.playlist indexed playlist_id=%s tracks=%d", playlist_id, len(records))
+    return records
+
+
 def tidal_tracks(session: Any, playlist_value: str) -> tuple[Any, list[dict[str, Any]]]:
     playlist_id = _id(playlist_value)
     if not playlist_id:
         raise ValueError("TIDAL source playlist is empty")
     playlist = _call("tidal", "get_source_playlist", lambda: session.playlist(playlist_id), playlist_id=playlist_id)
-    items = _call("tidal", "source_playlist_tracks", playlist.tracks, playlist_id=playlist_id)
-    tracks = [_tidal_track_data(track) for track in items]
+    tracks = _tidal_playlist_track_records(playlist, "source_playlist_tracks")
     if not tracks:
         raise RuntimeError(f"TIDAL returned zero tracks for {getattr(playlist, 'name', playlist_id)!r}")
     LOGGER.info("tidal.playlist source_complete playlist_id=%s tracks=%d", playlist_id, len(tracks))
@@ -609,6 +633,15 @@ def sync_spotify_to_tidal(spotify: Any, tidal: Any, entry: dict[str, Any], setti
     )
     source_version = source_playlist.get("snapshot_id")
     if entry.get("last_sync") and source_version and entry.get("source_version") == source_version:
+        # Even a skipped mapping participates in the local TIDAL membership
+        # index, allowing a fresh database to populate without forcing a sync.
+        tidal_id = _id(entry.get("tidal", ""))
+        if tidal_id:
+            tidal_playlist = _call(
+                "tidal", "get_target_playlist", lambda: tidal.playlist(tidal_id),
+                playlist_id=tidal_id,
+            )
+            _tidal_playlist_track_records(tidal_playlist, "playlist_tracks")
         result.target = entry.get("tidal", "") or entry.get("tidal_name", "")
         result.skipped = True
         LOGGER.info(
@@ -621,16 +654,17 @@ def sync_spotify_to_tidal(spotify: Any, tidal: Any, entry: dict[str, Any], setti
     target = _target_playlist(tidal, entry.get("tidal", ""), target_name)
     entry["tidal"] = str(target.id)
     result.target = f"{target.name} ({target.id})"
-    target_tracks = _call("tidal", "playlist_tracks", target.tracks, playlist_id=target.id)
-    existing = {str(track.id) for track in target_tracks}
+    target_tracks = _tidal_playlist_track_records(target, "playlist_tracks")
+    existing = {str(track["id"]) for track in target_tracks}
     target_identities: set[str] = set()
     for target_track in target_tracks:
-        target_identities.update(_identity_keys(_tidal_track_data(target_track)))
+        target_identities.update(_identity_keys(target_track))
     LOGGER.info(
         "sync.playlist inventory source_tracks=%d target_tracks=%d target_id=%s",
         len(source_tracks), len(existing), target.id,
     )
     to_add: list[int] = []
+    to_add_records: list[dict[str, Any]] = []
     limit = int(settings.get("search_limit", 8))
     missing, result.already_present = _playlist_diff(source_tracks, target_identities)
     unmatched_records = _unmatched_records(entry, "spotify_to_tidal")
@@ -652,6 +686,7 @@ def sync_spotify_to_tidal(spotify: Any, tidal: Any, entry: dict[str, Any], setti
             target_identities.update(_identity_keys(source_track))
         else:
             to_add.append(int(match.id))
+            to_add_records.append(tidal_track_record(match))
             existing.add(str(match.id))
             target_identities.update(_identity_keys(source_track))
             target_identities.update(_identity_keys(_tidal_track_data(match)))
@@ -663,6 +698,14 @@ def sync_spotify_to_tidal(spotify: Any, tidal: Any, entry: dict[str, Any], setti
             playlist_id=target.id, track_count=len(batch),
         )
         result.added += len(batch)
+    if to_add_records:
+        # Membership is immediately correct for reverse lookups. A null source
+        # version deliberately forces provider revalidation on the next run.
+        store_tidal_playlist(
+            target,
+            target_tracks + to_add_records,
+            source_last_updated=None,
+        )
     LOGGER.info(
         "sync.playlist complete target_id=%s added=%d existing=%d unmatched=%d",
         target.id, result.added, result.already_present, result.unmatched,

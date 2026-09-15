@@ -14,10 +14,25 @@ tracks are kept and tracks are never removed.
   layout, authentication routes, and callbacks.
 - `music_tools/liked_tracks/` owns the TIDAL liked-tracks browser and its
   provider-to-table data mapping.
+- `music_library/database.py` owns the local SQLite catalogue, playlist
+  membership index, and user-owned metadata schema.
 
 New sidebar tools should live in their own `music_tools/<tool_name>/` package.
 Shared navigation and presentation belong in `music_tools/ui.py`; reusable
 service logic should remain independent of Dash so startup jobs can import it.
+
+## Local music library
+
+Playlist sync maintains `music_library.sqlite3` for every configured TIDAL
+playlist it reads. A playlist's TIDAL `last_updated` value is compared with the
+stored version; unchanged playlist membership is loaded locally, while changed
+playlists are fetched and atomically re-indexed. The database is local-only and
+ignored by Git. Set `MUSICSYNC_DATABASE` to override its location.
+
+The membership table is indexed by track ID, so later tools can efficiently
+look up every indexed playlist containing a track. Provider metadata is kept
+separate from user-owned metadata. Tables for star ratings, notes, tags, and
+track-to-tag relationships are already present for future features.
 
 ## Setup
 
