@@ -10,6 +10,7 @@ from music_library.database import (
     cached_tidal_liked_tracks,
     store_tidal_liked_tracks,
     tidal_playlist_tracks_page,
+    tidal_setlist_tracks_page,
 )
 
 
@@ -157,6 +158,7 @@ def _cached_track_row(record: dict[str, Any]) -> dict[str, str]:
         ),
         "year": _text(record.get("year")),
         "date_added": added,
+        "mix_position": _text(record.get("mix_position")),
     }
 
 
@@ -217,4 +219,12 @@ def fetch_indexed_playlist_tracks(
 ) -> tuple[list[dict[str, str]], bool]:
     """Read one playlist page entirely from the local SQLite index."""
     records = tidal_playlist_tracks_page(playlist_id, limit=limit, offset=offset)
+    return [_cached_track_row(record) for record in records], len(records) == limit
+
+
+def fetch_indexed_setlist_tracks(
+    folder_name: str, limit: int = 30, offset: int = 0
+) -> tuple[list[dict[str, str]], bool]:
+    """Read one setlist page entirely from its dedicated SQLite membership."""
+    records = tidal_setlist_tracks_page(folder_name, limit=limit, offset=offset)
     return [_cached_track_row(record) for record in records], len(records) == limit

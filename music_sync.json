@@ -177,8 +177,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "bb95238d35145a7b4ae56d5be2819d750c0bae40316c26c0917f71481152fc89",
-      "last_sync": "2026-09-15T21:13:50.360091+00:00"
+      "source_version": "aba2a1eb77fd9f6e73f59738b4531180da1ac96c61beb7f49febd17c20e50c72",
+      "last_sync": "2026-09-16T22:30:47.757800+00:00"
     },
     {
       "enabled": true,
@@ -197,8 +197,8 @@
           }
         ]
       },
-      "source_version": "f055fb280f35a50fcff66c6ba316be52efb9f0a25d1c1f81d48483381d61a15b",
-      "last_sync": "2026-09-15T21:46:23.149289+00:00"
+      "source_version": "b018c8d2a91448bac3036b5416a9cc636b175312df8bee2c664e2dd29228202d",
+      "last_sync": "2026-09-16T22:30:51.648694+00:00"
     },
     {
       "enabled": true,
@@ -352,8 +352,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/ec9db1ff-3135-4dc7-bd56-9d660919ed3a",
       "tidal_name": "",
-      "source_version": "2026-09-15 21:43:54.350000+00:00",
-      "last_sync": "2026-09-15T21:46:25.968371+00:00"
+      "source_version": "2026-09-15 22:41:00.218000+00:00",
+      "last_sync": "2026-09-16T22:30:53.459325+00:00"
     },
     {
       "enabled": true,
@@ -362,8 +362,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/67d8ba91-841e-4355-9dab-3d8824e154fb",
       "tidal_name": "",
-      "source_version": "2026-09-15 17:09:40.865000+00:00",
-      "last_sync": "2026-09-15T20:40:21.477734+00:00"
+      "source_version": "2026-09-16 22:16:36.336000+00:00",
+      "last_sync": "2026-09-16T22:30:53.963954+00:00"
     },
     {
       "enabled": true,
@@ -372,8 +372,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/81b04eb5-f92f-46db-ac51-3d8b9947351c",
       "tidal_name": "",
-      "source_version": "2026-09-15 21:55:25.096000+00:00",
-      "last_sync": "2026-09-15T22:15:35.510324+00:00"
+      "source_version": "2026-09-16 06:55:54.691000+00:00",
+      "last_sync": "2026-09-16T22:30:54.591753+00:00"
     },
     {
       "enabled": true,

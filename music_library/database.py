@@ -106,6 +106,45 @@ CREATE TABLE IF NOT EXISTS track_tags (
         REFERENCES tracks(provider, provider_track_id) ON DELETE CASCADE,
     FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS track_dimension_values (
+    provider TEXT NOT NULL,
+    provider_track_id TEXT NOT NULL,
+    dimension TEXT NOT NULL,
+    value TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (provider, provider_track_id, dimension, value),
+    FOREIGN KEY (provider, provider_track_id)
+        REFERENCES tracks(provider, provider_track_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS track_dimensions_by_track
+    ON track_dimension_values(provider, provider_track_id, dimension);
+
+CREATE TABLE IF NOT EXISTS setlists (
+    folder_name TEXT PRIMARY KEY,
+    youtube_url TEXT NOT NULL DEFAULT '',
+    tidal_url TEXT NOT NULL DEFAULT '',
+    tidal_playlist_id TEXT NOT NULL DEFAULT '',
+    tidal_playlist_name TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS setlist_tracks (
+    folder_name TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'tidal',
+    provider_track_id TEXT NOT NULL,
+    mix_position TEXT NOT NULL DEFAULT '',
+    date_added TEXT,
+    PRIMARY KEY (folder_name, position),
+    FOREIGN KEY (folder_name) REFERENCES setlists(folder_name) ON DELETE CASCADE,
+    FOREIGN KEY (provider, provider_track_id)
+        REFERENCES tracks(provider, provider_track_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS setlist_tracks_by_track
+    ON setlist_tracks(provider, provider_track_id);
 """
 
 
@@ -158,6 +197,135 @@ def initialize(path: Path = DATABASE_PATH) -> None:
                 "UPDATE playlists SET source_last_updated=NULL WHERE provider='tidal'"
             )
             connection.execute("DELETE FROM liked_track_snapshots WHERE provider='tidal'")
+        legacy_mix_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mixes'"
+        ).fetchone()
+        if legacy_mix_exists:
+            mix_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(mixes)")
+            }
+            for column in ("tidal_url", "tidal_playlist_id", "tidal_playlist_name"):
+                if column not in mix_columns:
+                    connection.execute(
+                        f"ALTER TABLE mixes ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+                    )
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO setlists(
+                    folder_name, youtube_url, tidal_url,
+                    tidal_playlist_id, tidal_playlist_name, updated_at
+                )
+                SELECT folder_name, youtube_url, tidal_url,
+                       tidal_playlist_id, tidal_playlist_name, updated_at
+                FROM mixes
+                """
+            )
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO setlist_tracks(
+                    folder_name, position, provider, provider_track_id,
+                    mix_position, date_added
+                )
+                SELECT s.folder_name, pt.position, pt.provider,
+                       pt.provider_track_id, '', pt.date_added
+                FROM setlists s
+                JOIN playlist_tracks pt
+                  ON pt.provider='tidal'
+                 AND pt.provider_playlist_id=s.tidal_playlist_id
+                WHERE s.tidal_playlist_id != ''
+                """
+            )
+            # These playlists existed only because the old mix implementation
+            # reused playlist storage. Membership now lives in setlist_tracks.
+            connection.execute(
+                """
+                DELETE FROM playlists
+                WHERE provider='tidal' AND provider_playlist_id IN (
+                    SELECT tidal_playlist_id FROM setlists
+                    WHERE tidal_playlist_id != ''
+                )
+                """
+            )
+            connection.execute("DROP TABLE mixes")
+
+
+def setlist_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, str]]:
+    """Return all persisted user-owned metadata for local setlists."""
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT folder_name, youtube_url, tidal_url,
+                   tidal_playlist_id, tidal_playlist_name
+            FROM setlists ORDER BY folder_name COLLATE NOCASE
+            """
+        ).fetchall()
+    return {
+        str(row["folder_name"]): {
+            "youtube_url": str(row["youtube_url"] or ""),
+            "tidal_url": str(row["tidal_url"] or ""),
+            "tidal_playlist_id": str(row["tidal_playlist_id"] or ""),
+            "tidal_playlist_name": str(row["tidal_playlist_name"] or ""),
+        }
+        for row in rows
+    }
+
+
+def save_setlist_youtube_url(
+    folder_name: str, youtube_url: str, path: Path = DATABASE_PATH
+) -> None:
+    """Persist user-owned metadata for a discovered local mix."""
+    name = str(folder_name).strip()
+    if not name:
+        raise ValueError("Mix folder name cannot be empty")
+    initialize(path)
+    with connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO setlists(folder_name, youtube_url, updated_at)
+            VALUES(?, ?, ?)
+            ON CONFLICT(folder_name) DO UPDATE SET
+                youtube_url=excluded.youtube_url,
+                updated_at=excluded.updated_at
+            """,
+            (name, str(youtube_url or "").strip(), datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def save_setlist_tidal_source(
+    folder_name: str,
+    tidal_url: str,
+    playlist_id: str = "",
+    playlist_name: str = "",
+    path: Path = DATABASE_PATH,
+) -> None:
+    """Save a setlist's TIDAL import source without creating playlist membership."""
+    name = str(folder_name).strip()
+    if not name:
+        raise ValueError("Mix folder name cannot be empty")
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO setlists(
+                folder_name, youtube_url, tidal_url,
+                tidal_playlist_id, tidal_playlist_name, updated_at
+            ) VALUES(?, '', ?, ?, ?, ?)
+            ON CONFLICT(folder_name) DO UPDATE SET
+                tidal_url=excluded.tidal_url,
+                tidal_playlist_id=excluded.tidal_playlist_id,
+                tidal_playlist_name=excluded.tidal_playlist_name,
+                updated_at=excluded.updated_at
+            """,
+            (
+                name,
+                str(tidal_url or "").strip(),
+                str(playlist_id or "").strip(),
+                str(playlist_name or "").strip(),
+                now,
+            ),
+        )
 
 
 def tidal_track_record(track: Any) -> dict[str, Any]:
@@ -295,6 +463,107 @@ def store_tidal_playlist(
             )
 
 
+def store_tidal_setlist(
+    folder_name: str,
+    tidal_url: str,
+    playlist: Any,
+    tracks: list[Any] | list[dict[str, Any]],
+    mix_positions: list[str],
+    path: Path = DATABASE_PATH,
+) -> None:
+    """Replace one setlist inventory without creating indexed-playlist rows."""
+    name = str(folder_name).strip()
+    if not name:
+        raise ValueError("Setlist folder name cannot be empty")
+    initialize(path)
+    playlist_id = str(getattr(playlist, "id", "") or "")
+    playlist_name = str(getattr(playlist, "name", "") or name)
+    records = [item if isinstance(item, dict) else tidal_track_record(item) for item in tracks]
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO setlists(
+                folder_name, youtube_url, tidal_url,
+                tidal_playlist_id, tidal_playlist_name, updated_at
+            ) VALUES(?, '', ?, ?, ?, ?)
+            ON CONFLICT(folder_name) DO UPDATE SET
+                tidal_url=excluded.tidal_url,
+                tidal_playlist_id=excluded.tidal_playlist_id,
+                tidal_playlist_name=excluded.tidal_playlist_name,
+                updated_at=excluded.updated_at
+            """,
+            (name, str(tidal_url), playlist_id, playlist_name, now),
+        )
+        connection.execute("DELETE FROM setlist_tracks WHERE folder_name=?", (name,))
+        for position, record in enumerate(records):
+            track_id = str(record.get("id", ""))
+            if not track_id:
+                continue
+            connection.execute(
+                """
+                INSERT INTO tracks(
+                    provider, provider_track_id, title, artist, remix, album, album_art_url,
+                    duration_seconds, bpm, musical_key, key_scale, release_year,
+                    isrc, refreshed_at
+                ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider, provider_track_id) DO UPDATE SET
+                    title=excluded.title, artist=excluded.artist, remix=excluded.remix,
+                    album=excluded.album, album_art_url=excluded.album_art_url,
+                    duration_seconds=excluded.duration_seconds,
+                    bpm=excluded.bpm, musical_key=excluded.musical_key,
+                    key_scale=excluded.key_scale, release_year=excluded.release_year,
+                    isrc=excluded.isrc, refreshed_at=excluded.refreshed_at
+                """,
+                (
+                    track_id, record.get("title", ""), record.get("artist", ""),
+                    record.get("remix", ""), record.get("album", ""),
+                    record.get("album_art_url", ""), record.get("duration_seconds"),
+                    record.get("bpm"), record.get("musical_key", ""),
+                    record.get("key_scale", ""), record.get("year"),
+                    record.get("isrc", ""), now,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO setlist_tracks(
+                    folder_name, position, provider, provider_track_id,
+                    mix_position, date_added
+                ) VALUES(?, ?, 'tidal', ?, ?, ?)
+                """,
+                (
+                    name,
+                    position,
+                    track_id,
+                    mix_positions[position] if position < len(mix_positions) else "",
+                    record.get("date_added"),
+                ),
+            )
+
+
+def tidal_setlists_for_track(
+    track_id: str, path: Path = DATABASE_PATH
+) -> list[dict[str, str]]:
+    """Return every setlist containing a TIDAL track, including its timestamp."""
+    if not path.exists():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT s.folder_name AS id,
+                   COALESCE(NULLIF(s.tidal_playlist_name, ''), s.folder_name) AS name,
+                   st.mix_position
+            FROM setlist_tracks st
+            JOIN setlists s ON s.folder_name=st.folder_name
+            WHERE st.provider='tidal' AND st.provider_track_id=?
+            ORDER BY s.folder_name COLLATE NOCASE, st.position
+            """,
+            (str(track_id),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
 def tidal_playlists_for_track(
     track_id: str, path: Path = DATABASE_PATH
 ) -> list[dict[str, str]]:
@@ -391,6 +660,35 @@ def tidal_playlist_tracks_page(
         return [dict(row) for row in rows]
 
 
+def tidal_setlist_tracks_page(
+    folder_name: str,
+    limit: int = 30,
+    offset: int = 0,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Read one ordered page from a setlist, independently of playlists."""
+    if not path.exists():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
+                   t.duration_seconds, t.bpm, t.musical_key, t.key_scale,
+                   t.release_year AS year, t.isrc, t.album_art_url,
+                   st.date_added, st.mix_position
+            FROM setlist_tracks st
+            JOIN tracks t
+              ON t.provider=st.provider AND t.provider_track_id=st.provider_track_id
+            WHERE st.provider='tidal' AND st.folder_name=?
+            ORDER BY st.position
+            LIMIT ? OFFSET ?
+            """,
+            (str(folder_name), int(limit), int(offset)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
 def add_tidal_playlist_membership(
     playlist_id: str, track_id: str, path: Path = DATABASE_PATH
 ) -> None:
@@ -462,6 +760,90 @@ def remove_tidal_playlist_membership(
             """,
             (now, str(playlist_id)),
         )
+
+
+def tidal_dimensions_for_tracks(
+    track_ids: list[str], path: Path = DATABASE_PATH
+) -> dict[str, dict[str, list[str]]]:
+    """Return all local classification dimensions for several TIDAL tracks."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    result: dict[str, dict[str, list[str]]] = {track_id: {} for track_id in unique_ids}
+    if not unique_ids or not path.exists():
+        return result
+    initialize(path)
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT provider_track_id AS track_id, dimension, value
+            FROM track_dimension_values
+            WHERE provider='tidal' AND provider_track_id IN ({placeholders})
+            ORDER BY dimension, value COLLATE NOCASE
+            """,
+            unique_ids,
+        ).fetchall()
+    for row in rows:
+        result[row["track_id"]].setdefault(row["dimension"], []).append(row["value"])
+    return result
+
+
+def toggle_tidal_track_dimension(
+    track_id: str,
+    dimension: str,
+    value: str,
+    multiple: bool,
+    path: Path = DATABASE_PATH,
+) -> list[str]:
+    """Toggle a local dimension value, optionally enforcing one value only."""
+    allowed = {"rating", "energy", "vibe", "movement", "function", "structure"}
+    dimension = dimension.strip().lower()
+    value = value.strip()
+    if dimension not in allowed or not value:
+        raise ValueError("Invalid track dimension or value")
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as connection:
+        exists = connection.execute(
+            """
+            SELECT 1 FROM track_dimension_values
+            WHERE provider='tidal' AND provider_track_id=? AND dimension=? AND value=?
+            """,
+            (str(track_id), dimension, value),
+        ).fetchone()
+        if exists is not None:
+            connection.execute(
+                """
+                DELETE FROM track_dimension_values
+                WHERE provider='tidal' AND provider_track_id=? AND dimension=? AND value=?
+                """,
+                (str(track_id), dimension, value),
+            )
+        else:
+            if not multiple:
+                connection.execute(
+                    """
+                    DELETE FROM track_dimension_values
+                    WHERE provider='tidal' AND provider_track_id=? AND dimension=?
+                    """,
+                    (str(track_id), dimension),
+                )
+            connection.execute(
+                """
+                INSERT INTO track_dimension_values(
+                    provider, provider_track_id, dimension, value, created_at
+                ) VALUES('tidal', ?, ?, ?, ?)
+                """,
+                (str(track_id), dimension, value, now),
+            )
+        rows = connection.execute(
+            """
+            SELECT value FROM track_dimension_values
+            WHERE provider='tidal' AND provider_track_id=? AND dimension=?
+            ORDER BY value COLLATE NOCASE
+            """,
+            (str(track_id), dimension),
+        ).fetchall()
+        return [row["value"] for row in rows]
 
 
 def cached_tidal_liked_tracks(

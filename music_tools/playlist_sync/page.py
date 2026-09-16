@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import unquote
 
 from music_library.database import tidal_indexed_playlists
-from music_tools.liked_tracks import content as liked_tracks_content
-from music_tools.liked_tracks import register_callbacks as register_liked_tracks_callbacks
+from music_tools.track_browser import content as track_browser_content
+from music_tools.track_browser import register_callbacks as register_track_browser_callbacks
+from music_tools.mixes import content as mixes_content
+from music_tools.mixes import register_callbacks as register_mixes_callbacks
+from music_tools.mixes import register_routes as register_mixes_routes
 from music_tools.ui import INDEX_STRING, shell
 
 
@@ -19,6 +23,7 @@ def create_app(engine):
         raise RuntimeError("Install dependencies first: pip install -r requirements.txt") from exc
 
     app = Dash(__name__, title="Music tools", suppress_callback_exceptions=True)
+    register_mixes_routes(app.server)
 
     @app.server.get("/spotify/login")
     def spotify_login_route():
@@ -210,7 +215,12 @@ def create_app(engine):
     @callback(Output("page-root", "children"), Input("app-url", "pathname"))
     def route_page(pathname: str | None):
         if pathname == "/liked-tracks":
-            return shell(html, "liked-tracks", liked_tracks_content(html, dcc))
+            return shell(html, "liked-tracks", track_browser_content(html, dcc))
+        if pathname == "/mixes":
+            return shell(html, "mixes", mixes_content(html, dcc))
+        if pathname and pathname.startswith("/mixes/"):
+            folder_name = unquote(pathname.removeprefix("/mixes/").strip("/"))
+            return shell(html, f"mix:{folder_name}", mixes_content(html, dcc, folder_name))
         if pathname and pathname.startswith("/playlists/"):
             playlist_id = pathname.removeprefix("/playlists/").strip("/")
             indexed = {item["id"]: item for item in tidal_indexed_playlists()}
@@ -224,11 +234,12 @@ def create_app(engine):
                 return shell(
                     html,
                     f"playlist:{playlist_id}",
-                    liked_tracks_content(html, dcc, collection),
+                    track_browser_content(html, dcc, collection),
                 )
         return playlist_sync_layout
 
-    register_liked_tracks_callbacks(app, callback, Input, Output, State, html, ctx, engine)
+    register_track_browser_callbacks(app, callback, Input, Output, State, html, ctx, engine)
+    register_mixes_callbacks(app, callback, Input, Output, State, ctx, html, dcc, engine)
 
     @callback(Output("mapping-list", "children"), Input("mapping-store", "data"))
     def render_mappings(rows: list[dict[str, Any]]):
