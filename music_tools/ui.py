@@ -14,7 +14,7 @@ def sidebar(html: Any, active: str):
         ("playlist-sync", "⇄", "Playlist sync", "/"),
         ("liked-tracks", "♥", "Liked tracks", "/liked-tracks"),
     ]
-    playlists = tidal_indexed_playlists()
+    indexed = tidal_indexed_playlists()
     tool_links = [
         html.A(
             [html.Span(icon, className="nav-icon"), html.Span(label)],
@@ -24,46 +24,65 @@ def sidebar(html: Any, active: str):
         )
         for index, (key, icon, label, href) in enumerate(items)
     ]
-    playlist_group = []
-    if playlists:
-        playlist_group = [
+    next_index = len(items)
+
+    def collection_group(label, key, records, route_prefix, active_prefix, icon="♫"):
+        nonlocal next_index
+        if not records:
+            return []
+        parent_index = next_index
+        next_index += 1
+        children = []
+        for record in records:
+            record_id = str(record["id"])
+            href = f"/{route_prefix}/{record_id}"
+            children.append(
+                html.A(
+                    [html.Span(icon, className="nav-icon"), html.Span(record.get("name") or record_id)],
+                    href=href,
+                    className=(
+                        "nav-item playlist-nav active"
+                        if f"{active_prefix}:{record_id}" == active
+                        else "nav-item playlist-nav"
+                    ),
+                    title=record.get("name") or record_id,
+                    **{
+                        "data-sidebar-index": str(next_index),
+                        "data-sidebar-href": href,
+                    },
+                )
+            )
+            next_index += 1
+        return [
             html.Details(
                 [
                     html.Summary(
-                        [html.Span("▸", className="nav-chevron"), html.Span("Playlists")],
+                        [html.Span("▸", className="nav-chevron"), html.Span(label)],
                         className="nav-item playlist-toggle",
                         **{
-                            "data-sidebar-index": str(len(items)),
-                            "data-sidebar-toggle": "playlists",
+                            "data-sidebar-index": str(parent_index),
+                            "data-sidebar-toggle": key,
                         },
                     ),
-                    html.Div(
-                        [
-                            html.A(
-                                [html.Span("♫", className="nav-icon"), html.Span(playlist.get("name") or playlist["id"])],
-                                href=f"/playlists/{playlist['id']}",
-                                className=(
-                                    "nav-item playlist-nav active"
-                                    if f"playlist:{playlist['id']}" == active
-                                    else "nav-item playlist-nav"
-                                ),
-                                title=playlist.get("name") or playlist["id"],
-                                **{
-                                    "data-sidebar-index": str(len(items) + index + 1),
-                                    "data-sidebar-href": f"/playlists/{playlist['id']}",
-                                },
-                            )
-                            for index, playlist in enumerate(playlists)
-                        ],
-                        className="playlist-nav-list",
-                    ),
+                    html.Div(children, className="playlist-nav-list"),
                 ],
-                open=active.startswith("playlist:"),
+                open=active.startswith(f"{active_prefix}:"),
                 className="playlist-group",
             )
         ]
+
+    collection_groups = []
+    for label, key, route_prefix, active_prefix, kind in (
+        ("Playlists", "playlists", "playlists", "playlist", "playlist"),
+        ("Events", "events", "events", "event", "event"),
+        ("Sources", "sources", "sources", "source", "source"),
+    ):
+        records = [item for item in indexed if item.get("collection_type") == kind]
+        collection_groups.extend(
+            collection_group(label, key, records, route_prefix, active_prefix)
+        )
     mixes = discover_mixes()
-    mix_index = len(items) + (len(playlists) + 1 if playlists else 0)
+    mix_index = next_index
     mix_group = [
         html.Details(
             [
@@ -107,11 +126,12 @@ def sidebar(html: Any, active: str):
                 className="brand",
             ),
             html.Nav(
-                [*tool_links, *playlist_group, *mix_group],
+                [*tool_links, *collection_groups, *mix_group],
                 className="side-nav",
                 **{"aria-label": "Main navigation"},
             ),
         ],
+        id="app-sidebar",
         className="sidebar",
     )
 

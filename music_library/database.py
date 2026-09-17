@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS playlists (
     provider TEXT NOT NULL,
     provider_playlist_id TEXT NOT NULL,
     name TEXT NOT NULL DEFAULT '',
+    collection_type TEXT NOT NULL DEFAULT 'playlist',
     source_last_updated TEXT,
     indexed_at TEXT NOT NULL,
     PRIMARY KEY (provider, provider_playlist_id)
@@ -185,6 +186,14 @@ def initialize(path: Path = DATABASE_PATH) -> None:
             # more before their per-playlist added timestamps are trustworthy.
             connection.execute(
                 "UPDATE playlists SET source_last_updated=NULL WHERE provider='tidal'"
+            )
+        playlist_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(playlists)")
+        }
+        if "collection_type" not in playlist_columns:
+            connection.execute(
+                "ALTER TABLE playlists ADD COLUMN collection_type "
+                "TEXT NOT NULL DEFAULT 'playlist'"
             )
         track_columns = {
             row["name"] for row in connection.execute("PRAGMA table_info(tracks)")
@@ -564,6 +573,35 @@ def tidal_setlists_for_track(
         return [dict(row) for row in rows]
 
 
+def tidal_setlists_for_tracks(
+    track_ids: list[str], path: Path = DATABASE_PATH
+) -> dict[str, list[dict[str, str]]]:
+    """Batch reverse-membership lookup for TIDAL tracks in local setlists."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    result: dict[str, list[dict[str, str]]] = {track_id: [] for track_id in unique_ids}
+    if not unique_ids or not path.exists():
+        return result
+    initialize(path)
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT st.provider_track_id AS track_id,
+                            s.folder_name AS id,
+                            COALESCE(NULLIF(s.tidal_playlist_name, ''), s.folder_name) AS name
+            FROM setlist_tracks st
+            JOIN setlists s ON s.folder_name=st.folder_name
+            WHERE st.provider='tidal'
+              AND st.provider_track_id IN ({placeholders})
+            ORDER BY name COLLATE NOCASE
+            """,
+            unique_ids,
+        ).fetchall()
+    for row in rows:
+        result[row["track_id"]].append({"id": row["id"], "name": row["name"]})
+    return result
+
+
 def tidal_playlists_for_track(
     track_id: str, path: Path = DATABASE_PATH
 ) -> list[dict[str, str]]:
@@ -574,7 +612,7 @@ def tidal_playlists_for_track(
     with connect(path) as connection:
         rows = connection.execute(
             """
-            SELECT DISTINCT p.provider_playlist_id AS id, p.name
+            SELECT DISTINCT p.provider_playlist_id AS id, p.name, p.collection_type
             FROM playlist_tracks pt
             JOIN playlists p
               ON p.provider = pt.provider AND p.provider_playlist_id = pt.provider_playlist_id
@@ -600,7 +638,7 @@ def tidal_playlists_for_tracks(
         rows = connection.execute(
             f"""
             SELECT DISTINCT pt.provider_track_id AS track_id,
-                            p.provider_playlist_id AS id, p.name
+                            p.provider_playlist_id AS id, p.name, p.collection_type
             FROM playlist_tracks pt
             JOIN playlists p
               ON p.provider=pt.provider AND p.provider_playlist_id=pt.provider_playlist_id
@@ -611,11 +649,19 @@ def tidal_playlists_for_tracks(
             unique_ids,
         ).fetchall()
     for row in rows:
-        result[row["track_id"]].append({"id": row["id"], "name": row["name"]})
+        result[row["track_id"]].append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "collection_type": row["collection_type"],
+            }
+        )
     return result
 
 
-def tidal_indexed_playlists(path: Path = DATABASE_PATH) -> list[dict[str, str]]:
+def tidal_indexed_playlists(
+    path: Path = DATABASE_PATH, collection_type: str | None = None
+) -> list[dict[str, str]]:
     """Return every locally indexed TIDAL playlist in display order."""
     if not path.exists():
         return []
@@ -623,13 +669,34 @@ def tidal_indexed_playlists(path: Path = DATABASE_PATH) -> list[dict[str, str]]:
     with connect(path) as connection:
         rows = connection.execute(
             """
-            SELECT provider_playlist_id AS id, name
+            SELECT provider_playlist_id AS id, name, collection_type
             FROM playlists
-            WHERE provider='tidal'
+            WHERE provider='tidal' AND (? IS NULL OR collection_type=?)
             ORDER BY name COLLATE NOCASE
-            """
+            """,
+            (collection_type, collection_type),
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+def set_tidal_playlist_collection_type(
+    playlist_id: str, collection_type: str, path: Path = DATABASE_PATH
+) -> None:
+    """Classify an already indexed TIDAL playlist for library presentation."""
+    kind = str(collection_type or "playlist").strip().lower()
+    if kind not in {"playlist", "event", "source"}:
+        raise ValueError(f"Unknown playlist collection type: {collection_type!r}")
+    if not path.exists():
+        return
+    initialize(path)
+    with connect(path) as connection:
+        connection.execute(
+            """
+            UPDATE playlists SET collection_type=?
+            WHERE provider='tidal' AND provider_playlist_id=?
+            """,
+            (kind, str(playlist_id)),
+        )
 
 
 def tidal_playlist_tracks_page(

@@ -11,6 +11,7 @@ from music_library.database import (
     tidal_indexed_playlists,
     tidal_playlists_for_track,
     tidal_playlists_for_tracks,
+    tidal_setlists_for_tracks,
     toggle_tidal_track_dimension,
 )
 from music_tools.track_browser.table import (
@@ -35,6 +36,36 @@ DIMENSION_VALUES = {
     "structure": ["Groove-led", "Progressive", "Drop", "Big Drop", "Breakdown-heavy", "Vocal-led", "Tool"],
 }
 MULTI_VALUE_DIMENSIONS = {"vibe", "movement", "function", "structure"}
+
+
+def _attach_memberships(
+    rows: list[dict[str, Any]],
+    playlist_memberships: dict[str, list[dict[str, str]]],
+    setlist_memberships: dict[str, list[dict[str, str]]],
+    collection: dict[str, Any] | None = None,
+) -> None:
+    """Split reverse memberships into their dedicated table/inspector fields."""
+    current_type = str((collection or {}).get("type") or "")
+    current_id = str((collection or {}).get("id") or "")
+    for row in rows:
+        track_id = str(row.get("id") or "")
+        grouped = {"playlist": [], "event": [], "source": []}
+        for membership in playlist_memberships.get(track_id, []):
+            if current_type == "playlist" and str(membership.get("id") or "") == current_id:
+                continue
+            kind = str(membership.get("collection_type") or "playlist")
+            grouped.setdefault(kind, []).append(membership)
+        row["playlists"] = grouped["playlist"]
+        row["events"] = grouped["event"]
+        row["sources"] = grouped["source"]
+        row["mixes"] = [
+            membership
+            for membership in setlist_memberships.get(track_id, [])
+            if not (
+                current_type == "setlist"
+                and str(membership.get("id") or "") == current_id
+            )
+        ]
 
 
 def content(html: Any, dcc: Any, collection: dict[str, Any] | None = None):
@@ -69,6 +100,9 @@ def content(html: Any, dcc: Any, collection: dict[str, Any] | None = None):
                                             for key, label in available_columns
                                         ],
                                         value=visible_fields,
+                                        persistence=True,
+                                        persistence_type="local",
+                                        persisted_props=["value"],
                                         className="field-picker-options",
                                     ),
                                     id="track-fields-menu",
@@ -194,10 +228,12 @@ def register_callbacks(
             engine.LOGGER.exception("ui.liked_tracks load_failed")
             return html.Div(), f"Could not load liked tracks: {exc}", [], None, False
 
-        memberships = tidal_playlists_for_tracks([row.get("id", "") for row in page])
-        dimensions = tidal_dimensions_for_tracks([row.get("id", "") for row in page])
+        track_ids = [row.get("id", "") for row in page]
+        memberships = tidal_playlists_for_tracks(track_ids)
+        setlists = tidal_setlists_for_tracks(track_ids)
+        dimensions = tidal_dimensions_for_tracks(track_ids)
+        _attach_memberships(page, memberships, setlists, collection)
         for index, row in enumerate(page):
-            row["playlists"] = memberships.get(row.get("id", ""), [])
             row["dimensions"] = dimensions.get(row.get("id", ""), {})
             row["_source_order"] = offset + index
         selected_order = None
@@ -292,18 +328,20 @@ def register_callbacks(
         if selected is None or not 0 <= selected < len(rows):
             return html.Div("Select a track", className="detail-empty")
         row = rows[selected]
-        playlists = tidal_playlists_for_track(row.get("id", "")) if row.get("id") else []
-        playlist_tags = (
-            [
+        def membership_field(key: str, label: str):
+            memberships = row.get(key) or []
+            tags = [
                 html.Span(
-                    playlist.get("name") or playlist.get("id"),
+                    item.get("name") or item.get("id"),
                     className="playlist-tag",
-                    title=playlist.get("id", ""),
+                    title=item.get("id", ""),
                 )
-                for playlist in playlists
-            ]
-            or [html.Span("Not in an indexed playlist", className="detail-empty")]
-        )
+                for item in memberships
+            ] or [html.Span("None", className="detail-empty")]
+            return html.Div(
+                [html.Span(label), html.Div(tags, className="playlist-tags")],
+                className="detail-field detail-playlists",
+            )
         dimensions = row.get("dimensions") or {}
         dimension_fields = []
         for dimension, options in DIMENSION_VALUES.items():
@@ -350,10 +388,10 @@ def register_callbacks(
             html.H2(row.get("title") or "—", className="detail-title"),
             html.Div(row.get("artist") or "—", className="detail-artist"),
             *dimension_fields,
-            html.Div(
-                [html.Span("Playlists"), html.Div(playlist_tags, className="playlist-tags")],
-                className="detail-field detail-playlists",
-            ),
+            membership_field("playlists", "Playlists"),
+            membership_field("events", "Events"),
+            membership_field("sources", "Sources"),
+            membership_field("mixes", "Mixes"),
         ]
 
     @callback(
@@ -599,7 +637,12 @@ def register_callbacks(
 
             updated_rows = [dict(row) for row in rows]
             memberships = tidal_playlists_for_track(track_id)
-            updated_rows[selected]["playlists"] = memberships
+            _attach_memberships(
+                [updated_rows[selected]],
+                {track_id: memberships},
+                {track_id: updated_rows[selected].get("mixes") or []},
+                collection,
+            )
             updated_selection = selected
             viewing_modified_playlist = (
                 (collection or {}).get("type") == "playlist"

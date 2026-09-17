@@ -23,7 +23,8 @@
         ]
       },
       "source_version": "4d0d1dfd83add74b4754e7fb582fa79bc3b357bf4b711173cb2a3746eb34fa91",
-      "last_sync": "2026-08-31T15:21:12.087735+00:00"
+      "last_sync": "2026-08-31T15:21:12.087735+00:00",
+      "collection_type": "event"
     },
     {
       "enabled": true,
@@ -36,7 +37,8 @@
         "tidal_to_spotify": []
       },
       "source_version": "c9d23bcc700cec972c1a67d5815beebed3de4791e7d795eed06f7f618f6b2783",
-      "last_sync": "2026-09-15T18:31:34.742116+00:00"
+      "last_sync": "2026-09-15T18:31:34.742116+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -152,7 +154,8 @@
         ]
       },
       "source_version": "AAAChX6xTRYdimGZrsPj17JGRTYkAPF+",
-      "last_sync": "2026-08-31T15:21:50.472312+00:00"
+      "last_sync": "2026-08-31T15:21:50.472312+00:00",
+      "collection_type": "source"
     },
     {
       "enabled": true,
@@ -165,7 +168,8 @@
         "tidal_to_spotify": []
       },
       "source_version": "9d8848a29b24e2704fce80d5ed8df2d3f1fe4b498b39bbbb9bf544e0a8e24476",
-      "last_sync": "2026-09-15T22:15:29.428898+00:00"
+      "last_sync": "2026-09-15T22:15:29.428898+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -178,7 +182,8 @@
         "tidal_to_spotify": []
       },
       "source_version": "aba2a1eb77fd9f6e73f59738b4531180da1ac96c61beb7f49febd17c20e50c72",
-      "last_sync": "2026-09-16T22:30:47.757800+00:00"
+      "last_sync": "2026-09-16T22:30:47.757800+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -198,7 +203,8 @@
         ]
       },
       "source_version": "b018c8d2a91448bac3036b5416a9cc636b175312df8bee2c664e2dd29228202d",
-      "last_sync": "2026-09-16T22:30:51.648694+00:00"
+      "last_sync": "2026-09-16T22:30:51.648694+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -211,7 +217,8 @@
         "tidal_to_spotify": []
       },
       "source_version": "f85d58a3bfc52f90a2b5ec00a04fc18ecff9f10fefff3d727ff85143e4fdf00c",
-      "last_sync": "2026-09-13T17:10:54.800961+00:00"
+      "last_sync": "2026-09-13T17:10:54.800961+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -243,7 +250,8 @@
         ]
       },
       "source_version": "255439cdcab3e73b1998140e97861150d26a26f6da7c395853ae5ef30dcd1827",
-      "last_sync": "2026-08-27T20:07:15.397268+00:00"
+      "last_sync": "2026-08-27T20:07:15.397268+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -323,7 +331,8 @@
         ]
       },
       "source_version": "AAAAWkET4HC0VdZXNAvZ8CmsMKCgiV0R",
-      "last_sync": "2026-09-14T15:50:05.753502+00:00"
+      "last_sync": "2026-09-14T15:50:05.753502+00:00",
+      "collection_type": "source"
     },
     {
       "enabled": true,
@@ -343,7 +352,8 @@
         ]
       },
       "source_version": "7db31d311963d6c0ff89bafe593c3a4f9f538ee0fdcfeb22844dc6ac39cd6f50",
-      "last_sync": "2026-09-14T15:50:14.327092+00:00"
+      "last_sync": "2026-09-14T15:50:14.327092+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -352,8 +362,9 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/ec9db1ff-3135-4dc7-bd56-9d660919ed3a",
       "tidal_name": "",
-      "source_version": "2026-09-15 22:41:00.218000+00:00",
-      "last_sync": "2026-09-16T22:30:53.459325+00:00"
+      "source_version": "2026-09-17 20:35:25.155000+00:00",
+      "last_sync": "2026-09-17T20:40:35.759188+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -363,7 +374,8 @@
       "tidal": "https://tidal.com/playlist/67d8ba91-841e-4355-9dab-3d8824e154fb",
       "tidal_name": "",
       "source_version": "2026-09-16 22:16:36.336000+00:00",
-      "last_sync": "2026-09-16T22:30:53.963954+00:00"
+      "last_sync": "2026-09-16T22:30:53.963954+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -372,8 +384,9 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/81b04eb5-f92f-46db-ac51-3d8b9947351c",
       "tidal_name": "",
-      "source_version": "2026-09-16 06:55:54.691000+00:00",
-      "last_sync": "2026-09-16T22:30:54.591753+00:00"
+      "source_version": "2026-09-17 20:14:01.106000+00:00",
+      "last_sync": "2026-09-17T20:34:26.308425+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -383,7 +396,8 @@
       "tidal": "https://tidal.com/playlist/409c9a77-9854-4036-8d07-0b9e96e04f0e",
       "tidal_name": "",
       "source_version": "2026-09-15 21:59:40.150000+00:00",
-      "last_sync": "2026-09-15T22:15:36.003311+00:00"
+      "last_sync": "2026-09-15T22:15:36.003311+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -392,8 +406,9 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/e873d913-f9b7-4425-bda4-186ba4b40957",
       "tidal_name": "",
-      "source_version": "2026-09-15 21:18:37.442000+00:00",
-      "last_sync": "2026-09-15T21:46:28.330942+00:00"
+      "source_version": "2026-09-16 22:34:16.585000+00:00",
+      "last_sync": "2026-09-17T17:46:04.049113+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -403,7 +418,8 @@
       "tidal": "https://tidal.com/playlist/722cd210-7ad1-400d-b012-197b94b65708",
       "tidal_name": "",
       "source_version": "2026-09-13 12:38:50.146000+00:00",
-      "last_sync": "2026-09-15T20:40:22.776835+00:00"
+      "last_sync": "2026-09-15T20:40:22.776835+00:00",
+      "collection_type": "playlist"
     },
     {
       "enabled": true,
@@ -413,7 +429,8 @@
       "tidal": "https://tidal.com/playlist/a3579bcb-f369-4604-8f7f-493b73215397",
       "tidal_name": "",
       "source_version": "2026-09-15 11:20:44.426000+00:00",
-      "last_sync": "2026-09-15T21:48:59.478839+00:00"
+      "last_sync": "2026-09-15T21:48:59.478839+00:00",
+      "collection_type": "event"
     },
     {
       "enabled": true,
@@ -423,7 +440,8 @@
       "tidal": "https://tidal.com/playlist/d25c9103-7550-45bd-a96b-271e90221c8a",
       "tidal_name": "",
       "source_version": "2026-09-13 13:09:40.153000+00:00",
-      "last_sync": "2026-09-15T22:24:49.132393+00:00"
+      "last_sync": "2026-09-15T22:24:49.132393+00:00",
+      "collection_type": "source"
     }
   ]
 }

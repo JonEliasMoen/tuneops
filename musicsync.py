@@ -45,6 +45,7 @@ _load_dotenv(ROOT / ".env")
 
 from music_library.database import (  # noqa: E402 - local .env configures its path
     cached_tidal_playlist,
+    set_tidal_playlist_collection_type,
     store_tidal_playlist,
     tidal_track_record,
 )
@@ -136,6 +137,7 @@ def default_config() -> dict[str, Any]:
                 "enabled": True,
                 "name": "My playlist sync",
                 "direction": "spotify_to_tidal",
+                "collection_type": "playlist",
                 "spotify": "https://open.spotify.com/playlist/PASTE_ID_HERE",
                 "tidal": "",
                 "tidal_name": "",
@@ -824,6 +826,11 @@ def sync_one(spotify: Any, tidal: Any, entry: dict[str, Any], settings: dict[str
         result = cache_tidal_playlist(tidal, entry)
     else:
         raise ValueError(f"Unknown sync direction: {direction!r}")
+    tidal_playlist_id = _id(entry.get("tidal", ""))
+    if tidal_playlist_id:
+        set_tidal_playlist_collection_type(
+            tidal_playlist_id, entry.get("collection_type", "playlist")
+        )
     result.label = entry.get("name", "")
     if not result.skipped:
         entry["last_sync"] = datetime.now(timezone.utc).isoformat()

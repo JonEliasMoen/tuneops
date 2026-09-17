@@ -5,13 +5,16 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import unquote
 
-from music_library.database import tidal_indexed_playlists
+from music_library.database import (
+    set_tidal_playlist_collection_type,
+    tidal_indexed_playlists,
+)
 from music_tools.track_browser import content as track_browser_content
 from music_tools.track_browser import register_callbacks as register_track_browser_callbacks
 from music_tools.mixes import content as mixes_content
 from music_tools.mixes import register_callbacks as register_mixes_callbacks
 from music_tools.mixes import register_routes as register_mixes_routes
-from music_tools.ui import INDEX_STRING, shell
+from music_tools.ui import INDEX_STRING, shell, sidebar
 
 
 def create_app(engine):
@@ -60,11 +63,6 @@ def create_app(engine):
             engine.LOGGER.exception("spotify.auth callback_failed")
             return redirect("/?spotify_error=callback")
 
-    initial = engine.load_config()
-    for row in initial["playlists"]:
-        row.setdefault("name", "")
-        row.setdefault("direction", "spotify_to_tidal")
-
     def mapping_card(row: dict[str, Any], index: int):
         return html.Div(
             [
@@ -106,6 +104,18 @@ def create_app(engine):
                     value=row.get("direction", "spotify_to_tidal"),
                     clearable=False,
                     id={"type": "mapping-direction", "index": index},
+                    className="direction-select",
+                ),
+                html.Label("Library section"),
+                dcc.Dropdown(
+                    options=[
+                        {"label": "Playlist", "value": "playlist"},
+                        {"label": "Event", "value": "event"},
+                        {"label": "Source", "value": "source"},
+                    ],
+                    value=row.get("collection_type", "playlist"),
+                    clearable=False,
+                    id={"type": "mapping-collection-type", "index": index},
                     className="direction-select",
                 ),
                 html.Div(
@@ -154,7 +164,8 @@ def create_app(engine):
         )
 
     def rows_from_form(
-        labels, enabled, directions, spotify_values, tidal_values, names, stored_rows=None
+        labels, enabled, directions, collection_types,
+        spotify_values, tidal_values, names, stored_rows=None
     ) -> list[dict[str, Any]]:
         stored_rows = stored_rows or []
         rows = []
@@ -166,6 +177,7 @@ def create_app(engine):
                     "enabled": "enabled" in (enabled[index] or []),
                     "name": labels[index] or "",
                     "direction": directions[index] or "spotify_to_tidal",
+                    "collection_type": collection_types[index] or "playlist",
                     "spotify": spotify_values[index] or "",
                     "tidal": tidal_values[index] or "",
                     "tidal_name": names[index] or "",
@@ -174,12 +186,23 @@ def create_app(engine):
             rows.append(row)
         return rows
 
-    spotify_badge = engine._connection_badge("spotify", engine.SPOTIFY_CACHE)
-    tidal_badge = engine._connection_badge("tidal", engine.TIDAL_CACHE)
-    playlist_sync_layout = shell(
-        html,
-        "playlist-sync",
-        [
+    def playlist_sync_layout():
+        current = engine.load_config()
+        for row in current["playlists"]:
+            row.setdefault("name", "")
+            row.setdefault("direction", "spotify_to_tidal")
+            row.setdefault("collection_type", "playlist")
+            playlist_id = engine._id(row.get("tidal", ""))
+            if playlist_id:
+                set_tidal_playlist_collection_type(
+                    playlist_id, row["collection_type"]
+                )
+        spotify_badge = engine._connection_badge("spotify", engine.SPOTIFY_CACHE)
+        tidal_badge = engine._connection_badge("tidal", engine.TIDAL_CACHE)
+        return shell(
+            html,
+            "playlist-sync",
+            [
             html.H1("Spotify ↔ TIDAL"),
             html.P("Configure playlist pairs, connect both accounts once, then sync on demand."),
             html.Div(
@@ -199,7 +222,7 @@ def create_app(engine):
             ),
             dcc.Loading(html.Pre("Ready", id="status"), type="circle"),
             dcc.Interval(id="connection-refresh", interval=500, max_intervals=1, n_intervals=0),
-            dcc.Store(id="mapping-store", data=initial["playlists"]),
+            dcc.Store(id="mapping-store", data=current["playlists"]),
             html.H2("Playlist mappings"),
             html.Div(id="mapping-list"),
             html.Div(
@@ -207,8 +230,8 @@ def create_app(engine):
                 className="actions",
             ),
             html.P(f"Configuration: {engine.CONFIG_PATH}", className="hint"),
-        ],
-    )
+            ],
+        )
 
     app.layout = html.Div([dcc.Location(id="app-url"), html.Div(id="page-root")])
 
@@ -221,11 +244,25 @@ def create_app(engine):
         if pathname and pathname.startswith("/mixes/"):
             folder_name = unquote(pathname.removeprefix("/mixes/").strip("/"))
             return shell(html, f"mix:{folder_name}", mixes_content(html, dcc, folder_name))
-        if pathname and pathname.startswith("/playlists/"):
-            playlist_id = pathname.removeprefix("/playlists/").strip("/")
+        collection_routes = {
+            "/playlists/": ("playlist", "playlist"),
+            "/events/": ("event", "event"),
+            "/sources/": ("source", "source"),
+        }
+        route = next(
+            (
+                (prefix, kind, active_prefix)
+                for prefix, (kind, active_prefix) in collection_routes.items()
+                if pathname and pathname.startswith(prefix)
+            ),
+            None,
+        )
+        if route:
+            prefix, kind, active_prefix = route
+            playlist_id = pathname.removeprefix(prefix).strip("/")
             indexed = {item["id"]: item for item in tidal_indexed_playlists()}
             playlist = indexed.get(playlist_id)
-            if playlist:
+            if playlist and playlist.get("collection_type") == kind:
                 collection = {
                     "type": "playlist",
                     "id": playlist_id,
@@ -233,10 +270,10 @@ def create_app(engine):
                 }
                 return shell(
                     html,
-                    f"playlist:{playlist_id}",
+                    f"{active_prefix}:{playlist_id}",
                     track_browser_content(html, dcc, collection),
                 )
-        return playlist_sync_layout
+        return playlist_sync_layout()
 
     register_track_browser_callbacks(app, callback, Input, Output, State, html, ctx, engine)
     register_mixes_callbacks(app, callback, Input, Output, State, ctx, html, dcc, engine)
@@ -245,10 +282,16 @@ def create_app(engine):
     def render_mappings(rows: list[dict[str, Any]]):
         return [mapping_card(row, index) for index, row in enumerate(rows)]
 
+    @callback(Output("app-sidebar", "children"), Input("mapping-store", "data"))
+    def refresh_sidebar(_rows: list[dict[str, Any]]):
+        """Reflect saved collection classifications without a page reload."""
+        return sidebar(html, "playlist-sync").children
+
     form_states = [
         State({"type": "mapping-label", "index": ALL}, "value"),
         State({"type": "mapping-enabled", "index": ALL}, "value"),
         State({"type": "mapping-direction", "index": ALL}, "value"),
+        State({"type": "mapping-collection-type", "index": ALL}, "value"),
         State({"type": "mapping-spotify", "index": ALL}, "value"),
         State({"type": "mapping-tidal", "index": ALL}, "value"),
         State({"type": "mapping-name", "index": ALL}, "value"),
@@ -263,10 +306,12 @@ def create_app(engine):
         prevent_initial_call=True,
     )
     def change_rows(
-        _, delete_clicks, labels, enabled, directions, spotify_values, tidal_values, names, stored_rows
+        _, delete_clicks, labels, enabled, directions, collection_types,
+        spotify_values, tidal_values, names, stored_rows
     ):
         rows = rows_from_form(
-            labels, enabled, directions, spotify_values, tidal_values, names, stored_rows
+            labels, enabled, directions, collection_types,
+            spotify_values, tidal_values, names, stored_rows
         )
         trigger = ctx.triggered_id
         if trigger == "add":
@@ -275,6 +320,7 @@ def create_app(engine):
                     "enabled": True,
                     "name": "",
                     "direction": "spotify_to_tidal",
+                    "collection_type": "playlist",
                     "spotify": "",
                     "tidal": "",
                     "tidal_name": "",
@@ -290,18 +336,29 @@ def create_app(engine):
 
     @callback(
         Output("status", "children", allow_duplicate=True),
+        Output("mapping-store", "data", allow_duplicate=True),
         Input("save", "n_clicks"),
         *form_states,
         prevent_initial_call=True,
     )
-    def save_rows(_, labels, enabled, directions, spotify_values, tidal_values, names, stored_rows):
+    def save_rows(
+        _, labels, enabled, directions, collection_types,
+        spotify_values, tidal_values, names, stored_rows
+    ):
         rows = rows_from_form(
-            labels, enabled, directions, spotify_values, tidal_values, names, stored_rows
+            labels, enabled, directions, collection_types,
+            spotify_values, tidal_values, names, stored_rows
         )
         config = engine.load_config()
         config["playlists"] = rows
         engine.save_config(config)
-        return f"Saved {len(rows)} mapping(s)."
+        for row in rows:
+            playlist_id = engine._id(row.get("tidal", ""))
+            if playlist_id:
+                set_tidal_playlist_collection_type(
+                    playlist_id, row.get("collection_type", "playlist")
+                )
+        return f"Saved {len(rows)} mapping(s).", rows
 
     app.clientside_callback(
         "function(n) { if (n) { window.location.assign('/spotify/login'); } "
@@ -356,9 +413,13 @@ def create_app(engine):
         prevent_initial_call=True,
         running=[(Output("sync", "disabled"), True, False)],
     )
-    def sync_now(_, labels, enabled, directions, spotify_values, tidal_values, names, stored_rows):
+    def sync_now(
+        _, labels, enabled, directions, collection_types,
+        spotify_values, tidal_values, names, stored_rows
+    ):
         rows = rows_from_form(
-            labels, enabled, directions, spotify_values, tidal_values, names, stored_rows
+            labels, enabled, directions, collection_types,
+            spotify_values, tidal_values, names, stored_rows
         )
         config = engine.load_config()
         config["playlists"] = rows

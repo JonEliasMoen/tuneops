@@ -98,7 +98,8 @@ new temporary test databases do not require this coordination.
 Core tables:
 
 - `tracks`: provider metadata keyed by provider and provider track ID.
-- `playlists`: indexed playlist names and provider `last_updated` values.
+- `playlists`: indexed playlist names, provider `last_updated` values, and a
+  presentation-only `collection_type` of `playlist`, `event`, or `source`.
 - `playlist_tracks`: ordered membership and per-playlist `date_added`, with an
   index supporting track-to-playlists queries.
 - `liked_track_snapshots` and `liked_tracks`: per-user ordered liked-track cache.
@@ -180,6 +181,13 @@ revalidation on the following run.
 - Indexed playlist links live inside a collapsible **Playlists** sidebar node.
   Click or Enter toggles it, hidden children are skipped by keyboard navigation,
   and the node opens automatically on an active playlist route.
+- Playlist-sync mappings classify their indexed TIDAL playlist as Playlist,
+  Event, or Source. Each class has its own collapsible sidebar group and its own
+  reverse-membership table/inspector field; do not leak Events or Sources into
+  the Playlists field. Setlist membership is shown separately as Mixes.
+- `music_sync.json` is authoritative for configured playlist classifications.
+  Reconcile those values into SQLite when Playlist Sync opens, and refresh the
+  mounted sidebar after Save/Sync so a changed classification moves immediately.
 - Sorted by TIDAL favorite date, newest first.
 - Loads 30 rows at a time; an `IntersectionObserver` requests the next offset
   near the bottom of the table.

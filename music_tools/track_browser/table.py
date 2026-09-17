@@ -16,6 +16,9 @@ COLUMNS = [
     ("year", "Year"),
     ("date_added", "Date added"),
     ("playlists", "Playlists"),
+    ("events", "Events"),
+    ("sources", "Sources"),
+    ("mixes", "Mixes"),
 ]
 
 EXTRA_COLUMNS_BY_COLLECTION = {
@@ -73,7 +76,7 @@ def _sort_value(row: dict[str, Any], field: str) -> tuple[bool, Any]:
             normalized = float(value[0] if isinstance(value, list) and value else value)
         except (TypeError, ValueError):
             normalized = 0.0
-    elif field == "playlists":
+    elif field in {"playlists", "events", "sources", "mixes"}:
         normalized = ", ".join(
             str(item.get("name") or item.get("id") or "")
             for item in (value or [])
@@ -135,19 +138,19 @@ def render_track_table(
             if key == "rating":
                 return "★" * int(values[0])
             return ", ".join(str(value) for value in values)
-        if key != "playlists":
+        if key not in {"playlists", "events", "sources", "mixes"}:
             return row.get(key) or "—"
-        playlists = row.get("playlists") or []
-        if not playlists:
+        memberships = row.get(key) or []
+        if not memberships:
             return "—"
         return html.Div(
             [
                 html.Span(
-                    playlist.get("name") or playlist.get("id"),
+                    membership.get("name") or membership.get("id"),
                     className="playlist-tag",
-                    title=playlist.get("id", ""),
+                    title=membership.get("id", ""),
                 )
-                for playlist in playlists
+                for membership in memberships
             ],
             className="playlist-tags table-playlist-tags",
         )
