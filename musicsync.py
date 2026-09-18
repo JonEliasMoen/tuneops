@@ -45,8 +45,11 @@ _load_dotenv(ROOT / ".env")
 
 from music_library.database import (  # noqa: E402 - local .env configures its path
     cached_tidal_playlist,
+    merge_tidal_liked_tracks_prefix,
     set_tidal_playlist_collection_type,
+    store_tidal_liked_tracks,
     store_tidal_playlist,
+    tidal_liked_track_ids,
     tidal_track_record,
 )
 
@@ -131,7 +134,29 @@ def default_config() -> dict[str, Any]:
             "country_code": "NO",
             "search_limit": 8,
             "spotify_search_delay_seconds": 0.75,
+            "dark_mode": True,
+            "tags_collapsed_by_default": True,
+            "ollama_model": "qwen3:4b",
+            "ollama_url": "http://127.0.0.1:11434",
+            "ollama_timeout_seconds": 300,
+            "tidal_search_delay_seconds": 0.35,
+            "maintain_liked_tracks_cache": True,
+            "liked_tracks_cache_page_size": 50,
+            "liked_tracks_cache_max_pages": 10,
+            "liked_tracks_cache_delay_seconds": 0.25,
         },
+        "quick_views": [
+            {
+                "id": "default",
+                "name": "Default",
+                "fields": [
+                    "title", "artist", "remix", "album", "length", "bpm",
+                    "key", "year", "date_added", "playlists", "events",
+                    "sources", "mixes", "djmi",
+                ],
+                "default": True,
+            }
+        ],
         "playlists": [
             {
                 "enabled": True,
@@ -153,6 +178,7 @@ def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
     if not isinstance(data.get("playlists"), list):
         raise ValueError("The config must contain a 'playlists' list")
     data.setdefault("settings", {})
+    data.setdefault("quick_views", default_config()["quick_views"])
     return data
 
 
@@ -561,6 +587,60 @@ def tidal_tracks(session: Any, playlist_value: str) -> tuple[Any, list[dict[str,
     return playlist, tracks
 
 
+def refresh_tidal_playlist_cache(
+    playlist_value: str, force: bool = False
+) -> dict[str, Any]:
+    """Check one indexed playlist and replace SQLite membership when needed."""
+    playlist_id = _id(playlist_value)
+    if not playlist_id:
+        raise ValueError("TIDAL playlist ID is empty")
+    session = tidal_client(interactive=False)
+    playlist = _call(
+        "tidal",
+        "get_indexed_playlist",
+        lambda: session.playlist(playlist_id),
+        playlist_id=playlist_id,
+    )
+    last_updated = getattr(playlist, "last_updated", None)
+    if not force:
+        cached = cached_tidal_playlist(playlist_id, last_updated)
+        if cached is not None:
+            LOGGER.info(
+                "tidal.playlist ui_cache_current playlist_id=%s last_updated=%s tracks=%d",
+                playlist_id,
+                last_updated,
+                len(cached),
+            )
+            return {
+                "changed": False,
+                "tracks": len(cached),
+                "last_updated": str(last_updated or ""),
+            }
+    items = list(
+        _call(
+            "tidal",
+            "refresh_indexed_playlist_tracks",
+            playlist.tracks,
+            playlist_id=playlist_id,
+            force=force,
+        )
+        or []
+    )
+    records = [tidal_track_record(track) for track in items]
+    store_tidal_playlist(playlist, records)
+    LOGGER.info(
+        "tidal.playlist ui_cache_refreshed playlist_id=%s tracks=%d force=%s",
+        playlist_id,
+        len(records),
+        force,
+    )
+    return {
+        "changed": True,
+        "tracks": len(records),
+        "last_updated": str(last_updated or ""),
+    }
+
+
 def _spotify_search(
     client: Any, track: dict[str, Any], limit: int, delay_seconds: float = 0.75
 ) -> dict[str, Any] | None:
@@ -838,12 +918,102 @@ def sync_one(spotify: Any, tidal: Any, entry: dict[str, Any], settings: dict[str
     return result
 
 
+def maintain_tidal_liked_tracks(
+    tidal: Any,
+    settings: dict[str, Any],
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, int]:
+    """Refresh the live liked-library prefix and preserve the cached older tail."""
+    from tidalapi.user import ItemOrder, OrderDirection
+
+    progress = progress or (lambda _message: None)
+    user_id = str(tidal.user.id)
+    page_size = max(1, min(50, int(settings.get("liked_tracks_cache_page_size", 50))))
+    max_pages = max(1, int(settings.get("liked_tracks_cache_max_pages", 10)))
+    delay_seconds = max(
+        0.0, float(settings.get("liked_tracks_cache_delay_seconds", 0.25))
+    )
+    existing_ids = tidal_liked_track_ids(user_id)
+    existing_set = set(existing_ids)
+    provider_total = int(
+        _call(
+            "tidal",
+            "favorite_tracks_count",
+            tidal.user.favorites.get_tracks_count,
+        )
+        or 0
+    )
+    if provider_total == 0:
+        store_tidal_liked_tracks(user_id, [], offset=0)
+        return {"fetched": 0, "added": 0, "cached": 0, "provider_total": 0}
+
+    fetched: list[Any] = []
+    boundary_track_id: str | None = None
+    pages_to_scan = 1 if not existing_ids else max_pages
+    for page_number in range(pages_to_scan):
+        offset = page_number * page_size
+        if offset >= provider_total:
+            break
+        page = list(
+            _call(
+                "tidal",
+                "favorite_tracks_cache_maintenance",
+                lambda offset=offset: tidal.user.favorites.tracks(
+                    limit=page_size,
+                    offset=offset,
+                    order=ItemOrder.Date,
+                    order_direction=OrderDirection.Descending,
+                ),
+                limit=page_size,
+                offset=offset,
+                page=page_number + 1,
+            )
+            or []
+        )
+        fetched.extend(page)
+        known_page_ids = [
+                str(getattr(track, "id", ""))
+                for track in page
+                if str(getattr(track, "id", "")) in existing_set
+        ]
+        boundary_track_id = known_page_ids[-1] if known_page_ids else None
+        progress(
+            f"Maintaining liked tracks: scanned "
+            f"{min(offset + page_size, provider_total):,}/{provider_total:,}"
+        )
+        if boundary_track_id:
+            break
+        if delay_seconds and page_number + 1 < pages_to_scan:
+            time.sleep(delay_seconds)
+
+    scanned_entire_library = len(fetched) >= provider_total
+    result = merge_tidal_liked_tracks_prefix(
+        user_id,
+        fetched,
+        boundary_track_id,
+        preserve_unscanned_tail=not scanned_entire_library,
+    )
+    result["provider_total"] = provider_total
+    LOGGER.info(
+        "liked_cache.maintenance user_id=%s provider_total=%d fetched=%d "
+        "added=%d cached=%d boundary=%s",
+        user_id,
+        provider_total,
+        result["fetched"],
+        result["added"],
+        result["cached"],
+        boundary_track_id or "none",
+    )
+    return result
+
+
 def run_all_syncs(path: Path = CONFIG_PATH, progress: Callable[[str], None] | None = None) -> list[SyncResult]:
     progress = progress or (lambda _: None)
     config = load_config(path)
     enabled = [item for item in config["playlists"] if item.get("enabled", True)]
+    maintain_liked = config["settings"].get("maintain_liked_tracks_cache", True)
     LOGGER.info("sync.run start config=%s enabled_playlists=%d", path, len(enabled))
-    if not enabled:
+    if not enabled and not maintain_liked:
         return []
     directions = {item.get("direction", "spotify_to_tidal") for item in enabled}
     spotify = None
@@ -858,6 +1028,21 @@ def run_all_syncs(path: Path = CONFIG_PATH, progress: Callable[[str], None] | No
         )
     progress("Connecting to TIDAL…")
     tidal = tidal_client(interactive=False)
+    if maintain_liked:
+        progress("Maintaining liked tracks cache…")
+        try:
+            liked_result = maintain_tidal_liked_tracks(
+                tidal, config["settings"], progress
+            )
+            progress(
+                f"Liked tracks cache: {liked_result['cached']:,} local, "
+                f"{liked_result['added']:,} newly discovered"
+            )
+        except Exception:
+            LOGGER.exception("liked_cache.maintenance_failed")
+            progress("Liked tracks cache maintenance failed; continuing playlist sync")
+    if not enabled:
+        return []
     results: list[SyncResult] = []
     for index, entry in enumerate(enabled, start=1):
         mapping_name = entry.get("name") or f"Playlist mapping {index}"

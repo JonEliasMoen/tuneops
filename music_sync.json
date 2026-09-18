@@ -2,7 +2,8 @@
   "settings": {
     "country_code": "NO",
     "search_limit": 8,
-    "spotify_search_delay_seconds": 0.75
+    "spotify_search_delay_seconds": 0.75,
+    "dark_mode": true
   },
   "playlists": [
     {
@@ -181,8 +182,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "aba2a1eb77fd9f6e73f59738b4531180da1ac96c61beb7f49febd17c20e50c72",
-      "last_sync": "2026-09-16T22:30:47.757800+00:00",
+      "source_version": "ead475f8591100c5dcb3c4aaec0ce53d1ee060bda139aa1303c85478ea6141c8",
+      "last_sync": "2026-09-18T21:34:28.272692+00:00",
       "collection_type": "playlist"
     },
     {
@@ -202,8 +203,8 @@
           }
         ]
       },
-      "source_version": "b018c8d2a91448bac3036b5416a9cc636b175312df8bee2c664e2dd29228202d",
-      "last_sync": "2026-09-16T22:30:51.648694+00:00",
+      "source_version": "04d7dec8e4d48a08c65bed49b39592ac6601890c8738d7a6e5cbef9768dc50b5",
+      "last_sync": "2026-09-18T21:34:30.860773+00:00",
       "collection_type": "playlist"
     },
     {
@@ -330,8 +331,8 @@
           }
         ]
       },
-      "source_version": "AAAAWkET4HC0VdZXNAvZ8CmsMKCgiV0R",
-      "last_sync": "2026-09-14T15:50:05.753502+00:00",
+      "source_version": "AAAAXg0ebEqAB1I+l3typYjZ1MHfP/Er",
+      "last_sync": "2026-09-18T20:33:13.990744+00:00",
       "collection_type": "source"
     },
     {
@@ -373,8 +374,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/67d8ba91-841e-4355-9dab-3d8824e154fb",
       "tidal_name": "",
-      "source_version": "2026-09-16 22:16:36.336000+00:00",
-      "last_sync": "2026-09-16T22:30:53.963954+00:00",
+      "source_version": "2026-09-18 11:57:34.765000+00:00",
+      "last_sync": "2026-09-18T20:33:15.129756+00:00",
       "collection_type": "playlist"
     },
     {
@@ -406,8 +407,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/e873d913-f9b7-4425-bda4-186ba4b40957",
       "tidal_name": "",
-      "source_version": "2026-09-16 22:34:16.585000+00:00",
-      "last_sync": "2026-09-17T17:46:04.049113+00:00",
+      "source_version": "2026-09-18 18:19:43.434000+00:00",
+      "last_sync": "2026-09-18T20:33:16.261725+00:00",
       "collection_type": "playlist"
     },
     {
@@ -442,6 +443,61 @@
       "source_version": "2026-09-13 13:09:40.153000+00:00",
       "last_sync": "2026-09-15T22:24:49.132393+00:00",
       "collection_type": "source"
+    }
+  ],
+  "quick_views": [
+    {
+      "id": "default",
+      "name": "Default",
+      "fields": [
+        "title",
+        "artist",
+        "rating",
+        "energy",
+        "tension",
+        "vibe",
+        "movement",
+        "driver",
+        "function",
+        "structure",
+        "texture",
+        "scale",
+        "mix_position",
+        "playlists"
+      ],
+      "default": true
+    },
+    {
+      "id": "view-1",
+      "name": "Source",
+      "fields": [
+        "title",
+        "artist",
+        "events",
+        "sources",
+        "mixes",
+        "djmi",
+        "mix_position",
+        "playlists"
+      ],
+      "default": false
+    },
+    {
+      "id": "view-2",
+      "name": "Just track info",
+      "fields": [
+        "title",
+        "artist",
+        "remix",
+        "album",
+        "length",
+        "bpm",
+        "key",
+        "year",
+        "date_added",
+        "mix_position"
+      ],
+      "default": false
     }
   ]
 }

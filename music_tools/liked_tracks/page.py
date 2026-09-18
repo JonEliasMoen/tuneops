@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
+from music_library.dimensions import DIMENSION_MAX_VALUES, DIMENSION_VALUES
 from music_library.database import (
     associate_tidal_tracks_with_watched_mix,
     add_tidal_playlist_membership,
+    replace_tidal_track_dimensions,
     remove_tidal_playlist_membership,
     tidal_dimensions_for_tracks,
     tidal_artists_for_tracks,
@@ -19,12 +21,14 @@ from music_library.database import (
     toggle_tidal_track_dimension,
     watched_mixes,
 )
+from music_tools.auto_tagging import auto_tag_tracks
 from music_tools.track_browser.table import (
     columns_for,
     default_visible_fields,
     render_track_table,
     sort_rows,
 )
+from music_tools.track_browser.stopwatch import content as stopwatch_content
 
 from .service import (
     collection_artist_summary,
@@ -34,17 +38,6 @@ from .service import (
     fetch_liked_tracks,
     fetch_watched_mix_tracks,
 )
-
-DIMENSION_VALUES = {
-    "rating": ["1", "2", "3", "4", "5"],
-    "energy": ["1", "2", "3", "4", "5"],
-    "vibe": ["Dreamy", "Dark", "Hypnotic", "Emotional", "Euphoric", "Atmospheric", "Warm", "Sexy"],
-    "movement": ["Rolling", "Groovy", "Driving", "Bouncy", "Pumping", "Flowing", "Minimal"],
-    "function": ["Opener", "Builder", "Peak", "Breather", "Bridge", "Closer", "Vibe Flip"],
-    "structure": ["Groove-led", "Progressive", "Drop", "Big Drop", "Breakdown-heavy", "Vocal-led", "Tool"],
-}
-MULTI_VALUE_DIMENSIONS = {"vibe", "movement", "function", "structure"}
-
 
 def _attach_memberships(
     rows: list[dict[str, Any]],
@@ -85,12 +78,31 @@ def _attach_memberships(
         ]
 
 
-def content(html: Any, dcc: Any, collection: dict[str, Any] | None = None):
+def content(
+    html: Any,
+    dcc: Any,
+    collection: dict[str, Any] | None = None,
+    quick_views: list[dict[str, Any]] | None = None,
+):
     collection = collection or {"type": "liked", "name": "TIDAL liked tracks"}
     is_liked = collection.get("type") == "liked"
+    is_playlist = collection.get("type") == "playlist"
+    is_setlist = collection.get("type") == "setlist"
     available_columns = columns_for(collection)
-    visible_fields = default_visible_fields(collection)
+    available_keys = {key for key, _label in available_columns}
+    default_quick_view = next(
+        (view for view in (quick_views or []) if view.get("default")), None
+    )
+    visible_fields = (
+        [
+            field for field in default_quick_view.get("fields") or []
+            if field in available_keys
+        ]
+        if default_quick_view
+        else default_visible_fields(collection)
+    )
     return [
+        stopwatch_content(html) if is_setlist else None,
         html.Div(
             [
                 html.Div(
@@ -109,7 +121,37 @@ def content(html: Any, dcc: Any, collection: dict[str, Any] | None = None):
                 ),
                 html.Div(
                     [
-                        html.Button("Refresh", id="liked-refresh", className="primary"),
+                        html.Button(
+                            "Refresh from TIDAL"
+                            if is_liked or is_playlist
+                            else "Reload SQLite",
+                            id="liked-refresh",
+                            className="primary",
+                        ),
+                        html.Div(
+                            [
+                                html.Button(
+                                    str(view.get("name") or "Quick View"),
+                                    id={
+                                        "type": "quick-view-button",
+                                        "id": str(view.get("id") or index),
+                                    },
+                                    className=(
+                                        "quick-view-button default"
+                                        if view.get("default")
+                                        else "quick-view-button"
+                                    ),
+                                    title=(
+                                        "Default Quick View"
+                                        if view.get("default")
+                                        else None
+                                    ),
+                                )
+                                for index, view in enumerate(quick_views or [])
+                            ],
+                            id="quick-view-buttons",
+                            className="quick-view-buttons",
+                        ),
                         html.Div(
                             [
                                 html.Button("Fields", id="track-fields-toggle"),
@@ -121,7 +163,7 @@ def content(html: Any, dcc: Any, collection: dict[str, Any] | None = None):
                                             for key, label in available_columns
                                         ],
                                         value=visible_fields,
-                                        persistence=True,
+                                        persistence=not bool(default_quick_view),
                                         persistence_type="local",
                                         persisted_props=["value"],
                                         className="field-picker-options",
@@ -288,9 +330,32 @@ def content(html: Any, dcc: Any, collection: dict[str, Any] | None = None):
 
 
 def register_callbacks(
-    app: Any, callback: Any, Input: Any, Output: Any, State: Any,
+    app: Any, callback: Any, Input: Any, Output: Any, State: Any, ALL: Any,
     html: Any, ctx: Any, engine: Any
 ) -> None:
+    @callback(
+        Output("track-visible-fields-control", "value"),
+        Input({"type": "quick-view-button", "id": ALL}, "n_clicks"),
+        State("quick-views", "data"),
+        State("track-collection", "data"),
+        State("track-visible-fields-control", "value"),
+        prevent_initial_call=True,
+    )
+    def apply_quick_view(
+        clicks, rows, collection, current_fields
+    ):
+        views = rows or []
+        if not isinstance(ctx.triggered_id, dict) or not any(clicks or []):
+            return current_fields or default_visible_fields(collection)
+        selected_id = str(ctx.triggered_id.get("id") or "")
+        selected = next(
+            (row for row in views if str(row.get("id") or "") == selected_id), None
+        )
+        if selected is None:
+            return current_fields or default_visible_fields(collection)
+        available = {key for key, _label in columns_for(collection)}
+        return [field for field in selected.get("fields") or [] if field in available]
+
     @callback(
         Output("track-fields-menu", "style"),
         Input("track-fields-toggle", "n_clicks"),
@@ -320,10 +385,10 @@ def register_callbacks(
         Input("track-filter-ratings", "value"),
         Input("track-filter-energy", "value"),
         Input("track-filter-tags", "value"),
+        Input("track-sort", "data"),
         State("liked-rows", "data"),
         State("liked-selected", "data"),
         State("track-collection", "data"),
-        State("track-sort", "data"),
         State("track-visible-fields", "data"),
     )
     def load_tracks(
@@ -337,10 +402,10 @@ def register_callbacks(
         filter_ratings: list[str] | None,
         filter_energy: list[str] | None,
         filter_tags: list[str] | None,
+        sort: dict[str, str] | None,
         existing_rows: list[dict[str, str]] | None,
         current_selection: int | None,
         collection: dict[str, Any] | None,
-        sort: dict[str, str] | None,
         visible_fields: list[str] | None,
     ):
         existing_rows = existing_rows or []
@@ -356,22 +421,61 @@ def register_callbacks(
             "tags": filter_tags or [],
         }
         active_filters = {key: value for key, value in filters.items() if value not in (None, "", [])}
+        refresh_note = ""
         try:
+            if (
+                (collection or {}).get("type", "liked") == "liked"
+                and ctx.triggered_id in {"liked-initial-load", "liked-refresh"}
+            ):
+                try:
+                    session = engine.tidal_client(interactive=False)
+                    refresh_result = engine.maintain_tidal_liked_tracks(
+                        session,
+                        engine.load_config().get("settings", {}),
+                    )
+                    refresh_note = (
+                        f" TIDAL refreshed: {refresh_result['fetched']:,} checked, "
+                        f"{refresh_result['added']:,} new."
+                    )
+                except Exception as exc:
+                    engine.LOGGER.exception("ui.liked_tracks tidal_refresh_failed")
+                    refresh_note = f" TIDAL refresh failed; showing cache: {exc}"
+            elif (
+                (collection or {}).get("type") == "playlist"
+                and ctx.triggered_id in {"liked-initial-load", "liked-refresh"}
+            ):
+                try:
+                    refresh_result = engine.refresh_tidal_playlist_cache(
+                        (collection or {}).get("id", ""),
+                        force=ctx.triggered_id == "liked-refresh",
+                    )
+                    refresh_note = (
+                        f" TIDAL refreshed: {refresh_result['tracks']:,} tracks."
+                        if refresh_result["changed"]
+                        else " TIDAL checked: playlist unchanged."
+                    )
+                except Exception as exc:
+                    engine.LOGGER.exception("ui.playlist tidal_refresh_failed")
+                    refresh_note = f" TIDAL refresh failed; showing cache: {exc}"
             if (collection or {}).get("type") == "setlist":
                 page, has_more = fetch_indexed_setlist_tracks(
-                    (collection or {}).get("id", ""), offset=offset, filters=active_filters
+                    (collection or {}).get("id", ""), offset=offset,
+                    filters=active_filters, sort=sort,
                 )
             elif (collection or {}).get("type") == "watched_mix":
                 page, has_more = fetch_watched_mix_tracks(
-                    (collection or {}).get("id", ""), offset=offset, filters=active_filters
+                    (collection or {}).get("id", ""), offset=offset,
+                    filters=active_filters, sort=sort,
                 )
             elif (collection or {}).get("type") == "playlist":
                 page, has_more = fetch_indexed_playlist_tracks(
-                    (collection or {}).get("id", ""), offset=offset, filters=active_filters
+                    (collection or {}).get("id", ""), offset=offset,
+                    filters=active_filters, sort=sort,
                 )
             elif (collection or {}).get("type") == "artist":
                 page, has_more = fetch_artist_tracks(
-                    (collection or {}).get("id", ""), offset=offset, filters=active_filters
+                    (collection or {}).get("id", ""), offset=offset,
+                    filters=active_filters, sort=sort,
                 )
             else:
                 page, has_more = fetch_liked_tracks(
@@ -379,6 +483,7 @@ def register_callbacks(
                     offset=offset,
                     force_refresh=ctx.triggered_id == "liked-refresh",
                     filters=active_filters,
+                    sort=sort,
                 )
             top_artists, artist_options, collection_stats = collection_artist_summary(
                 engine, collection or {}
@@ -416,9 +521,22 @@ def register_callbacks(
             if append
             else (0 if rows else None)
         )
+        status = (
+            f"{len(rows):,} track{'s' if len(rows) != 1 else ''} loaded from SQLite.{refresh_note}"
+            if rows
+            else (
+                "No tracks match the current filters."
+                if active_filters
+                else (
+                    f"No liked tracks cached. Run cache_liked_tracks.py first.{refresh_note}"
+                    if (collection or {}).get("type", "liked") == "liked"
+                    else "No tracks cached for this collection."
+                )
+            )
+        )
         return (
             table,
-            f"{len(rows):,} track{'s' if len(rows) != 1 else ''} loaded",
+            status,
             rows,
             selected,
             [selected] if selected is not None else [],
@@ -543,34 +661,42 @@ def register_callbacks(
         Input("liked-selected", "data"),
         Input("liked-selected-indices", "data"),
         Input("liked-rows", "data"),
+        Input("ui-preferences", "data"),
     )
     def show_details(
         selected: int | None,
         selected_indices: list[int] | None,
         rows: list[dict[str, str]] | None,
+        ui_preferences: dict[str, Any] | None,
     ):
         rows = rows or []
         if selected is None or not 0 <= selected < len(rows):
             return html.Div("Select a track", className="detail-empty")
         row = rows[selected]
-        def membership_field(key: str, label: str):
-            memberships = row.get(key) or []
-            tags = [
-                html.Span(
-                    item.get("name") or item.get("id"),
-                    className="playlist-tag",
-                    title=item.get("id", ""),
+        membership_blobs = []
+        for key, label, route_prefix in (
+            ("playlists", "Playlist", "/playlists/"),
+            ("events", "Event", "/events/"),
+            ("sources", "Source", "/sources/"),
+            ("mixes", "Mix", "/mixes/"),
+            ("djmi", "Dj Mix", "/watched-mixes/"),
+        ):
+            for item in row.get(key) or []:
+                item_id = str(item.get("id") or "")
+                name = str(item.get("name") or item_id)
+                membership_blobs.append(
+                    html.A(
+                        name,
+                        href=route_prefix + quote(item_id, safe=""),
+                        className=f"playlist-tag membership-link membership-{key}",
+                        title=f"{label}: {name}",
+                    )
                 )
-                for item in memberships
-            ] or [html.Span("None", className="detail-empty")]
-            return html.Div(
-                [html.Span(label), html.Div(tags, className="playlist-tags")],
-                className="detail-field detail-playlists",
-            )
         dimensions = row.get("dimensions") or {}
         dimension_fields = []
         for dimension, options in DIMENSION_VALUES.items():
-            selected_values = set(dimensions.get(dimension) or [])
+            selected_order = dimensions.get(dimension) or []
+            selected_values = set(selected_order)
             dimension_fields.append(
                 html.Div(
                     [
@@ -580,9 +706,20 @@ def register_callbacks(
                                 html.Span(
                                     "★" * int(value) if dimension == "rating" else value,
                                     className=(
-                                        "dimension-tag editable selected"
+                                        "dimension-tag editable selected primary"
+                                        if value in selected_values
+                                        and dimension in {"driver", "scale"}
+                                        and selected_order.index(value) == 0
+                                        else "dimension-tag editable selected"
                                         if value in selected_values
                                         else "dimension-tag editable"
+                                    ),
+                                    title=(
+                                        "Primary selection"
+                                        if dimension in {"driver", "scale"}
+                                        and selected_order
+                                        and value == selected_order[0]
+                                        else None
                                     ),
                                     **{
                                         "data-detail-dimension": dimension,
@@ -617,11 +754,24 @@ def register_callbacks(
             ),
             html.H2(row.get("title") or "—", className="detail-title"),
             html.Div(row.get("artist") or "—", className="detail-artist"),
-            *dimension_fields,
-            membership_field("playlists", "Playlists"),
-            membership_field("events", "Events"),
-            membership_field("sources", "Sources"),
-            membership_field("mixes", "Mixes"),
+            (
+                html.Div(
+                    membership_blobs,
+                    className="playlist-tags detail-membership-blobs",
+                )
+                if membership_blobs else None
+            ),
+            html.Details(
+                [
+                    html.Summary("Tags & ratings", className="detail-tags-summary"),
+                    html.Div(dimension_fields, className="detail-tags-content"),
+                ],
+                open=not bool(
+                    (ui_preferences or {}).get("tags_collapsed", True)
+                ),
+                className="detail-tags-panel",
+                **{"data-tags-panel": "true"},
+            ),
         ]
 
     @callback(
@@ -656,6 +806,7 @@ def register_callbacks(
             if (collection or {}).get("type") == "playlist":
                 options.append(("move", "Move to playlist"))
             options.append(("associate_watched", "Associate with watched mix"))
+            options.append(("auto_tag", "Auto tag with Qwen3"))
             return [
                 html.Div(
                     label,
@@ -669,6 +820,18 @@ def register_callbacks(
             ]
 
         track = rows[selected]
+        if mode == "auto_tag":
+            return [
+                html.Div(
+                    f"Qwen3 will classify {selection_count} selected track{'s' if selection_count != 1 else ''} using local metadata.",
+                    className="action-prompt",
+                ),
+                html.Div(
+                    "Run auto tagging",
+                    className="action-option selected" if focus == "actions" else "action-option",
+                    **{"data-action-option": "0", "data-action-value": "run"},
+                ),
+            ]
         if mode == "associate_watched":
             playlists = [
                 {"id": item["video_id"], "name": item.get("title") or item["video_id"]}
@@ -769,6 +932,55 @@ def register_callbacks(
         track_id = str(rows[selected].get("id") or "")
         track_ids = [str(rows[index].get("id") or "") for index in selected_positions]
         track_ids = [value for value in dict.fromkeys(track_ids) if value]
+        if action == "auto_tag":
+            if request.get("value") != "run" or not track_ids:
+                return "Invalid auto-tag action.", rows, render_rows(rows), "actions", action, 0, selected
+            try:
+                settings = engine.load_config().get("settings", {})
+                selected_tracks = [rows[index] for index in selected_positions]
+                suggestions = auto_tag_tracks(
+                    selected_tracks,
+                    model=str(settings.get("ollama_model", "qwen3:4b")),
+                    base_url=str(settings.get("ollama_url", "http://127.0.0.1:11434")),
+                    timeout_seconds=float(settings.get("ollama_timeout_seconds", 300)),
+                )
+                updated_rows = [dict(row) for row in rows]
+                tagged_count = 0
+                for index in selected_positions:
+                    current_track_id = str(updated_rows[index].get("id") or "")
+                    dimensions = suggestions.get(current_track_id)
+                    if not dimensions:
+                        continue
+                    stored = replace_tidal_track_dimensions(
+                        current_track_id, dimensions
+                    )
+                    updated_dimensions = dict(
+                        updated_rows[index].get("dimensions") or {}
+                    )
+                    updated_dimensions.update(stored)
+                    updated_rows[index]["dimensions"] = updated_dimensions
+                    tagged_count += 1
+                engine.LOGGER.info(
+                    "ui.auto_tag complete model=%s requested=%d tagged=%d",
+                    settings.get("ollama_model", "qwen3:4b"),
+                    len(track_ids),
+                    tagged_count,
+                )
+                return (
+                    f"Qwen3 tagged {tagged_count}/{len(track_ids)} selected track{'s' if len(track_ids) != 1 else ''}.",
+                    updated_rows,
+                    render_rows(updated_rows),
+                    "tracks",
+                    None,
+                    0,
+                    selected,
+                )
+            except Exception as exc:
+                engine.LOGGER.exception("ui.auto_tag failed tracks=%d", len(track_ids))
+                return (
+                    f"Auto tagging failed: {exc}", rows, render_rows(rows),
+                    "actions", action, 0, selected,
+                )
         if action == "associate_watched":
             video_id = str(request.get("watched_mix_id") or "")
             if not video_id or not track_ids:
@@ -810,7 +1022,7 @@ def register_callbacks(
                         str(rows[index].get("id") or ""),
                         action,
                         value,
-                        multiple=action in MULTI_VALUE_DIMENSIONS,
+                        multiple=DIMENSION_MAX_VALUES.get(action, 999) != 1,
                     )
                     updated_dimensions = dict(updated_rows[index].get("dimensions") or {})
                     updated_dimensions[action] = values

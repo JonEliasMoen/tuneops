@@ -44,7 +44,7 @@ def _cover_component(html, mix, youtube_url: str | None = None):
     return html.Div("No cover available", className="mix-cover mix-cover-empty")
 
 
-def content(html, dcc, folder_name: str | None = None):
+def content(html, dcc, folder_name: str | None = None, quick_views=None):
     mix = mix_for(folder_name) if folder_name else None
     if mix is None:
         message = "Select a mix from the My mixes section in the sidebar."
@@ -58,7 +58,10 @@ def content(html, dcc, folder_name: str | None = None):
 
     cover = _cover_component(html, mix)
     collection = _track_collection(mix)
-    track_browser = track_browser_content(html, dcc, collection) if collection else []
+    track_browser = (
+        track_browser_content(html, dcc, collection, quick_views)
+        if collection else []
+    )
     return [
         html.Div(
             [
@@ -226,7 +229,12 @@ def register_callbacks(app, callback, Input, Output, State, ctx, html, dcc, engi
             )
             return (
                 f"Synced {len(records):,} tracks from {playlist_name}.",
-                track_browser_content(html, dcc, collection),
+                track_browser_content(
+                    html,
+                    dcc,
+                    collection,
+                    engine.load_config().get("quick_views", []),
+                ),
                 playlist_name,
             )
         except Exception as exc:

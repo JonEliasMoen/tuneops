@@ -9,6 +9,7 @@ commit or print secrets from `.env`, `.spotify_cache`, `.tidal_session.json`, or
 
 - Web application: `python musicsync.py` (defaults to `127.0.0.1:8080`)
 - Headless configured sync: `python startup_sync.py`
+- Full TIDAL liked-track cache: `python cache_liked_tracks.py`
 - Direct headless sync: `python musicsync.py --sync`
 - Dependencies are declared in the repository-level `../requirements.txt`.
 
@@ -56,12 +57,34 @@ styles belong in `music_tools/ui.py`.
 - Shared table headers are clickable and cycle ascending, descending, then off.
   Off restores `_source_order`; appending an infinite-scroll page reapplies the
   active sort and preserves selection by source order rather than row index.
+- **Date added** sorting is collection-wide: sort the complete SQLite result
+  before slicing each 30-row page, keep missing dates at the end, and use the
+  full provider timestamp as the hidden sort value rather than the minute-only
+  display string.
 - The Fields popover beside Refresh controls visible columns from the same
   declarative schema. Column-specific CSS must use semantic classes such as
   `track-column-remix`, never positional `nth-child` selectors.
-- Rating, Energy, Vibe, Movement, Function, and Structure are available as
-  optional Fields columns backed by `row["dimensions"]`. Keep them hidden by
-  default, sortable when enabled, and synchronized with inspector edits.
+- Every dimension declared in `music_library/dimensions.py` is available as an
+  optional Fields column backed by `row["dimensions"]`. Keep dimensions hidden
+  by default, sortable when enabled, and synchronized with inspector edits.
+- Quick Views are named sets of visible table fields configured under
+  `/settings` and persisted in the top-level `quick_views` list in
+  `music_sync.json`; never store them in browser-local storage. Render their
+  buttons beside Fields in every shared track browser, and apply the one marked
+  default in the server-rendered initial layout whenever a track browser opens;
+  do not rely on a delayed callback or the Fields checklist's browser persistence.
+- The Settings appearance toggle persists `settings.dark_mode` in
+  `music_sync.json` and applies the theme immediately across the entire app.
+- The selected-track **Tags & ratings** section is a native collapsible panel.
+  Its current open/closed state lives in the root in-memory `ui-preferences`
+  store so it survives navigation between track collections without browser
+  persistence. Settings persists only the startup default as
+  `settings.tags_collapsed_by_default` in `music_sync.json`.
+- **Auto tag with Qwen3** is a shared track action backed only by the local
+  Ollama endpoint configured by `settings.ollama_url` and
+  `settings.ollama_model`. Send cached metadata only, require catalog-constrained
+  JSON, validate every returned value, preserve Rating, and write accepted
+  dimensions to SQLite. It must work for the current multi-track selection.
 - Quick filters operate on the complete current SQLite collection before
   pagination, not only the loaded browser rows. Different filter categories are
   ANDed; multiple selections inside a category are ORed. Filter controls and
@@ -74,6 +97,10 @@ styles belong in `music_tools/ui.py`.
   than being carried in the collection descriptor.
 - Register shared track-browser callbacks once in the application factory.
   Tools embed browser layouts but must not register duplicate callbacks.
+- Timestamped staging/setlist tables use the shared browser-side stopwatch.
+  Start/Pause must not invoke Dash callbacks; Stop resets it. Rows carrying a
+  valid Time/Position data attribute are highlighted from their start time
+  until the next timestamp. Mounting a different stopwatch page resets state.
 
 ## Playlist sync behavior
 
@@ -121,6 +148,8 @@ Core tables:
 - `setlist_tracks`: ordered many-to-many setlist membership with the timestamp
   where each TIDAL track begins. Its track index supports reverse lookup from a
   track to every mix/setlist containing it.
+- `pending_tracks`: independent release-watch queue for parsed watched-mix
+  tracks, their source mix, last TIDAL candidates, and resolution state.
 
 ## Mix explorer
 
@@ -170,6 +199,29 @@ Core tables:
   column. It displays clickable YouTube-channel membership pills linking to the
   corresponding watched-mix route and hides the currently viewed mix itself.
 
+## Watched-mix tracklist import
+
+- Watched-mix detail pages contain an in-memory staging table for pasted
+  tracklists. Timestamps are optional and may be plain or bracketed. Support
+  explicit `Artist - Title` and `Title - Artist` parsing modes, common spaced
+  dash variants, and harmless trailing star markers; never create canonical
+  track rows while parsing. `ID`/unknown titles remain unresolved and are not
+  searched.
+- Search TIDAL only when explicitly requested, throttle sequential searches,
+  cache serializable alternatives in the staging store, and let the user choose
+  a candidate before liking it.
+- A staging Like is provider-first and repairable: add the selected track to
+  TIDAL favorites, upsert it at the front of the local liked snapshot,
+  associate it with the watched mix, then refresh the normal SQLite track
+  browser. Do not persist staging rows.
+- **Watch** persists a named staging row to `pending_tracks` without creating a
+  canonical library track. Pending tracks live at `/watched-mixes/pending`, a
+  fixed child of the Watched mixes sidebar group. Opening that page and its
+  explicit Refresh both search TIDAL; a confirmed Like follows the same
+  provider-first liked-cache and watched-mix-association flow, then resolves
+  the queue item. `ID` rows cannot be watched because they lack a searchable
+  title.
+
 ## Sidebar navigation standard
 
 - Collections in the left sidebar, including Playlists and Mixes, use the same
@@ -201,6 +253,19 @@ revalidation on the following run.
 ## Liked tracks UI
 
 - Route: `/liked-tracks`.
+- Opening the route performs exactly one bounded live-prefix refresh from TIDAL
+  into SQLite; **Refresh from TIDAL** explicitly repeats it. Subsequent paging,
+  scrolling, filtering, and sorting read only SQLite and must not call TIDAL.
+  Other collection routes retain the **Reload SQLite** button and never refresh
+  liked tracks. `cache_liked_tracks.py` performs a complete reconciliation.
+  Each manual/startup Playlist Sync run also performs the bounded maintenance
+  pass, adding recent likes and reconciling removals within the scanned prefix
+  while preserving the older cached tail.
+- Opening an indexed Playlist/Event/Source route performs one lightweight
+  provider metadata check. If TIDAL `last_updated` still matches SQLite, keep
+  reading the local membership; otherwise refetch and transactionally replace
+  that playlist cache. Its **Refresh from TIDAL** button always forces a remote
+  membership fetch. Pagination, filters, and sorting remain SQLite-only.
 - Indexed TIDAL playlists appear below the main sidebar tools and open at
   `/playlists/<tidal-id>`. These routes reuse the liked-tracks table, inspector,
   actions, selection, and local 30-row pagination, reading tracks from SQLite.
@@ -234,6 +299,9 @@ revalidation on the following run.
 - The right inspector displays selected-track metadata plus green playlist tags
   for every currently indexed TIDAL playlist containing that track ID. A 320px
   TIDAL album-art URL is cached with track metadata and shown above the details.
+- Render only non-empty Playlist/Event/Source/Mix/Dj Mix memberships as compact,
+  clickable pills directly below the selected track's artist. Do not render
+  labeled membership sections or `None` placeholders at the inspector bottom.
 - Do not duplicate ordinary table fields such as remix, album, length, BPM, key,
   year, or date added in the selected-track inspector. Keep it focused on album
   art, title/artist, playlist membership, and editable local dimensions.
@@ -248,9 +316,11 @@ revalidation on the following run.
   updates SQLite. If source removal fails after a real destination add, attempt
   to roll the destination add back before surfacing the error.
 - The selected-track inspector always shows clickable choices for typed local
-  dimensions stored in `track_dimension_values`: Rating and Energy are
-  single-choice 1–5 values; Vibe, Movement, Function, and Structure are
-  multi-value tags. Highlight selected values in place. These dimensions do not
+  dimensions stored in `track_dimension_values`. Rating, Energy, and Tension
+  are single-choice 1–5 values; Driver and Scale allow up to two choices; Vibe,
+  Movement, Function, Structure, and Texture are multi-value tags. Keep the
+  catalog centralized in `music_library/dimensions.py` and highlight selected
+  values in place. These dimensions do not
   belong in the Actions panel; Actions is reserved for playlist operations.
 - When removing a track while viewing that same indexed playlist, remove its
   row from the visible backing store immediately (unless another duplicate

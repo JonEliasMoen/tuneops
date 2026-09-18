@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
+from music_library.dimensions import DIMENSION_LABELS, DIMENSION_VALUES
+
 
 COLUMNS = [
     ("title", "Title"),
@@ -28,12 +30,7 @@ EXTRA_COLUMNS_BY_COLLECTION = {
 }
 
 DIMENSION_COLUMNS = [
-    ("rating", "Rating"),
-    ("energy", "Energy"),
-    ("vibe", "Vibe"),
-    ("movement", "Movement"),
-    ("function", "Function"),
-    ("structure", "Structure"),
+    (dimension, DIMENSION_LABELS[dimension]) for dimension in DIMENSION_VALUES
 ]
 DIMENSION_FIELDS = {key for key, _label in DIMENSION_COLUMNS}
 
@@ -73,7 +70,7 @@ def _sort_value(row: dict[str, Any], field: str) -> tuple[bool, Any]:
     missing = value in (None, "", [], {})
     if field in {"length", "mix_position"}:
         normalized: Any = _time_seconds(value)
-    elif field in {"bpm", "year", "rating", "energy"}:
+    elif field in {"bpm", "year", "rating", "energy", "tension"}:
         try:
             normalized = float(value[0] if isinstance(value, list) and value else value)
         except (TypeError, ValueError):
@@ -218,7 +215,13 @@ def render_track_table(
                     for key, _ in columns
                 ],
                 className="liked-track-row",
-                **{"data-liked-index": str(index)},
+                **{
+                    "data-liked-index": str(index),
+                    **(
+                        {"data-track-start-time": str(row.get("mix_position"))}
+                        if row.get("mix_position") else {}
+                    ),
+                },
             )
             for index, row in enumerate(rows)
         ]

@@ -13,6 +13,7 @@ def sidebar(html: Any, active: str):
     items = [
         ("playlist-sync", "⇄", "Playlist sync", "/"),
         ("liked-tracks", "♥", "Liked tracks", "/liked-tracks"),
+        ("settings", "⚙", "Settings", "/settings"),
     ]
     indexed = tidal_indexed_playlists()
     tool_links = [
@@ -134,9 +135,22 @@ def sidebar(html: Any, active: str):
                 "data-sidebar-index": str(watched_index + 1),
                 "data-sidebar-href": "/watched-mixes",
             },
-        )
+        ),
+        html.A(
+            [html.Span("◷", className="nav-icon"), html.Span("Pending tracks")],
+            href="/watched-mixes/pending",
+            className=(
+                "nav-item playlist-nav active"
+                if active == "pending-tracks"
+                else "nav-item playlist-nav"
+            ),
+            **{
+                "data-sidebar-index": str(watched_index + 2),
+                "data-sidebar-href": "/watched-mixes/pending",
+            },
+        ),
     ]
-    for index, record in enumerate(watched, start=2):
+    for index, record in enumerate(watched, start=3):
         video_id = str(record["video_id"])
         href = f"/watched-mixes/{quote(video_id, safe='')}"
         watched_children.append(
@@ -171,7 +185,10 @@ def sidebar(html: Any, active: str):
                 ),
                 html.Div(watched_children, className="playlist-nav-list"),
             ],
-            open=active == "watched-mixes" or active.startswith("watched-mix:"),
+            open=(
+                active in {"watched-mixes", "pending-tracks"}
+                or active.startswith("watched-mix:")
+            ),
             className="playlist-group",
         )
     ]
@@ -237,16 +254,23 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .action-feedback{min-height:18px;margin-top:10px;color:#82edbd;font-size:13px}
 .detail-eyebrow{color:#7f91a1;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
 .detail-title{margin:12px 0 5px;color:#fff;font-size:22px;line-height:1.2}
-.detail-artist{color:#bdc8d2;margin-bottom:24px}
+.detail-artist{color:#bdc8d2;margin-bottom:10px}.detail-membership-blobs{margin:0 0 16px}
 .detail-fields{display:grid;gap:0}
 .detail-field{display:grid;grid-template-columns:95px minmax(0,1fr);gap:10px;padding:10px 0;border-top:1px solid #2b3743}
 .detail-field span{color:#7f91a1}
 .detail-field strong{overflow-wrap:anywhere;color:#e8edf2;font-weight:500}
 .detail-empty{color:#7f91a1}
 .detail-dimension{grid-template-columns:1fr}
+.detail-tags-panel{margin:4px 0 10px;border-top:1px solid #2b3743;border-bottom:1px solid #2b3743}.detail-tags-summary{padding:11px 0;color:#bdc8d2;font-weight:700;cursor:pointer;user-select:none}.detail-tags-panel[open] .detail-tags-summary{color:#82edbd}.detail-tags-content{padding-bottom:5px}
 .dimension-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
 .dimension-tag{padding:4px 7px;border:1px solid #48586a;border-radius:6px;background:#202a35;color:#dbe3ea;font-size:12px}
 .dimension-tag.editable{cursor:pointer;user-select:none}.dimension-tag.editable:hover{border-color:#65dbab;background:#263a36}.dimension-tag.editable.selected{border-color:#4fcf98;background:#17372c;color:#82edbd}
+.dimension-tag.editable.selected.primary{box-shadow:inset 3px 0 #82edbd}
+.quick-view-buttons{display:flex;gap:5px;flex-wrap:wrap}.quick-view-button{margin:5px 0;padding:8px 11px;background:#243140;color:#dce5ed;border:1px solid #415264}.quick-view-button:hover{border-color:#65dbab;color:#fff}.quick-view-button.default:after{content:" ★";color:#6be8ae}
+.quick-view-settings-card{margin:14px 0;padding:18px;border:1px solid #344252;border-radius:12px;background:#18222d}.quick-view-settings-head{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:13px}.quick-view-name{box-sizing:border-box;width:min(430px,100%);padding:10px 12px;border:1px solid #46586b;border-radius:7px;background:#101923;color:#fff;font:inherit;font-weight:700}.quick-view-fields{display:flex;flex-wrap:wrap;gap:8px 14px}.quick-view-fields label{display:inline-flex;align-items:center;gap:5px}.quick-view-default-picker{margin:16px 0;padding:14px;border:1px solid #344252;border-radius:10px;background:#111a23}.quick-view-default{margin-top:8px}.quick-view-default label{display:inline-flex;align-items:center;margin-right:18px}
+.settings-section{margin:16px 0;padding:16px;border:1px solid #344252;border-radius:10px;background:#111a23}.settings-section h2{margin-top:0}.dark-mode-toggle label{display:inline-flex;align-items:center;gap:5px;font-size:16px}
+.theme-dark,.theme-light{min-height:100vh}.theme-light{background:#e8edf2;color:#17212b}.theme-light .sidebar{background:#f6f8fa;border-color:#c8d2dc}.theme-light .brand,.theme-light h2,.theme-light h3{color:#17212b}.theme-light .nav-item{color:#526273}.theme-light .nav-item:hover{background:#e5ebf0;color:#17212b}.theme-light .nav-item.active{background:#d9f3e8;color:#176946}.theme-light .page-content{background:#fff}.theme-light .mapping-card,.theme-light .quick-view-settings-card,.theme-light .selected-track,.theme-light .actions-panel{background:#f3f6f8;border-color:#c8d2dc}.theme-light .settings-section,.theme-light .quick-view-default-picker{background:#f3f6f8;border-color:#c8d2dc}.theme-light .quick-view-name,.theme-light .field input{background:#fff;color:#17212b;border-color:#aab8c5}.theme-light label{color:#435466}.theme-light .track-table-wrap{border-color:#becad4}.theme-light .track-table th{background:#dbe3e9;color:#354657}.theme-light .track-table td{border-color:#dce3e8}.theme-light .track-table tbody tr:nth-child(even){background:#f3f6f8}.theme-light .track-table tbody tr:hover{background:#e4eef5}.theme-light .track-row.selected{background:#cfe2ef!important}.theme-light .detail-field{border-color:#d6dfe6}.theme-light .dimension-tag{background:#edf2f5;color:#253443;border-color:#b6c2cc}.theme-light .field-picker-menu{background:#fff;border-color:#b6c2cc}.theme-light .quick-filter{background:#f3f6f8;border-color:#c8d2dc}.theme-light .track-status,.theme-light .hint,.theme-light .detail-empty{color:#657587}
+.theme-light .detail-tags-panel{border-color:#d6dfe6}.theme-light .detail-tags-summary{color:#435466}.theme-light .detail-tags-panel[open] .detail-tags-summary{color:#176946}
 .detail-playlists{grid-template-columns:1fr}
 .playlist-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .playlist-tag{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;padding:5px 8px;border:1px solid #3e6255;border-radius:999px;background:#17372c;color:#78e8b6;font-size:12px;white-space:nowrap}
@@ -263,6 +287,21 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .mix-youtube-input{box-sizing:border-box;width:100%;margin-top:7px;padding:11px 12px;border:1px solid #46586b;border-radius:7px;background:#0d151e;color:#e8edf2;font:inherit}
 .mix-youtube-input:focus{outline:2px solid #35e0a1;border-color:transparent}.mix-save{margin:10px 8px 14px 0}.mix-save-status{color:#82edbd;font-size:13px}
 .watched-mix-add{max-width:760px;padding:20px;border:1px solid #344252;border-radius:12px;background:#18222d}.watched-mix-link{display:inline-block;margin:4px 0 18px;color:#65dbab;text-decoration:none}.watched-mix-link:hover{text-decoration:underline}
+.tracklist-import{margin:22px 0;padding:18px;border:1px solid #344252;border-radius:12px;background:#111923}
+.tracklist-input{box-sizing:border-box;width:100%;min-height:160px;padding:12px;border:1px solid #46586b;border-radius:8px;resize:vertical;background:#0d151e;color:#e8edf2;font:14px ui-monospace,SFMono-Regular,Consolas,monospace}
+.tracklist-order{width:min(280px,100%);margin-top:10px;color:#111}
+.tracklist-table-wrap{max-height:440px}.tracklist-table{min-width:980px}
+.tracklist-time{font-variant-numeric:tabular-nums;color:#8da0b2}
+.tracklist-artist,.tracklist-title{white-space:normal;min-width:150px}
+.tracklist-match{width:390px;min-width:390px;overflow:visible}
+.tracklist-match-select{min-width:370px;color:#111}
+.tracklist-like{white-space:nowrap;background:#244436;color:#82edbd}
+.tracklist-watch{white-space:nowrap;background:#2b3145;color:#c8cfff}.tracklist-actions{display:flex;gap:6px;align-items:center}
+.mix-stopwatch{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:12px 0;padding:10px 12px;border:1px solid #344252;border-radius:9px;background:#0d151e}.mix-stopwatch-time{min-width:92px;color:#fff;font:700 20px ui-monospace,SFMono-Regular,Consolas,monospace;font-variant-numeric:tabular-nums}.mix-stopwatch button{margin:0;padding:7px 12px}.mix-current-track{background:#3b3520!important;box-shadow:inset 4px 0 #ffd45c}.mix-current-track td:first-child{color:#ffe28a!important;font-weight:700}
+.tracklist-state{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.state-matched,.state-imported{color:#69dda5}.state-watching{color:#a99be9}.state-ambiguous{color:#f3cb70}.state-not_found,.state-invalid{color:#ef8f99}.state-unresolved{color:#a99be9}
+.theme-light .tracklist-import{background:#f3f6f8;border-color:#c8d2dc}.theme-light .tracklist-input{background:#fff;color:#17212b;border-color:#aab8c5}
+.pending-track-table{min-width:1180px}.pending-track-table-wrap{max-height:calc(100vh - 230px)}.pending-candidate-cell{display:grid;min-width:380px;gap:6px}.pending-mix-link{margin:0}
 .mix-positions{max-height:360px;margin:8px 0 0;overflow:auto;line-height:1.7;white-space:pre-wrap}
 @media(max-width:1200px){.track-quick-filters{grid-template-columns:repeat(3,minmax(160px,1fr))}}
 @media(max-width:1000px){.library-layout{grid-template-columns:1fr}.library-layout .track-table-wrap{height:60vh}.inspector-column{position:static}.track-details{min-height:0}}
@@ -415,6 +454,118 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
         }
         var href = selected.dataset.sidebarHref;
         if (href) window.location.assign(href);
+    }, true);
+})();
+(function() {
+    var root = null;
+    var running = false;
+    var started = false;
+    var elapsedMs = 0;
+    var startedAt = 0;
+
+    function reset(nextRoot) {
+        document.querySelectorAll('.mix-current-track').forEach(function(row) {
+            row.classList.remove('mix-current-track');
+        });
+        root = nextRoot || null;
+        running = false;
+        started = false;
+        elapsedMs = 0;
+        startedAt = 0;
+    }
+
+    function ensureRoot() {
+        var mounted = document.querySelector('[data-mix-stopwatch]');
+        if (mounted !== root) reset(mounted);
+        return mounted;
+    }
+
+    function currentElapsed() {
+        return elapsedMs + (running ? performance.now() - startedAt : 0);
+    }
+
+    function parseTime(value) {
+        var clean = String(value || '').trim();
+        if (clean.charAt(0) === '[') clean = clean.slice(1);
+        if (clean.endsWith(']')) clean = clean.slice(0, -1);
+        var parts = clean.split(':');
+        if (parts.length < 2 || parts.length > 3) return null;
+        var numbers = parts.map(Number);
+        if (numbers.some(function(value) { return !Number.isFinite(value); })) return null;
+        return numbers.reduce(function(total, value) { return total * 60 + value; }, 0);
+    }
+
+    function formatTime(milliseconds) {
+        var tenths = Math.floor(Math.max(0, milliseconds) / 100);
+        var tenth = tenths % 10;
+        var totalSeconds = Math.floor(tenths / 10);
+        var seconds = totalSeconds % 60;
+        var totalMinutes = Math.floor(totalSeconds / 60);
+        var minutes = totalMinutes % 60;
+        var hours = Math.floor(totalMinutes / 60);
+        var base = String(minutes).padStart(2, '0') + ':' +
+            String(seconds).padStart(2, '0') + '.' + tenth;
+        return hours ? String(hours) + ':' + base : base;
+    }
+
+    function paint() {
+        var mounted = ensureRoot();
+        if (!mounted) return;
+        var milliseconds = currentElapsed();
+        var display = mounted.querySelector('.mix-stopwatch-time');
+        if (display) display.textContent = formatTime(milliseconds);
+        var toggle = mounted.querySelector('[data-stopwatch-action="toggle"]');
+        if (toggle) toggle.textContent = running ? 'Pause' : (started ? 'Resume' : 'Start');
+
+        var active = null;
+        var activeSeconds = -1;
+        document.querySelectorAll('[data-track-start-time]').forEach(function(row) {
+            row.classList.remove('mix-current-track');
+            var seconds = parseTime(row.dataset.trackStartTime);
+            if (started && seconds !== null && seconds <= milliseconds / 1000 && seconds >= activeSeconds) {
+                active = row;
+                activeSeconds = seconds;
+            }
+        });
+        if (active) active.classList.add('mix-current-track');
+    }
+
+    document.addEventListener('click', function(event) {
+        var button = event.target.closest('[data-stopwatch-action]');
+        if (!button) return;
+        var mounted = button.closest('[data-mix-stopwatch]');
+        if (mounted !== root) reset(mounted);
+        if (button.dataset.stopwatchAction === 'stop') {
+            reset(mounted);
+            paint();
+            return;
+        }
+        if (running) {
+            elapsedMs = currentElapsed();
+            running = false;
+        } else {
+            started = true;
+            running = true;
+            startedAt = performance.now();
+        }
+        paint();
+    });
+
+    window.setInterval(paint, 100);
+})();
+(function() {
+    var currentState = null;
+    document.addEventListener('toggle', function(event) {
+        var panel = event.target;
+        if (!panel || !panel.matches || !panel.matches('[data-tags-panel]')) return;
+        var collapsed = !panel.open;
+        if (currentState === collapsed) return;
+        currentState = collapsed;
+        if (window.dash_clientside && window.dash_clientside.set_props) {
+            window.dash_clientside.set_props('ui-preferences', {
+                data: {tags_collapsed: collapsed}
+            });
+        }
     }, true);
 })();
 </script>

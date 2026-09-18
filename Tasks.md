@@ -25,4 +25,23 @@ tagging can also happen somehow to which djmix or dj its from ?
 tagging shows which mix it appears in.
 
 
-# data from concert archives to events
+# fiks at playlists også refresher seg når man går inn på de. 
+# dissasociate with mix
+# VI må seriøst flytte actions greiene
+# alert på tracks i mixes på når de kommer ut. søk periodisk
+# hvorfor er scroll så buggy..
+# export til virtualdj elns 
+
+00:48 Sultan + Shepard & Prinze George - Centuries (Extended Mix) *
+08:28 Delta Vaults - Time (Extended Mix)
+12:23 Felsmann + Tiley - Open Fields (Silver Panda Extended Remix) **
+16:17 Paradoks - Away (Extended Mix)
+20:21 Elderbrook - Is It Over Now (IONITY Extended Remix)
+25:43 Huminal - Lotus (Extended Mix)
+29:03 Levasseur - A Secret Place (Extended Mix)
+34:18 Sonickraft - Unity (Extended Mix)
+37:52 Glusko - I Can't Leave You (Extended Mix)
+42:25 Fahlberg - The Shift (Extended Mix)
+46:35 Trilucid, Tim Green - One Day At A Time (Tim Green Extended Remix)
+51:29 JMZ (MX), Charliee, Hagelslag - Gravity (Extended Mix)
+57:20 Rossie - Latent (Extended Mix)

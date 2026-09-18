@@ -8,8 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from music_library.database import (
-    cached_tidal_liked_tracks,
-    store_tidal_liked_tracks,
+    latest_tidal_liked_user_id,
     tidal_artist_tracks_page,
     tidal_artists_for_tracks,
     tidal_dimensions_for_tracks,
@@ -145,9 +144,11 @@ def _cached_track_row(record: dict[str, Any]) -> dict[str, str]:
         bpm_text = _text(bpm)
 
     added = _text(record.get("date_added"))
+    added_sort = 0.0
     if added:
         try:
             parsed_added = datetime.fromisoformat(added.replace("Z", "+00:00"))
+            added_sort = parsed_added.timestamp()
             if parsed_added.tzinfo is not None:
                 parsed_added = parsed_added.astimezone()
             added = parsed_added.strftime("%Y-%m-%d %H:%M")
@@ -170,8 +171,30 @@ def _cached_track_row(record: dict[str, Any]) -> dict[str, str]:
         ),
         "year": _text(record.get("year")),
         "date_added": added,
+        "_date_added_sort": added_sort,
         "mix_position": _text(record.get("mix_position")),
     }
+
+
+def _date_sorted_page(
+    rows: list[dict[str, Any]],
+    sort: dict[str, str] | None,
+    limit: int,
+    offset: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Sort the complete local collection by date before taking a page."""
+    if (sort or {}).get("field") == "date_added" and (sort or {}).get(
+        "direction"
+    ) in {"asc", "desc"}:
+        present = [row for row in rows if row.get("date_added")]
+        missing = [row for row in rows if not row.get("date_added")]
+        present.sort(
+            key=lambda row: row.get("_date_added_sort", row.get("date_added") or ""),
+            reverse=(sort or {}).get("direction") == "desc",
+        )
+        rows = [*present, *missing]
+    page = rows[offset : offset + limit]
+    return page, offset + limit < len(rows)
 
 
 def fetch_liked_tracks(
@@ -181,67 +204,44 @@ def fetch_liked_tracks(
     force_refresh: bool = False,
     cache_seconds: int = 300,
     filters: dict[str, Any] | None = None,
+    sort: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], bool]:
-    """Load one liked-track page and report whether another may exist."""
-    from tidalapi.user import ItemOrder, OrderDirection
-
-    session = engine.tidal_client(interactive=False)
-    user_id = str(session.user.id)
+    """Load one liked-track page exclusively from the local SQLite library."""
+    user_id = latest_tidal_liked_user_id()
+    if not user_id:
+        engine.LOGGER.info("tidal.liked_tracks local_cache_empty no_user_snapshot=true")
+        return [], False
     if filters:
         records = tidal_liked_tracks_page(user_id, limit=1_000_000)
-        if records:
-            return _filter_records(records, filters, limit, offset)
-    if not force_refresh:
-        cached = cached_tidal_liked_tracks(
-            user_id,
-            limit=limit,
-            max_age_seconds=cache_seconds,
-            offset=offset,
-        )
-        if cached:
-            engine.LOGGER.info(
-                "tidal.liked_tracks cache_hit user_id=%s offset=%d tracks=%d",
-                user_id,
-                offset,
-                len(cached),
-            )
-            # A partial older snapshot may contain fewer than the new page size;
-            # let the scroll sentinel probe TIDAL for the following page.
-            return [_cached_track_row(record) for record in cached], bool(cached)
+        return _filter_records(records, filters, limit, offset, sort)
+    if (sort or {}).get("field") == "date_added":
+        records = tidal_liked_tracks_page(user_id, limit=1_000_000)
+        rows = [_cached_track_row(record) for record in records]
+        return _date_sorted_page(rows, sort, limit, offset)
+    records = tidal_liked_tracks_page(user_id, limit=limit, offset=offset)
     engine.LOGGER.info(
-        "tidal.liked_tracks cache_miss user_id=%s force=%s offset=%d",
+        "tidal.liked_tracks local_page user_id=%s refresh=%s offset=%d tracks=%d",
         user_id,
         force_refresh,
         offset,
+        len(records),
     )
-    tracks = engine._call(
-        "tidal",
-        "favorite_tracks",
-        lambda: session.user.favorites.tracks(
-            limit=limit,
-            offset=offset,
-            order=ItemOrder.Date,
-            order_direction=OrderDirection.Descending,
-        ),
-        limit=limit,
-        offset=offset,
-        order="date_descending",
-    )
-    store_tidal_liked_tracks(user_id, tracks, offset=offset)
-    if filters:
-        records = tidal_liked_tracks_page(user_id, limit=1_000_000)
-        return _filter_records(records, filters, limit, offset)
-    return [track_row(track) for track in tracks], len(tracks) == limit
+    return [_cached_track_row(record) for record in records], len(records) == limit
 
 
 def fetch_indexed_playlist_tracks(
     playlist_id: str, limit: int = 30, offset: int = 0,
     filters: dict[str, Any] | None = None,
+    sort: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], bool]:
     """Read one playlist page entirely from the local SQLite index."""
     if filters:
         records = tidal_playlist_tracks_page(playlist_id, limit=1_000_000)
-        return _filter_records(records, filters, limit, offset)
+        return _filter_records(records, filters, limit, offset, sort)
+    if (sort or {}).get("field") == "date_added":
+        records = tidal_playlist_tracks_page(playlist_id, limit=1_000_000)
+        rows = [_cached_track_row(record) for record in records]
+        return _date_sorted_page(rows, sort, limit, offset)
     records = tidal_playlist_tracks_page(playlist_id, limit=limit, offset=offset)
     return [_cached_track_row(record) for record in records], len(records) == limit
 
@@ -249,11 +249,16 @@ def fetch_indexed_playlist_tracks(
 def fetch_indexed_setlist_tracks(
     folder_name: str, limit: int = 30, offset: int = 0,
     filters: dict[str, Any] | None = None,
+    sort: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], bool]:
     """Read one setlist page entirely from its dedicated SQLite membership."""
     if filters:
         records = tidal_setlist_tracks_page(folder_name, limit=1_000_000)
-        return _filter_records(records, filters, limit, offset)
+        return _filter_records(records, filters, limit, offset, sort)
+    if (sort or {}).get("field") == "date_added":
+        records = tidal_setlist_tracks_page(folder_name, limit=1_000_000)
+        rows = [_cached_track_row(record) for record in records]
+        return _date_sorted_page(rows, sort, limit, offset)
     records = tidal_setlist_tracks_page(folder_name, limit=limit, offset=offset)
     return [_cached_track_row(record) for record in records], len(records) == limit
 
@@ -261,11 +266,16 @@ def fetch_indexed_setlist_tracks(
 def fetch_watched_mix_tracks(
     video_id: str, limit: int = 30, offset: int = 0,
     filters: dict[str, Any] | None = None,
+    sort: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], bool]:
     """Read one watched-mix track page from local associations."""
     if filters:
         records = tidal_watched_mix_tracks_page(video_id, limit=1_000_000)
-        return _filter_records(records, filters, limit, offset)
+        return _filter_records(records, filters, limit, offset, sort)
+    if (sort or {}).get("field") == "date_added":
+        records = tidal_watched_mix_tracks_page(video_id, limit=1_000_000)
+        rows = [_cached_track_row(record) for record in records]
+        return _date_sorted_page(rows, sort, limit, offset)
     records = tidal_watched_mix_tracks_page(video_id, limit=limit, offset=offset)
     return [_cached_track_row(record) for record in records], len(records) == limit
 
@@ -273,11 +283,16 @@ def fetch_watched_mix_tracks(
 def fetch_artist_tracks(
     artist_key: str, limit: int = 30, offset: int = 0,
     filters: dict[str, Any] | None = None,
+    sort: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], bool]:
     """Read all locally indexed tracks credited to one artist."""
     if filters:
         records = tidal_artist_tracks_page(artist_key, limit=1_000_000)
-        return _filter_records(records, filters, limit, offset)
+        return _filter_records(records, filters, limit, offset, sort)
+    if (sort or {}).get("field") == "date_added":
+        records = tidal_artist_tracks_page(artist_key, limit=1_000_000)
+        rows = [_cached_track_row(record) for record in records]
+        return _date_sorted_page(rows, sort, limit, offset)
     records = tidal_artist_tracks_page(artist_key, limit=limit, offset=offset)
     return [_cached_track_row(record) for record in records], len(records) == limit
 
@@ -287,6 +302,7 @@ def _filter_records(
     filters: dict[str, Any],
     limit: int,
     offset: int,
+    sort: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Apply faceted filters to a complete local collection before pagination."""
     rows = [_cached_track_row(record) for record in records]
@@ -337,8 +353,7 @@ def _filter_records(
         if wanted_tags and not wanted_tags.intersection(all_tags):
             continue
         matched.append(row)
-    page = matched[offset : offset + limit]
-    return page, offset + limit < len(matched)
+    return _date_sorted_page(matched, sort, limit, offset)
 
 
 def collection_artist_summary(
@@ -356,8 +371,8 @@ def collection_artist_summary(
     elif kind == "artist":
         records = tidal_artist_tracks_page(collection_id, limit=1_000_000)
     else:
-        session = engine.tidal_client(interactive=False)
-        records = tidal_liked_tracks_page(str(session.user.id), limit=1_000_000)
+        user_id = latest_tidal_liked_user_id()
+        records = tidal_liked_tracks_page(user_id, limit=1_000_000) if user_id else []
     artists = tidal_artists_for_tracks([str(record.get("id") or "") for record in records])
     counts: Counter[tuple[str, str]] = Counter()
     names: dict[str, str] = {}

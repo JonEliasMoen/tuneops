@@ -16,7 +16,12 @@ from music_tools.mixes import content as mixes_content
 from music_tools.mixes import register_callbacks as register_mixes_callbacks
 from music_tools.mixes import register_routes as register_mixes_routes
 from music_tools.watched_mixes import content as watched_mixes_content
+from music_tools.watched_mixes import pending_content
+from music_tools.watched_mixes import register_pending_callbacks
 from music_tools.watched_mixes import register_callbacks as register_watched_mixes_callbacks
+from music_tools.settings import DEFAULT_QUICK_VIEWS
+from music_tools.settings import content as settings_content
+from music_tools.settings import register_callbacks as register_settings_callbacks
 from music_tools.ui import INDEX_STRING, shell, sidebar
 
 
@@ -236,25 +241,85 @@ def create_app(engine):
             ],
         )
 
-    app.layout = html.Div([dcc.Location(id="app-url"), html.Div(id="page-root")])
+    app_config = engine.load_config()
+    initial_dark_mode = bool(app_config.get("settings", {}).get("dark_mode", True))
+    initial_tags_collapsed = bool(
+        app_config.get("settings", {}).get("tags_collapsed_by_default", True)
+    )
+    app.layout = html.Div(
+        [
+            dcc.Location(id="app-url"),
+            dcc.Store(
+                id="quick-views",
+                data=app_config.get("quick_views", DEFAULT_QUICK_VIEWS),
+            ),
+            dcc.Store(
+                id="theme-settings",
+                data={"dark_mode": initial_dark_mode},
+            ),
+            dcc.Store(
+                id="ui-preferences",
+                data={"tags_collapsed": initial_tags_collapsed},
+            ),
+            html.Div(id="page-root"),
+        ],
+        id="app-root",
+        className="theme-dark" if initial_dark_mode else "theme-light",
+    )
+
+    @callback(Output("app-root", "className"), Input("theme-settings", "data"))
+    def apply_theme(theme):
+        return "theme-dark" if (theme or {}).get("dark_mode", True) else "theme-light"
 
     @callback(Output("page-root", "children"), Input("app-url", "pathname"))
     def route_page(pathname: str | None):
+        quick_views = engine.load_config().get("quick_views", DEFAULT_QUICK_VIEWS)
         if pathname == "/liked-tracks":
-            return shell(html, "liked-tracks", track_browser_content(html, dcc))
+            return shell(
+                html,
+                "liked-tracks",
+                track_browser_content(html, dcc, quick_views=quick_views),
+            )
+        if pathname == "/settings":
+            config = engine.load_config()
+            return shell(
+                html,
+                "settings",
+                settings_content(
+                    html,
+                    dcc,
+                    config.get("quick_views", DEFAULT_QUICK_VIEWS),
+                    bool(config.get("settings", {}).get("dark_mode", True)),
+                    bool(
+                        config.get("settings", {}).get(
+                            "tags_collapsed_by_default", True
+                        )
+                    ),
+                ),
+            )
         if pathname == "/mixes":
-            return shell(html, "mixes", mixes_content(html, dcc))
+            return shell(html, "mixes", mixes_content(html, dcc, quick_views=quick_views))
         if pathname and pathname.startswith("/mixes/"):
             folder_name = unquote(pathname.removeprefix("/mixes/").strip("/"))
-            return shell(html, f"mix:{folder_name}", mixes_content(html, dcc, folder_name))
+            return shell(
+                html,
+                f"mix:{folder_name}",
+                mixes_content(html, dcc, folder_name, quick_views=quick_views),
+            )
         if pathname == "/watched-mixes":
-            return shell(html, "watched-mixes", watched_mixes_content(html, dcc))
+            return shell(
+                html,
+                "watched-mixes",
+                watched_mixes_content(html, dcc, quick_views=quick_views),
+            )
+        if pathname == "/watched-mixes/pending":
+            return shell(html, "pending-tracks", pending_content(html, dcc))
         if pathname and pathname.startswith("/watched-mixes/"):
             video_id = unquote(pathname.removeprefix("/watched-mixes/").strip("/"))
             return shell(
                 html,
                 f"watched-mix:{video_id}",
-                watched_mixes_content(html, dcc, video_id),
+                watched_mixes_content(html, dcc, video_id, quick_views=quick_views),
             )
         if pathname and pathname.startswith("/artists/"):
             artist_key = unquote(pathname.removeprefix("/artists/").strip("/"))
@@ -268,7 +333,7 @@ def create_app(engine):
                 return shell(
                     html,
                     "liked-tracks",
-                    track_browser_content(html, dcc, collection),
+                    track_browser_content(html, dcc, collection, quick_views),
                 )
         collection_routes = {
             "/playlists/": ("playlist", "playlist"),
@@ -297,13 +362,23 @@ def create_app(engine):
                 return shell(
                     html,
                     f"{active_prefix}:{playlist_id}",
-                    track_browser_content(html, dcc, collection),
+                    track_browser_content(html, dcc, collection, quick_views),
                 )
         return playlist_sync_layout()
 
-    register_track_browser_callbacks(app, callback, Input, Output, State, html, ctx, engine)
+    register_track_browser_callbacks(
+        app, callback, Input, Output, State, ALL, html, ctx, engine
+    )
     register_mixes_callbacks(app, callback, Input, Output, State, ctx, html, dcc, engine)
-    register_watched_mixes_callbacks(callback, Input, Output, State)
+    register_watched_mixes_callbacks(
+        callback, Input, Output, State, ALL, html, dcc, engine
+    )
+    register_pending_callbacks(
+        callback, Input, Output, State, ALL, html, dcc, ctx, engine
+    )
+    register_settings_callbacks(
+        callback, Input, Output, State, ALL, html, dcc, ctx, no_update, engine
+    )
 
     @callback(Output("mapping-list", "children"), Input("mapping-store", "data"))
     def render_mappings(rows: list[dict[str, Any]]):
