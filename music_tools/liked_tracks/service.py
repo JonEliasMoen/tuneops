@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import date, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -9,8 +10,13 @@ from typing import Any
 from music_library.database import (
     cached_tidal_liked_tracks,
     store_tidal_liked_tracks,
+    tidal_artist_tracks_page,
+    tidal_artists_for_tracks,
+    tidal_dimensions_for_tracks,
+    tidal_liked_tracks_page,
     tidal_playlist_tracks_page,
     tidal_setlist_tracks_page,
+    tidal_watched_mix_tracks_page,
 )
 
 
@@ -109,10 +115,16 @@ def track_row(track: Any) -> dict[str, str]:
         album_art_url = album.image(320) if album else ""
     except (AttributeError, TypeError, ValueError):
         album_art_url = ""
+    artists = getattr(track, "artists", None) or []
     return {
         "id": _text(getattr(track, "id", "")),
         "title": _text(getattr(track, "name", "") or getattr(track, "full_name", "")),
         "artist": _artists(track),
+        "artists": [
+            {"id": _text(getattr(artist, "name", "")).casefold(), "name": _text(getattr(artist, "name", ""))}
+            for artist in artists
+            if _text(getattr(artist, "name", ""))
+        ],
         "remix": _text(getattr(track, "version", "")),
         "album": _text(getattr(album, "name", "")),
         "album_art_url": album_art_url,
@@ -168,12 +180,17 @@ def fetch_liked_tracks(
     offset: int = 0,
     force_refresh: bool = False,
     cache_seconds: int = 300,
+    filters: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, str]], bool]:
     """Load one liked-track page and report whether another may exist."""
     from tidalapi.user import ItemOrder, OrderDirection
 
     session = engine.tidal_client(interactive=False)
     user_id = str(session.user.id)
+    if filters:
+        records = tidal_liked_tracks_page(user_id, limit=1_000_000)
+        if records:
+            return _filter_records(records, filters, limit, offset)
     if not force_refresh:
         cached = cached_tidal_liked_tracks(
             user_id,
@@ -211,20 +228,173 @@ def fetch_liked_tracks(
         order="date_descending",
     )
     store_tidal_liked_tracks(user_id, tracks, offset=offset)
+    if filters:
+        records = tidal_liked_tracks_page(user_id, limit=1_000_000)
+        return _filter_records(records, filters, limit, offset)
     return [track_row(track) for track in tracks], len(tracks) == limit
 
 
 def fetch_indexed_playlist_tracks(
-    playlist_id: str, limit: int = 30, offset: int = 0
+    playlist_id: str, limit: int = 30, offset: int = 0,
+    filters: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, str]], bool]:
     """Read one playlist page entirely from the local SQLite index."""
+    if filters:
+        records = tidal_playlist_tracks_page(playlist_id, limit=1_000_000)
+        return _filter_records(records, filters, limit, offset)
     records = tidal_playlist_tracks_page(playlist_id, limit=limit, offset=offset)
     return [_cached_track_row(record) for record in records], len(records) == limit
 
 
 def fetch_indexed_setlist_tracks(
-    folder_name: str, limit: int = 30, offset: int = 0
+    folder_name: str, limit: int = 30, offset: int = 0,
+    filters: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, str]], bool]:
     """Read one setlist page entirely from its dedicated SQLite membership."""
+    if filters:
+        records = tidal_setlist_tracks_page(folder_name, limit=1_000_000)
+        return _filter_records(records, filters, limit, offset)
     records = tidal_setlist_tracks_page(folder_name, limit=limit, offset=offset)
     return [_cached_track_row(record) for record in records], len(records) == limit
+
+
+def fetch_watched_mix_tracks(
+    video_id: str, limit: int = 30, offset: int = 0,
+    filters: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, str]], bool]:
+    """Read one watched-mix track page from local associations."""
+    if filters:
+        records = tidal_watched_mix_tracks_page(video_id, limit=1_000_000)
+        return _filter_records(records, filters, limit, offset)
+    records = tidal_watched_mix_tracks_page(video_id, limit=limit, offset=offset)
+    return [_cached_track_row(record) for record in records], len(records) == limit
+
+
+def fetch_artist_tracks(
+    artist_key: str, limit: int = 30, offset: int = 0,
+    filters: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, str]], bool]:
+    """Read all locally indexed tracks credited to one artist."""
+    if filters:
+        records = tidal_artist_tracks_page(artist_key, limit=1_000_000)
+        return _filter_records(records, filters, limit, offset)
+    records = tidal_artist_tracks_page(artist_key, limit=limit, offset=offset)
+    return [_cached_track_row(record) for record in records], len(records) == limit
+
+
+def _filter_records(
+    records: list[dict[str, Any]],
+    filters: dict[str, Any],
+    limit: int,
+    offset: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Apply faceted filters to a complete local collection before pagination."""
+    rows = [_cached_track_row(record) for record in records]
+    track_ids = [row["id"] for row in rows]
+    artist_map = tidal_artists_for_tracks(track_ids)
+    dimensions = tidal_dimensions_for_tracks(track_ids)
+    wanted_artists = set(filters.get("artists") or [])
+    wanted_keys = set(filters.get("keys") or [])
+    wanted_ratings = set(filters.get("ratings") or [])
+    wanted_energy = set(filters.get("energy") or [])
+    wanted_tags = set(filters.get("tags") or [])
+    try:
+        bpm_min = float(filters["bpm_min"]) if filters.get("bpm_min") not in (None, "") else None
+        bpm_max = float(filters["bpm_max"]) if filters.get("bpm_max") not in (None, "") else None
+    except (TypeError, ValueError):
+        bpm_min = bpm_max = None
+
+    matched = []
+    for row in rows:
+        row_artists = artist_map.get(row["id"], [])
+        row_dimensions = dimensions.get(row["id"], {})
+        row["artists"] = row_artists
+        row["dimensions"] = row_dimensions
+        if wanted_artists and not wanted_artists.intersection(
+            artist["id"] for artist in row_artists
+        ):
+            continue
+        if wanted_keys and row.get("key") not in wanted_keys:
+            continue
+        try:
+            bpm = float(row.get("bpm"))
+        except (TypeError, ValueError):
+            bpm = None
+        if bpm_min is not None and (bpm is None or bpm < bpm_min):
+            continue
+        if bpm_max is not None and (bpm is None or bpm > bpm_max):
+            continue
+        if wanted_ratings and not wanted_ratings.intersection(row_dimensions.get("rating", [])):
+            continue
+        if wanted_energy and not wanted_energy.intersection(row_dimensions.get("energy", [])):
+            continue
+        all_tags = {
+            f"{dimension}:{value}"
+            for dimension, values in row_dimensions.items()
+            if dimension not in {"rating", "energy"}
+            for value in values
+        }
+        if wanted_tags and not wanted_tags.intersection(all_tags):
+            continue
+        matched.append(row)
+    page = matched[offset : offset + limit]
+    return page, offset + limit < len(matched)
+
+
+def collection_artist_summary(
+    engine: Any, collection: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], dict[str, Any]]:
+    """Return top artists, filter options, BPM range, and the most common vibe."""
+    kind = str(collection.get("type") or "liked")
+    collection_id = str(collection.get("id") or "")
+    if kind == "playlist":
+        records = tidal_playlist_tracks_page(collection_id, limit=1_000_000)
+    elif kind == "setlist":
+        records = tidal_setlist_tracks_page(collection_id, limit=1_000_000)
+    elif kind == "watched_mix":
+        records = tidal_watched_mix_tracks_page(collection_id, limit=1_000_000)
+    elif kind == "artist":
+        records = tidal_artist_tracks_page(collection_id, limit=1_000_000)
+    else:
+        session = engine.tidal_client(interactive=False)
+        records = tidal_liked_tracks_page(str(session.user.id), limit=1_000_000)
+    artists = tidal_artists_for_tracks([str(record.get("id") or "") for record in records])
+    counts: Counter[tuple[str, str]] = Counter()
+    names: dict[str, str] = {}
+    for track_artists in artists.values():
+        for artist in track_artists:
+            key = str(artist["id"])
+            name = str(artist["name"])
+            counts[(key, name)] += 1
+            names[key] = name
+    top = [
+        {"id": key, "name": name, "count": count}
+        for (key, name), count in counts.most_common(3)
+    ]
+    options = [
+        {"label": name, "value": key}
+        for key, name in sorted(names.items(), key=lambda item: item[1].casefold())
+    ]
+    bpms = []
+    for record in records:
+        try:
+            bpm = float(record.get("bpm"))
+        except (TypeError, ValueError):
+            continue
+        if bpm > 0:
+            bpms.append(bpm)
+    dimensions = tidal_dimensions_for_tracks(
+        [str(record.get("id") or "") for record in records]
+    )
+    vibes = Counter(
+        value
+        for track_dimensions in dimensions.values()
+        for value in track_dimensions.get("vibe", [])
+    )
+    stats = {
+        "bpm_min": min(bpms) if bpms else None,
+        "bpm_max": max(bpms) if bpms else None,
+        "vibe": vibes.most_common(1)[0][0] if vibes else "",
+        "vibe_count": vibes.most_common(1)[0][1] if vibes else 0,
+    }
+    return top, options, stats

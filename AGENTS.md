@@ -62,6 +62,13 @@ styles belong in `music_tools/ui.py`.
 - Rating, Energy, Vibe, Movement, Function, and Structure are available as
   optional Fields columns backed by `row["dimensions"]`. Keep them hidden by
   default, sortable when enabled, and synchronized with inspector edits.
+- Quick filters operate on the complete current SQLite collection before
+  pagination, not only the loaded browser rows. Different filter categories are
+  ANDed; multiple selections inside a category are ORed. Filter controls and
+  Fields selections persist in browser-local storage.
+- Artist cells and top-artist summaries link to `/artists/<normalized-key>`,
+  which shows every locally indexed track credited to that artist without a
+  provider call.
 - Keep collection descriptors JSON-serializable. The common keys are `type`,
   `id`, and `name`. Setlist timestamps come from SQLite membership rows rather
   than being carried in the collection descriptor.
@@ -89,15 +96,19 @@ styles belong in `music_tools/ui.py`.
 The default database is `music_library.sqlite3`; `MUSICSYNC_DATABASE` can
 override it. Database, WAL, and shared-memory files are ignored by Git.
 
-Before applying any schema or data migration to the live database, tell the
-user exactly what will change and wait for confirmation that the web app and
-startup sync are stopped. Do not treat a requested database feature as implicit
-permission to migrate the live file while it may be in use. Migrations against
-new temporary test databases do not require this coordination.
+Adding a new independent table with `CREATE TABLE IF NOT EXISTS` is safe while
+the app is running and does not require a stop. Before changing, copying,
+backing up, rebuilding, or migrating any existing live table or its data, tell
+the user exactly what will change and wait for confirmation that the web app
+and startup sync are stopped. Migrations against new temporary test databases
+do not require this coordination.
 
 Core tables:
 
 - `tracks`: provider metadata keyed by provider and provider track ID.
+- `artists` and `track_artists`: normalized artist identities and ordered
+  many-to-many track credits. Existing flattened artist strings are backfilled;
+  future TIDAL records retain provider artist IDs when available.
 - `playlists`: indexed playlist names, provider `last_updated` values, and a
   presentation-only `collection_type` of `playlist`, `event`, or `source`.
 - `playlist_tracks`: ordered membership and per-playlist `date_added`, with an
@@ -115,7 +126,7 @@ Core tables:
 
 - Routes: `/mixes` and `/mixes/<folder>`; `MUSICSYNC_MIX_ROOT` overrides the default
   `~/Documents/djstuff` directory.
-- Mix folders appear as children of a collapsible **Mixes** sidebar node; each
+- Mix folders appear as children of a collapsible **My mixes** sidebar node; each
   child route renders only that mix's cover, YouTube link, and positions.
 - Each immediate child folder is one mix. `cover.png` and `positions.txt` are
   read when present; the conventional final audio filename is
@@ -143,6 +154,21 @@ Core tables:
 - `vis1tracktimer` and the existing `visv1trackTimer` spelling are excluded.
 - The browser may only retrieve covers belonging to currently discovered mixes;
   do not expose a general filesystem-serving route.
+
+## Watched mixes
+
+- `/watched-mixes` is a separate, manually managed collection of YouTube mixes;
+  it must not reuse local setlist rows or imply that the user created the mix.
+- Store the validated YouTube video ID/URL, title, channel name, upload date,
+  and date added. The thumbnail and current view count remain live values.
+- Watched mixes use their own collapsible sidebar group with an always-present
+  **Add mix** child and follow the standard mouse/keyboard navigation contract.
+- `watched_mix_tracks` is an ordered many-to-many association between saved
+  watched mixes and existing local TIDAL tracks. A watched-mix detail route
+  renders those tracks through the shared track browser.
+- The shared track table exposes watched-mix provenance as the **Dj Mix**
+  column. It displays clickable YouTube-channel membership pills linking to the
+  corresponding watched-mix route and hides the currently viewed mix itself.
 
 ## Sidebar navigation standard
 
@@ -199,6 +225,9 @@ revalidation on the following run.
   according to the Camelot wheel palette.
 - Rows support mouse selection and Up/Down keyboard navigation. Selection
   follows the visible scroll area. Appending rows preserves scroll position.
+- Shift+Up/Down and Shift+click create a contiguous multi-selection. Playlist
+  actions, watched-mix association, and dimension edits apply to every selected
+  row while the focused row remains the inspector anchor.
 - From tracks, Left Arrow enters the sidebar and Right Arrow enters Actions.
   In the sidebar, Up/Down navigates tools and playlists; Right Arrow or Enter
   opens the highlighted destination and returns focus to its track list.

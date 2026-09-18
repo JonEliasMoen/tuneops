@@ -23,3 +23,6 @@
 
 tagging can also happen somehow to which djmix or dj its from ?
 tagging shows which mix it appears in.
+
+
+# data from concert archives to events

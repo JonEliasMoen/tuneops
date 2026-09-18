@@ -7,6 +7,7 @@ from urllib.parse import unquote
 
 from music_library.database import (
     set_tidal_playlist_collection_type,
+    tidal_artist,
     tidal_indexed_playlists,
 )
 from music_tools.track_browser import content as track_browser_content
@@ -14,6 +15,8 @@ from music_tools.track_browser import register_callbacks as register_track_brows
 from music_tools.mixes import content as mixes_content
 from music_tools.mixes import register_callbacks as register_mixes_callbacks
 from music_tools.mixes import register_routes as register_mixes_routes
+from music_tools.watched_mixes import content as watched_mixes_content
+from music_tools.watched_mixes import register_callbacks as register_watched_mixes_callbacks
 from music_tools.ui import INDEX_STRING, shell, sidebar
 
 
@@ -244,6 +247,29 @@ def create_app(engine):
         if pathname and pathname.startswith("/mixes/"):
             folder_name = unquote(pathname.removeprefix("/mixes/").strip("/"))
             return shell(html, f"mix:{folder_name}", mixes_content(html, dcc, folder_name))
+        if pathname == "/watched-mixes":
+            return shell(html, "watched-mixes", watched_mixes_content(html, dcc))
+        if pathname and pathname.startswith("/watched-mixes/"):
+            video_id = unquote(pathname.removeprefix("/watched-mixes/").strip("/"))
+            return shell(
+                html,
+                f"watched-mix:{video_id}",
+                watched_mixes_content(html, dcc, video_id),
+            )
+        if pathname and pathname.startswith("/artists/"):
+            artist_key = unquote(pathname.removeprefix("/artists/").strip("/"))
+            artist = tidal_artist(artist_key)
+            if artist:
+                collection = {
+                    "type": "artist",
+                    "id": artist_key,
+                    "name": artist.get("name") or artist_key,
+                }
+                return shell(
+                    html,
+                    "liked-tracks",
+                    track_browser_content(html, dcc, collection),
+                )
         collection_routes = {
             "/playlists/": ("playlist", "playlist"),
             "/events/": ("event", "event"),
@@ -277,6 +303,7 @@ def create_app(engine):
 
     register_track_browser_callbacks(app, callback, Input, Output, State, html, ctx, engine)
     register_mixes_callbacks(app, callback, Input, Output, State, ctx, html, dcc, engine)
+    register_watched_mixes_callbacks(callback, Input, Output, State)
 
     @callback(Output("mapping-list", "children"), Input("mapping-store", "data"))
     def render_mappings(rows: list[dict[str, Any]]):

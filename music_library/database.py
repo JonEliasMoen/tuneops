@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import unicodedata
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -34,6 +35,30 @@ CREATE TABLE IF NOT EXISTS tracks (
     refreshed_at TEXT NOT NULL,
     PRIMARY KEY (provider, provider_track_id)
 );
+
+CREATE TABLE IF NOT EXISTS artists (
+    provider TEXT NOT NULL,
+    artist_key TEXT NOT NULL,
+    provider_artist_id TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    PRIMARY KEY (provider, artist_key)
+);
+
+CREATE TABLE IF NOT EXISTS track_artists (
+    provider TEXT NOT NULL,
+    provider_track_id TEXT NOT NULL,
+    artist_key TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (provider, provider_track_id, artist_key),
+    FOREIGN KEY (provider, provider_track_id)
+        REFERENCES tracks(provider, provider_track_id) ON DELETE CASCADE,
+    FOREIGN KEY (provider, artist_key)
+        REFERENCES artists(provider, artist_key) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS track_artists_by_artist
+    ON track_artists(provider, artist_key, provider_track_id);
 
 CREATE TABLE IF NOT EXISTS playlists (
     provider TEXT NOT NULL,
@@ -146,6 +171,30 @@ CREATE TABLE IF NOT EXISTS setlist_tracks (
 
 CREATE INDEX IF NOT EXISTS setlist_tracks_by_track
     ON setlist_tracks(provider, provider_track_id);
+
+CREATE TABLE IF NOT EXISTS watched_mixes (
+    video_id TEXT PRIMARY KEY,
+    youtube_url TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    channel_name TEXT NOT NULL DEFAULT '',
+    upload_date TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS watched_mix_tracks (
+    video_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'tidal',
+    provider_track_id TEXT NOT NULL,
+    associated_at TEXT NOT NULL,
+    PRIMARY KEY (video_id, provider, provider_track_id),
+    FOREIGN KEY (video_id) REFERENCES watched_mixes(video_id) ON DELETE CASCADE,
+    FOREIGN KEY (provider, provider_track_id)
+        REFERENCES tracks(provider, provider_track_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS watched_mix_tracks_by_track
+    ON watched_mix_tracks(provider, provider_track_id);
 """
 
 
@@ -155,6 +204,66 @@ def _timestamp(value: Any) -> str | None:
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     return str(value)
+
+
+def _artist_key(name: str) -> str:
+    normalized = unicodedata.normalize("NFKC", str(name or "")).casefold()
+    return " ".join(normalized.split())
+
+
+def _record_artists(record: dict[str, Any]) -> list[dict[str, str]]:
+    artists = record.get("artists") or []
+    cleaned = [
+        {"id": str(item.get("id") or ""), "name": str(item.get("name") or "").strip()}
+        for item in artists
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    if cleaned:
+        return cleaned
+    return [
+        {"id": "", "name": name.strip()}
+        for name in str(record.get("artist") or "").split(",")
+        if name.strip()
+    ]
+
+
+def _store_track_artists(
+    connection: sqlite3.Connection, track_id: str, record: dict[str, Any]
+) -> None:
+    connection.execute(
+        "DELETE FROM track_artists WHERE provider='tidal' AND provider_track_id=?",
+        (str(track_id),),
+    )
+    seen: set[str] = set()
+    for position, artist in enumerate(_record_artists(record)):
+        name = artist["name"]
+        key = _artist_key(name)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        connection.execute(
+            """
+            INSERT INTO artists(
+                provider, artist_key, provider_artist_id, name, normalized_name
+            ) VALUES('tidal', ?, ?, ?, ?)
+            ON CONFLICT(provider, artist_key) DO UPDATE SET
+                provider_artist_id=CASE
+                    WHEN excluded.provider_artist_id != '' THEN excluded.provider_artist_id
+                    ELSE artists.provider_artist_id
+                END,
+                name=excluded.name,
+                normalized_name=excluded.normalized_name
+            """,
+            (key, artist["id"], name, key),
+        )
+        connection.execute(
+            """
+            INSERT INTO track_artists(
+                provider, provider_track_id, artist_key, position
+            ) VALUES('tidal', ?, ?, ?)
+            """,
+            (str(track_id), key, position),
+        )
 
 
 @contextmanager
@@ -206,6 +315,33 @@ def initialize(path: Path = DATABASE_PATH) -> None:
                 "UPDATE playlists SET source_last_updated=NULL WHERE provider='tidal'"
             )
             connection.execute("DELETE FROM liked_track_snapshots WHERE provider='tidal'")
+        watched_mix_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(watched_mixes)")
+        }
+        for column in ("title", "channel_name", "upload_date"):
+            if column not in watched_mix_columns:
+                connection.execute(
+                    f"ALTER TABLE watched_mixes ADD COLUMN {column} "
+                    "TEXT NOT NULL DEFAULT ''"
+                )
+        missing_artist_rows = connection.execute(
+            """
+            SELECT t.provider_track_id, t.artist
+            FROM tracks t
+            WHERE t.provider='tidal' AND t.artist != ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM track_artists ta
+                  WHERE ta.provider=t.provider
+                    AND ta.provider_track_id=t.provider_track_id
+              )
+            """
+        ).fetchall()
+        for row in missing_artist_rows:
+            _store_track_artists(
+                connection,
+                row["provider_track_id"],
+                {"artist": row["artist"]},
+            )
         legacy_mix_exists = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mixes'"
         ).fetchone()
@@ -278,6 +414,164 @@ def setlist_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, str]]:
         }
         for row in rows
     }
+
+
+def watched_mixes(path: Path = DATABASE_PATH) -> list[dict[str, str]]:
+    """Return manually saved YouTube mixes, newest first."""
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT video_id, youtube_url, title, channel_name, upload_date, added_at
+            FROM watched_mixes
+            ORDER BY added_at DESC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def watched_mix(video_id: str, path: Path = DATABASE_PATH) -> dict[str, str] | None:
+    """Return one saved YouTube mix."""
+    initialize(path)
+    with connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT video_id, youtube_url, title, channel_name, upload_date, added_at
+            FROM watched_mixes WHERE video_id=?
+            """,
+            (str(video_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_watched_mix(
+    video_id: str,
+    youtube_url: str,
+    title: str = "",
+    channel_name: str = "",
+    upload_date: str = "",
+    path: Path = DATABASE_PATH,
+) -> dict[str, str]:
+    """Save a validated watched-mix URL without overwriting its first-added date."""
+    normalized_id = str(video_id or "").strip()
+    normalized_url = str(youtube_url or "").strip()
+    if not normalized_id or not normalized_url:
+        raise ValueError("A YouTube video ID and URL are required")
+    initialize(path)
+    with connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO watched_mixes(
+                video_id, youtube_url, title, channel_name, upload_date, added_at
+            ) VALUES(?, ?, ?, ?, ?, ?)
+            ON CONFLICT(video_id) DO UPDATE SET
+                youtube_url=excluded.youtube_url,
+                title=excluded.title,
+                channel_name=excluded.channel_name,
+                upload_date=excluded.upload_date
+            """,
+            (
+                normalized_id,
+                normalized_url,
+                str(title or "").strip(),
+                str(channel_name or "").strip(),
+                str(upload_date or "").strip(),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+    return watched_mix(normalized_id, path) or {}
+
+
+def associate_tidal_tracks_with_watched_mix(
+    video_id: str, track_ids: list[str], path: Path = DATABASE_PATH
+) -> int:
+    """Associate existing local TIDAL tracks with a watched mix in input order."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    if not unique_ids:
+        return 0
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as connection:
+        if connection.execute(
+            "SELECT 1 FROM watched_mixes WHERE video_id=?", (str(video_id),)
+        ).fetchone() is None:
+            raise ValueError("Watched mix was not found")
+        next_position = connection.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM watched_mix_tracks WHERE video_id=?",
+            (str(video_id),),
+        ).fetchone()[0]
+        added = 0
+        for track_id in unique_ids:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO watched_mix_tracks(
+                    video_id, position, provider, provider_track_id, associated_at
+                ) VALUES(?, ?, 'tidal', ?, ?)
+                """,
+                (str(video_id), next_position + added, track_id, now),
+            )
+            added += cursor.rowcount
+    return added
+
+
+def tidal_watched_mix_tracks_page(
+    video_id: str,
+    limit: int = 30,
+    offset: int = 0,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Read an ordered page of tracks associated with one watched mix."""
+    if not path.exists():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
+                   t.duration_seconds, t.bpm, t.musical_key, t.key_scale,
+                   t.release_year AS year, t.isrc, t.album_art_url,
+                   wmt.associated_at AS date_added
+            FROM watched_mix_tracks wmt
+            JOIN tracks t
+              ON t.provider=wmt.provider AND t.provider_track_id=wmt.provider_track_id
+            WHERE wmt.provider='tidal' AND wmt.video_id=?
+            ORDER BY wmt.position
+            LIMIT ? OFFSET ?
+            """,
+            (str(video_id), int(limit), int(offset)),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def tidal_watched_mixes_for_tracks(
+    track_ids: list[str], path: Path = DATABASE_PATH
+) -> dict[str, list[dict[str, str]]]:
+    """Return watched mixes associated with each requested TIDAL track."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    result: dict[str, list[dict[str, str]]] = {track_id: [] for track_id in unique_ids}
+    if not unique_ids or not path.exists():
+        return result
+    initialize(path)
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT wmt.provider_track_id AS track_id, wm.video_id AS id,
+                   COALESCE(NULLIF(wm.channel_name, ''), NULLIF(wm.title, ''), wm.video_id) AS name,
+                   wm.title
+            FROM watched_mix_tracks wmt
+            JOIN watched_mixes wm ON wm.video_id=wmt.video_id
+            WHERE wmt.provider='tidal'
+              AND wmt.provider_track_id IN ({placeholders})
+            ORDER BY name COLLATE NOCASE, wm.title COLLATE NOCASE
+            """,
+            unique_ids,
+        ).fetchall()
+    for row in rows:
+        result[row["track_id"]].append(
+            {"id": row["id"], "name": row["name"], "title": row["title"]}
+        )
+    return result
 
 
 def save_setlist_youtube_url(
@@ -357,6 +651,14 @@ def tidal_track_record(track: Any) -> dict[str, Any]:
         "id": str(getattr(track, "id", "")),
         "title": str(getattr(track, "name", "") or ""),
         "artist": artist,
+        "artists": [
+            {
+                "id": str(getattr(item, "id", "") or ""),
+                "name": str(getattr(item, "name", "") or ""),
+            }
+            for item in artists
+            if str(getattr(item, "name", "") or "")
+        ],
         "remix": str(getattr(track, "version", "") or ""),
         "album": str(getattr(album, "name", "") or ""),
         "album_art_url": album_art_url,
@@ -465,6 +767,7 @@ def store_tidal_playlist(
                     record.get("year"), record.get("isrc", ""), now,
                 ),
             )
+            _store_track_artists(connection, track_id, record)
             connection.execute(
                 "INSERT INTO playlist_tracks(provider, provider_playlist_id, position, provider_track_id, date_added) "
                 "VALUES('tidal', ?, ?, ?, ?)",
@@ -533,6 +836,7 @@ def store_tidal_setlist(
                     record.get("isrc", ""), now,
                 ),
             )
+            _store_track_artists(connection, track_id, record)
             connection.execute(
                 """
                 INSERT INTO setlist_tracks(
@@ -600,6 +904,50 @@ def tidal_setlists_for_tracks(
     for row in rows:
         result[row["track_id"]].append({"id": row["id"], "name": row["name"]})
     return result
+
+
+def tidal_artists_for_tracks(
+    track_ids: list[str], path: Path = DATABASE_PATH
+) -> dict[str, list[dict[str, str]]]:
+    """Return ordered individual artists for several TIDAL tracks."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    result: dict[str, list[dict[str, str]]] = {track_id: [] for track_id in unique_ids}
+    if not unique_ids or not path.exists():
+        return result
+    initialize(path)
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT ta.provider_track_id AS track_id, a.artist_key AS id, a.name
+            FROM track_artists ta
+            JOIN artists a
+              ON a.provider=ta.provider AND a.artist_key=ta.artist_key
+            WHERE ta.provider='tidal'
+              AND ta.provider_track_id IN ({placeholders})
+            ORDER BY ta.provider_track_id, ta.position
+            """,
+            unique_ids,
+        ).fetchall()
+    for row in rows:
+        result[row["track_id"]].append({"id": row["id"], "name": row["name"]})
+    return result
+
+
+def tidal_artist(artist_key: str, path: Path = DATABASE_PATH) -> dict[str, str] | None:
+    """Return one normalized artist identity from the local TIDAL index."""
+    if not path.exists():
+        return None
+    initialize(path)
+    with connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT artist_key AS id, provider_artist_id, name
+            FROM artists WHERE provider='tidal' AND artist_key=?
+            """,
+            (str(artist_key),),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def tidal_playlists_for_track(
@@ -752,6 +1100,80 @@ def tidal_setlist_tracks_page(
             LIMIT ? OFFSET ?
             """,
             (str(folder_name), int(limit), int(offset)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def tidal_liked_tracks_page(
+    user_id: str,
+    limit: int = 30,
+    offset: int = 0,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Read an indexed liked-track page without applying cache-age policy."""
+    if not path.exists():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
+                   t.duration_seconds, t.bpm, t.musical_key, t.key_scale,
+                   t.release_year AS year, t.isrc, t.album_art_url, lt.date_added
+            FROM liked_tracks lt
+            JOIN tracks t
+              ON t.provider=lt.provider AND t.provider_track_id=lt.provider_track_id
+            WHERE lt.provider='tidal' AND lt.provider_user_id=?
+            ORDER BY lt.position
+            LIMIT ? OFFSET ?
+            """,
+            (str(user_id), int(limit), int(offset)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def tidal_artist_tracks_page(
+    artist_key: str,
+    limit: int = 30,
+    offset: int = 0,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Read unique locally indexed tracks credited to one artist."""
+    if not path.exists():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT t.provider_track_id AS id, t.title, t.artist,
+                   t.remix, t.album, t.duration_seconds, t.bpm,
+                   t.musical_key, t.key_scale, t.release_year AS year,
+                   t.isrc, t.album_art_url, NULL AS date_added
+            FROM track_artists ta
+            JOIN tracks t
+              ON t.provider=ta.provider AND t.provider_track_id=ta.provider_track_id
+            WHERE ta.provider='tidal' AND ta.artist_key=?
+              AND (
+                  EXISTS (
+                      SELECT 1 FROM playlist_tracks pt
+                      WHERE pt.provider=ta.provider
+                        AND pt.provider_track_id=ta.provider_track_id
+                  )
+                  OR EXISTS (
+                      SELECT 1 FROM liked_tracks lt
+                      WHERE lt.provider=ta.provider
+                        AND lt.provider_track_id=ta.provider_track_id
+                  )
+                  OR EXISTS (
+                      SELECT 1 FROM setlist_tracks st
+                      WHERE st.provider=ta.provider
+                        AND st.provider_track_id=ta.provider_track_id
+                  )
+              )
+            ORDER BY t.artist COLLATE NOCASE, t.title COLLATE NOCASE
+            LIMIT ? OFFSET ?
+            """,
+            (str(artist_key), int(limit), int(offset)),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -1005,6 +1427,7 @@ def store_tidal_liked_tracks(
                     record["isrc"], now,
                 ),
             )
+            _store_track_artists(connection, track_id, record)
             added = getattr(track, "user_date_added", None) or getattr(track, "date_added", None)
             connection.execute(
                 """

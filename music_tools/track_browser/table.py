@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 
 COLUMNS = [
@@ -19,6 +20,7 @@ COLUMNS = [
     ("events", "Events"),
     ("sources", "Sources"),
     ("mixes", "Mixes"),
+    ("djmi", "Dj Mix"),
 ]
 
 EXTRA_COLUMNS_BY_COLLECTION = {
@@ -76,7 +78,7 @@ def _sort_value(row: dict[str, Any], field: str) -> tuple[bool, Any]:
             normalized = float(value[0] if isinstance(value, list) and value else value)
         except (TypeError, ValueError):
             normalized = 0.0
-    elif field in {"playlists", "events", "sources", "mixes"}:
+    elif field in {"playlists", "events", "sources", "mixes", "djmi"}:
         normalized = ", ".join(
             str(item.get("name") or item.get("id") or "")
             for item in (value or [])
@@ -138,17 +140,39 @@ def render_track_table(
             if key == "rating":
                 return "★" * int(values[0])
             return ", ".join(str(value) for value in values)
-        if key not in {"playlists", "events", "sources", "mixes"}:
+        if key == "artist" and row.get("artists"):
+            links = []
+            for index, artist in enumerate(row["artists"]):
+                if index:
+                    links.append(html.Span(", "))
+                links.append(
+                    html.A(
+                        artist.get("name") or artist.get("id"),
+                        href=f"/artists/{quote(str(artist.get('id') or ''), safe='')}",
+                        className="track-artist-link",
+                    )
+                )
+            return links
+        if key not in {"playlists", "events", "sources", "mixes", "djmi"}:
             return row.get(key) or "—"
         memberships = row.get(key) or []
         if not memberships:
             return "—"
         return html.Div(
             [
-                html.Span(
-                    membership.get("name") or membership.get("id"),
-                    className="playlist-tag",
-                    title=membership.get("id", ""),
+                (
+                    html.A(
+                        membership.get("name") or membership.get("id"),
+                        href=f"/watched-mixes/{quote(str(membership.get('id') or ''), safe='')}",
+                        className="playlist-tag membership-link",
+                        title=membership.get("title") or membership.get("id", ""),
+                    )
+                    if key == "djmi"
+                    else html.Span(
+                        membership.get("name") or membership.get("id"),
+                        className="playlist-tag",
+                        title=membership.get("id", ""),
+                    )
                 )
                 for membership in memberships
             ],

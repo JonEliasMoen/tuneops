@@ -47,11 +47,11 @@ def _cover_component(html, mix, youtube_url: str | None = None):
 def content(html, dcc, folder_name: str | None = None):
     mix = mix_for(folder_name) if folder_name else None
     if mix is None:
-        message = "Select a mix from the Mixes section in the sidebar."
+        message = "Select a mix from the My mixes section in the sidebar."
         if folder_name:
             message = f"Mix folder not found: {folder_name}"
         return [
-            html.H1("Mixes"),
+            html.H1("My mixes"),
             html.P(message),
             html.P(f"Local mixes from {MIX_ROOT}", className="hint"),
         ]

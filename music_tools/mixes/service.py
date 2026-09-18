@@ -39,6 +39,7 @@ class Mix:
 @dataclass(frozen=True)
 class YouTubeMetadata:
     title: str = ""
+    channel_name: str = ""
     view_count: int | None = None
     upload_date: str = ""
     error: str = ""
@@ -96,6 +97,17 @@ def fetch_youtube_metadata(url: str) -> YouTubeMetadata:
     title = unescape(title_match.group(1)).strip() if title_match else ""
     if title.endswith(" - YouTube"):
         title = title[: -len(" - YouTube")].rstrip()
+    channel_match = re.search(
+        r'["\'](?:ownerChannelName|author)["\']\s*:\s*["\']([^"\']+)',
+        page,
+    )
+    if channel_match is None:
+        channel_match = re.search(
+            r'<link\s+itemprop=["\']name["\']\s+content=["\']([^"\']+)',
+            page,
+            flags=re.IGNORECASE,
+        )
+    channel_name = unescape(channel_match.group(1)).strip() if channel_match else ""
     views_match = re.search(r'["\']viewCount["\']\s*:\s*["\']?(\d+)', page)
     views = int(views_match.group(1)) if views_match else None
     date_match = re.search(
@@ -116,6 +128,7 @@ def fetch_youtube_metadata(url: str) -> YouTubeMetadata:
     )
     return YouTubeMetadata(
         title=title,
+        channel_name=channel_name,
         view_count=views,
         upload_date=upload_date,
         error=error,

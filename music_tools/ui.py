@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
-from music_library.database import tidal_indexed_playlists
+from music_library.database import tidal_indexed_playlists, watched_mixes
 from music_tools.mixes.service import discover_mixes
 
 
@@ -87,7 +87,7 @@ def sidebar(html: Any, active: str):
         html.Details(
             [
                 html.Summary(
-                    [html.Span("▸", className="nav-chevron"), html.Span("Mixes")],
+                    [html.Span("▸", className="nav-chevron"), html.Span("My mixes")],
                     className="nav-item playlist-toggle",
                     **{
                         "data-sidebar-index": str(mix_index),
@@ -119,6 +119,62 @@ def sidebar(html: Any, active: str):
             className="playlist-group",
         )
     ]
+    watched = watched_mixes()
+    watched_index = mix_index + len(mixes) + 1
+    watched_children = [
+        html.A(
+            [html.Span("+", className="nav-icon"), html.Span("Add mix")],
+            href="/watched-mixes",
+            className=(
+                "nav-item playlist-nav active"
+                if active == "watched-mixes"
+                else "nav-item playlist-nav"
+            ),
+            **{
+                "data-sidebar-index": str(watched_index + 1),
+                "data-sidebar-href": "/watched-mixes",
+            },
+        )
+    ]
+    for index, record in enumerate(watched, start=2):
+        video_id = str(record["video_id"])
+        href = f"/watched-mixes/{quote(video_id, safe='')}"
+        watched_children.append(
+            html.A(
+                [
+                    html.Span("▶", className="nav-icon"),
+                    html.Span(record.get("title") or video_id),
+                ],
+                href=href,
+                className=(
+                    "nav-item playlist-nav active"
+                    if f"watched-mix:{video_id}" == active
+                    else "nav-item playlist-nav"
+                ),
+                title=record.get("title") or video_id,
+                **{
+                    "data-sidebar-index": str(watched_index + index),
+                    "data-sidebar-href": href,
+                },
+            )
+        )
+    watched_group = [
+        html.Details(
+            [
+                html.Summary(
+                    [html.Span("▸", className="nav-chevron"), html.Span("Watched mixes")],
+                    className="nav-item playlist-toggle",
+                    **{
+                        "data-sidebar-index": str(watched_index),
+                        "data-sidebar-toggle": "watched-mixes",
+                    },
+                ),
+                html.Div(watched_children, className="playlist-nav-list"),
+            ],
+            open=active == "watched-mixes" or active.startswith("watched-mix:"),
+            className="playlist-group",
+        )
+    ]
     return html.Aside(
         [
             html.Div(
@@ -126,7 +182,7 @@ def sidebar(html: Any, active: str):
                 className="brand",
             ),
             html.Nav(
-                [*tool_links, *collection_groups, *mix_group],
+                [*tool_links, *collection_groups, *mix_group, *watched_group],
                 className="side-nav",
                 **{"aria-label": "Main navigation"},
             ),
@@ -163,9 +219,12 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .track-column-remix{width:140px;max-width:140px;overflow:hidden;text-overflow:ellipsis}
 .sortable-column{cursor:pointer;user-select:none}.sortable-column:hover{color:#fff;background:#3a454f}.sort-indicator{display:inline-block;min-width:13px;margin-left:6px;color:#65dbab;font-size:10px}
 .track-toolbar{display:flex;align-items:center;gap:4px}.field-picker{position:relative}.field-picker-menu{position:absolute;right:0;top:calc(100% + 5px);z-index:20;min-width:190px;max-height:360px;overflow:auto;padding:10px;border:1px solid #46586b;border-radius:9px;background:#101923;box-shadow:0 12px 32px #0008}.field-picker-options label{display:block;padding:6px 8px;border-radius:5px;color:#dbe3ea;white-space:nowrap}.field-picker-options label:hover{background:#202d39}.field-picker-options input{margin-right:8px}
+.top-artists{display:flex;align-items:center;gap:8px;min-height:28px;margin:4px 0 10px;flex-wrap:wrap}.top-artists:before{content:"Collection stats";color:#7f91a1;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}.top-artist,.collection-stat{display:inline-flex;gap:5px;padding:5px 9px;border-radius:999px;text-decoration:none;font-size:12px}.top-artist{border:1px solid #3e6255;background:#17372c;color:#78e8b6}.top-artist span{color:#9aacb8}.top-artist:hover{border-color:#65dbab;color:#fff}.collection-stat span{color:#c3cfda}.bpm-stat{border:1px solid #385f82;background:#162d43;color:#72bdf2}.vibe-stat{border:1px solid #704d82;background:#32213d;color:#e59df3}
+.track-quick-filters{position:relative;z-index:4;display:grid;grid-template-columns:minmax(180px,1.5fr) minmax(130px,1fr) minmax(150px,1fr) minmax(130px,1fr) minmax(130px,1fr) minmax(210px,1.6fr) auto;gap:8px;align-items:end;margin:0 0 12px;padding:12px;border:1px solid #344252;border-radius:9px;background:#101923}.quick-filter{min-width:0}.quick-filter label{display:block;margin:0 0 5px;font-size:12px}.bpm-filter-inputs{display:grid;grid-template-columns:1fr 1fr;gap:5px}.bpm-filter-inputs input{box-sizing:border-box;width:100%;min-width:0;height:38px;padding:7px 8px;border:1px solid #46586b;border-radius:4px;background:#fff;color:#111}.track-artist-link{color:#e8edf2;text-decoration:none}.track-artist-link:hover{color:#65dbab;text-decoration:underline}
 .liked-track-row{cursor:pointer;outline:none}
 .track-table tbody .liked-track-row.selected{background:#2c4655}
 .track-table tbody .liked-track-row.selected:hover{background:#2c4655}
+.track-table tbody .liked-track-row.multi-selected{box-shadow:inset 3px 0 #65dbab;background:#203842}.track-table tbody .liked-track-row.multi-selected.selected{background:#2c5261}
 .inspector-column{position:sticky;top:20px;display:grid;gap:14px}
 .track-details{box-sizing:border-box;min-height:300px;max-height:calc(100vh - 190px);overflow:auto;padding:20px;background:#18222d;border:1px solid #344252;border-radius:9px}
 .selected-album-art{display:block;width:100%;aspect-ratio:1;object-fit:cover;margin:0 0 18px;border-radius:7px;background:#0d151e}
@@ -191,6 +250,7 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .detail-playlists{grid-template-columns:1fr}
 .playlist-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .playlist-tag{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;padding:5px 8px;border:1px solid #3e6255;border-radius:999px;background:#17372c;color:#78e8b6;font-size:12px;white-space:nowrap}
+.membership-link{text-decoration:none}.membership-link:hover{border-color:#65dbab;color:#fff}
 .table-playlist-tags{flex-wrap:nowrap;margin-top:0;max-width:320px;overflow:hidden}
 .scroll-sentinel{padding:14px;text-align:center;color:#7f91a1;font-size:13px}
 .mix-list{display:grid;gap:20px;margin-top:20px}
@@ -202,8 +262,11 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .mix-tidal-heading{margin:16px 0 0}.mix-track-browser{margin-top:28px}.mix-track-browser:empty{display:none}
 .mix-youtube-input{box-sizing:border-box;width:100%;margin-top:7px;padding:11px 12px;border:1px solid #46586b;border-radius:7px;background:#0d151e;color:#e8edf2;font:inherit}
 .mix-youtube-input:focus{outline:2px solid #35e0a1;border-color:transparent}.mix-save{margin:10px 8px 14px 0}.mix-save-status{color:#82edbd;font-size:13px}
+.watched-mix-add{max-width:760px;padding:20px;border:1px solid #344252;border-radius:12px;background:#18222d}.watched-mix-link{display:inline-block;margin:4px 0 18px;color:#65dbab;text-decoration:none}.watched-mix-link:hover{text-decoration:underline}
 .mix-positions{max-height:360px;margin:8px 0 0;overflow:auto;line-height:1.7;white-space:pre-wrap}
+@media(max-width:1200px){.track-quick-filters{grid-template-columns:repeat(3,minmax(160px,1fr))}}
 @media(max-width:1000px){.library-layout{grid-template-columns:1fr}.library-layout .track-table-wrap{height:60vh}.inspector-column{position:static}.track-details{min-height:0}}
+@media(max-width:700px){.track-quick-filters{grid-template-columns:1fr}}
 @media(max-width:800px){.mix-card{grid-template-columns:1fr}.mix-cover{max-width:360px}}
 </style>
 <script>
