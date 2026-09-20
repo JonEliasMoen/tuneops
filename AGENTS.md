@@ -87,8 +87,19 @@ styles belong in `music_tools/ui.py`.
   dimensions to SQLite. It must work for the current multi-track selection.
 - Quick filters operate on the complete current SQLite collection before
   pagination, not only the loaded browser rows. Different filter categories are
-  ANDed; multiple selections inside a category are ORed. Filter controls and
-  Fields selections persist in browser-local storage.
+  ANDed; multiple selections inside a category are ORed. Filter controls retain
+  their existing browser persistence. The Track text filter appears before
+  Artist and matches title plus remix/version case-insensitively.
+- Sort and Fields are shared transient view preferences in the root
+  session-backed `track-view-state` store. They survive internal navigation,
+  browser Back, and switching collections, while Quick Views remain the way to
+  reset/apply a named field set. Per-collection state retains loaded row count
+  (capped at 1,000 on restore) and selected track ID. Scroll position is keyed
+  by collection in `sessionStorage` and restored after table DOM replacement.
+- The track loader suppresses its component-mount call and performs one
+  controlled initial load from `liked-initial-load`; do not reintroduce a cache
+  render followed immediately by a second provider-check render. Infinite-scroll
+  append must retry scroll restoration until the replacement table is mounted.
 - Artist cells and top-artist summaries link to `/artists/<normalized-key>`,
   which shows every locally indexed track credited to that artist without a
   provider call.

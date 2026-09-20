@@ -309,6 +309,7 @@ def _filter_records(
     track_ids = [row["id"] for row in rows]
     artist_map = tidal_artists_for_tracks(track_ids)
     dimensions = tidal_dimensions_for_tracks(track_ids)
+    title_query = " ".join(str(filters.get("title") or "").casefold().split())
     wanted_artists = set(filters.get("artists") or [])
     wanted_keys = set(filters.get("keys") or [])
     wanted_ratings = set(filters.get("ratings") or [])
@@ -326,6 +327,11 @@ def _filter_records(
         row_dimensions = dimensions.get(row["id"], {})
         row["artists"] = row_artists
         row["dimensions"] = row_dimensions
+        searchable_title = " ".join(
+            str(value or "") for value in (row.get("title"), row.get("remix"))
+        ).casefold()
+        if title_query and title_query not in searchable_title:
+            continue
         if wanted_artists and not wanted_artists.intersection(
             artist["id"] for artist in row_artists
         ):

@@ -261,6 +261,11 @@ def create_app(engine):
                 id="ui-preferences",
                 data={"tags_collapsed": initial_tags_collapsed},
             ),
+            dcc.Store(
+                id="track-view-state",
+                data={"sort": {}, "visible_fields": None, "collections": {}},
+                storage_type="session",
+            ),
             html.Div(id="page-root"),
         ],
         id="app-root",
@@ -271,14 +276,20 @@ def create_app(engine):
     def apply_theme(theme):
         return "theme-dark" if (theme or {}).get("dark_mode", True) else "theme-light"
 
-    @callback(Output("page-root", "children"), Input("app-url", "pathname"))
-    def route_page(pathname: str | None):
+    @callback(
+        Output("page-root", "children"),
+        Input("app-url", "pathname"),
+        State("track-view-state", "data"),
+    )
+    def route_page(pathname: str | None, view_state: dict[str, Any] | None):
         quick_views = engine.load_config().get("quick_views", DEFAULT_QUICK_VIEWS)
         if pathname == "/liked-tracks":
             return shell(
                 html,
                 "liked-tracks",
-                track_browser_content(html, dcc, quick_views=quick_views),
+                track_browser_content(
+                    html, dcc, quick_views=quick_views, view_state=view_state
+                ),
             )
         if pathname == "/settings":
             config = engine.load_config()
@@ -298,19 +309,30 @@ def create_app(engine):
                 ),
             )
         if pathname == "/mixes":
-            return shell(html, "mixes", mixes_content(html, dcc, quick_views=quick_views))
+            return shell(
+                html,
+                "mixes",
+                mixes_content(
+                    html, dcc, quick_views=quick_views, view_state=view_state
+                ),
+            )
         if pathname and pathname.startswith("/mixes/"):
             folder_name = unquote(pathname.removeprefix("/mixes/").strip("/"))
             return shell(
                 html,
                 f"mix:{folder_name}",
-                mixes_content(html, dcc, folder_name, quick_views=quick_views),
+                mixes_content(
+                    html, dcc, folder_name, quick_views=quick_views,
+                    view_state=view_state,
+                ),
             )
         if pathname == "/watched-mixes":
             return shell(
                 html,
                 "watched-mixes",
-                watched_mixes_content(html, dcc, quick_views=quick_views),
+                watched_mixes_content(
+                    html, dcc, quick_views=quick_views, view_state=view_state
+                ),
             )
         if pathname == "/watched-mixes/pending":
             return shell(html, "pending-tracks", pending_content(html, dcc))
@@ -319,7 +341,10 @@ def create_app(engine):
             return shell(
                 html,
                 f"watched-mix:{video_id}",
-                watched_mixes_content(html, dcc, video_id, quick_views=quick_views),
+                watched_mixes_content(
+                    html, dcc, video_id, quick_views=quick_views,
+                    view_state=view_state,
+                ),
             )
         if pathname and pathname.startswith("/artists/"):
             artist_key = unquote(pathname.removeprefix("/artists/").strip("/"))
@@ -333,7 +358,9 @@ def create_app(engine):
                 return shell(
                     html,
                     "liked-tracks",
-                    track_browser_content(html, dcc, collection, quick_views),
+                    track_browser_content(
+                        html, dcc, collection, quick_views, view_state
+                    ),
                 )
         collection_routes = {
             "/playlists/": ("playlist", "playlist"),
@@ -362,7 +389,9 @@ def create_app(engine):
                 return shell(
                     html,
                     f"{active_prefix}:{playlist_id}",
-                    track_browser_content(html, dcc, collection, quick_views),
+                    track_browser_content(
+                        html, dcc, collection, quick_views, view_state
+                    ),
                 )
         return playlist_sync_layout()
 

@@ -44,7 +44,9 @@ def _cover_component(html, mix, youtube_url: str | None = None):
     return html.Div("No cover available", className="mix-cover mix-cover-empty")
 
 
-def content(html, dcc, folder_name: str | None = None, quick_views=None):
+def content(
+    html, dcc, folder_name: str | None = None, quick_views=None, view_state=None
+):
     mix = mix_for(folder_name) if folder_name else None
     if mix is None:
         message = "Select a mix from the My mixes section in the sidebar."
@@ -59,7 +61,7 @@ def content(html, dcc, folder_name: str | None = None, quick_views=None):
     cover = _cover_component(html, mix)
     collection = _track_collection(mix)
     track_browser = (
-        track_browser_content(html, dcc, collection, quick_views)
+        track_browser_content(html, dcc, collection, quick_views, view_state)
         if collection else []
     )
     return [
@@ -200,12 +202,13 @@ def register_callbacks(app, callback, Input, Output, State, ctx, html, dcc, engi
         Output({"type": "mix-tidal-title", "name": MATCH}, "children"),
         Input({"type": "mix-sync-tidal", "name": MATCH}, "n_clicks"),
         State({"type": "mix-tidal-url", "name": MATCH}, "value"),
+        State("track-view-state", "data"),
         prevent_initial_call=True,
         running=[
             (Output({"type": "mix-sync-tidal", "name": MATCH}, "disabled"), True, False)
         ],
     )
-    def sync_tidal_playlist(_clicks, value):
+    def sync_tidal_playlist(_clicks, value, view_state):
         folder_name = str(ctx.triggered_id["name"])
         mix = mix_for(folder_name)
         if mix is None:
@@ -234,6 +237,7 @@ def register_callbacks(app, callback, Input, Output, State, ctx, html, dcc, engi
                     dcc,
                     collection,
                     engine.load_config().get("quick_views", []),
+                    view_state,
                 ),
                 playlist_name,
             )

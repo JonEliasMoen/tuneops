@@ -39,6 +39,11 @@ from .service import (
     fetch_watched_mix_tracks,
 )
 
+
+def _collection_state_key(collection: dict[str, Any] | None) -> str:
+    collection = collection or {"type": "liked"}
+    return f"{collection.get('type', 'liked')}:{collection.get('id', '')}"
+
 def _attach_memberships(
     rows: list[dict[str, Any]],
     playlist_memberships: dict[str, list[dict[str, str]]],
@@ -83,6 +88,7 @@ def content(
     dcc: Any,
     collection: dict[str, Any] | None = None,
     quick_views: list[dict[str, Any]] | None = None,
+    view_state: dict[str, Any] | None = None,
 ):
     collection = collection or {"type": "liked", "name": "TIDAL liked tracks"}
     is_liked = collection.get("type") == "liked"
@@ -93,13 +99,30 @@ def content(
     default_quick_view = next(
         (view for view in (quick_views or []) if view.get("default")), None
     )
-    visible_fields = (
+    default_fields = (
         [
             field for field in default_quick_view.get("fields") or []
             if field in available_keys
         ]
         if default_quick_view
         else default_visible_fields(collection)
+    )
+    remembered_fields = (view_state or {}).get("visible_fields")
+    visible_fields = (
+        [field for field in remembered_fields if field in available_keys]
+        if isinstance(remembered_fields, list)
+        else default_fields
+    )
+    remembered_sort = dict((view_state or {}).get("sort") or {})
+    initial_sort = (
+        remembered_sort
+        if remembered_sort.get("field") in available_keys
+        and remembered_sort.get("direction") in {"asc", "desc"}
+        else {}
+    )
+    collection_key = _collection_state_key(collection)
+    restore_state = dict(
+        ((view_state or {}).get("collections") or {}).get(collection_key) or {}
     )
     return [
         stopwatch_content(html) if is_setlist else None,
@@ -184,6 +207,20 @@ def content(
         html.Div(id="track-top-artists", className="top-artists"),
         html.Div(
             [
+                html.Div(
+                    [
+                        html.Label("Track"),
+                        dcc.Input(
+                            id="track-filter-title",
+                            type="search",
+                            debounce=0.35,
+                            persistence=True,
+                            persistence_type="local",
+                            placeholder="Title or remix",
+                        ),
+                    ],
+                    className="quick-filter quick-filter-title",
+                ),
                 html.Div(
                     [
                         html.Label("Artist"),
@@ -289,10 +326,11 @@ def content(
         dcc.Store(id="liked-action-mode", data=None),
         dcc.Store(id="liked-action-selected", data=0),
         dcc.Store(id="liked-action-request", data=None),
-        dcc.Store(id="track-sort", data={}),
+        dcc.Store(id="track-sort", data=initial_sort),
         dcc.Store(id="track-sort-request", data=None),
         dcc.Store(id="track-visible-fields", data=visible_fields),
         dcc.Store(id="track-collection", data=collection),
+        dcc.Store(id="track-view-restore", data=restore_state),
         html.Div(
             id="track-browser-keyboard-ready",
             style={"display": "none"},
@@ -357,6 +395,56 @@ def register_callbacks(
         return [field for field in selected.get("fields") or [] if field in available]
 
     @callback(
+        Output("track-view-state", "data"),
+        Input("track-sort", "data"),
+        Input("track-visible-fields", "data"),
+        Input("liked-rows", "data"),
+        Input("liked-selected", "data"),
+        Input("track-collection", "data"),
+        State("track-view-state", "data"),
+        prevent_initial_call=True,
+    )
+    def persist_track_view(
+        sort, visible_fields, rows, selected, collection, current_state
+    ):
+        state = dict(current_state or {})
+        if not collection:
+            return state
+        available = {key for key, _label in columns_for(collection)}
+        remembered_sort = dict(state.get("sort") or {})
+        if (
+            (sort or {}).get("field") in available
+            or remembered_sort.get("field") in available
+            or not remembered_sort.get("field")
+        ):
+            state["sort"] = dict(sort or {})
+        if isinstance(visible_fields, list):
+            unavailable_remembered = [
+                field for field in (state.get("visible_fields") or [])
+                if field not in available
+            ]
+            state["visible_fields"] = [
+                *unavailable_remembered,
+                *[field for field in visible_fields if field in available],
+            ]
+        rows = rows or []
+        collections = {
+            str(key): dict(value or {})
+            for key, value in (state.get("collections") or {}).items()
+        }
+        key = _collection_state_key(collection)
+        saved = dict(collections.get(key) or {})
+        if rows:
+            saved["loaded_count"] = len(rows)
+            if selected is not None and 0 <= int(selected) < len(rows):
+                saved["selected_track_id"] = str(rows[int(selected)].get("id") or "")
+            collections[key] = saved
+            state["collections"] = collections
+        else:
+            state.setdefault("collections", collections)
+        return state
+
+    @callback(
         Output("track-fields-menu", "style"),
         Input("track-fields-toggle", "n_clicks"),
         State("track-fields-menu", "style"),
@@ -378,6 +466,7 @@ def register_callbacks(
         Input("liked-initial-load", "n_intervals"),
         Input("liked-refresh", "n_clicks"),
         Input("liked-load-next", "data"),
+        Input("track-filter-title", "value"),
         Input("track-filter-artists", "value"),
         Input("track-filter-keys", "value"),
         Input("track-filter-bpm-min", "value"),
@@ -390,11 +479,14 @@ def register_callbacks(
         State("liked-selected", "data"),
         State("track-collection", "data"),
         State("track-visible-fields", "data"),
+        State("track-view-restore", "data"),
+        prevent_initial_call=True,
     )
     def load_tracks(
         _initial: int,
         _refresh: int | None,
         _load_next: int,
+        filter_title: str | None,
         filter_artists: list[str] | None,
         filter_keys: list[str] | None,
         bpm_min: float | None,
@@ -407,11 +499,28 @@ def register_callbacks(
         current_selection: int | None,
         collection: dict[str, Any] | None,
         visible_fields: list[str] | None,
+        restore_state: dict[str, Any] | None,
     ):
         existing_rows = existing_rows or []
         append = ctx.triggered_id == "liked-load-next" and bool(existing_rows)
         offset = len(existing_rows) if append else 0
+        selected_track_id = ""
+        if current_selection is not None and 0 <= current_selection < len(existing_rows):
+            selected_track_id = str(existing_rows[current_selection].get("id") or "")
+        if not selected_track_id and ctx.triggered_id == "liked-initial-load":
+            selected_track_id = str(
+                (restore_state or {}).get("selected_track_id") or ""
+            )
+        page_limit = 30
+        if ctx.triggered_id == "liked-initial-load" and not append:
+            try:
+                page_limit = max(
+                    30, min(1000, int((restore_state or {}).get("loaded_count") or 30))
+                )
+            except (TypeError, ValueError):
+                page_limit = 30
         filters = {
+            "title": filter_title or "",
             "artists": filter_artists or [],
             "keys": filter_keys or [],
             "bpm_min": bpm_min,
@@ -459,27 +568,28 @@ def register_callbacks(
                     refresh_note = f" TIDAL refresh failed; showing cache: {exc}"
             if (collection or {}).get("type") == "setlist":
                 page, has_more = fetch_indexed_setlist_tracks(
-                    (collection or {}).get("id", ""), offset=offset,
+                    (collection or {}).get("id", ""), limit=page_limit, offset=offset,
                     filters=active_filters, sort=sort,
                 )
             elif (collection or {}).get("type") == "watched_mix":
                 page, has_more = fetch_watched_mix_tracks(
-                    (collection or {}).get("id", ""), offset=offset,
+                    (collection or {}).get("id", ""), limit=page_limit, offset=offset,
                     filters=active_filters, sort=sort,
                 )
             elif (collection or {}).get("type") == "playlist":
                 page, has_more = fetch_indexed_playlist_tracks(
-                    (collection or {}).get("id", ""), offset=offset,
+                    (collection or {}).get("id", ""), limit=page_limit, offset=offset,
                     filters=active_filters, sort=sort,
                 )
             elif (collection or {}).get("type") == "artist":
                 page, has_more = fetch_artist_tracks(
-                    (collection or {}).get("id", ""), offset=offset,
+                    (collection or {}).get("id", ""), limit=page_limit, offset=offset,
                     filters=active_filters, sort=sort,
                 )
             else:
                 page, has_more = fetch_liked_tracks(
                     engine,
+                    limit=page_limit,
                     offset=offset,
                     force_refresh=ctx.triggered_id == "liked-refresh",
                     filters=active_filters,
@@ -505,21 +615,17 @@ def register_callbacks(
             row["dimensions"] = dimensions.get(row.get("id", ""), {})
             row["artists"] = artists.get(row.get("id", ""), [])
             row["_source_order"] = offset + index
-        selected_order = None
-        if append and current_selection is not None and 0 <= current_selection < len(existing_rows):
-            selected_order = existing_rows[current_selection].get("_source_order")
         rows = sort_rows(existing_rows + page if append else page, sort)
 
         table = render_track_table(
             html, rows, has_more, collection, visible_fields, sort
         )
-        selected = (
-            next(
-                (index for index, row in enumerate(rows) if row.get("_source_order") == selected_order),
-                0 if rows else None,
-            )
-            if append
-            else (0 if rows else None)
+        selected = next(
+            (
+                index for index, row in enumerate(rows)
+                if str(row.get("id") or "") == selected_track_id
+            ),
+            0 if rows else None,
         )
         status = (
             f"{len(rows):,} track{'s' if len(rows) != 1 else ''} loaded from SQLite.{refresh_note}"
@@ -583,6 +689,7 @@ def register_callbacks(
         )
 
     @callback(
+        Output("track-filter-title", "value"),
         Output("track-filter-artists", "value"),
         Output("track-filter-keys", "value"),
         Output("track-filter-bpm-min", "value"),
@@ -594,7 +701,7 @@ def register_callbacks(
         prevent_initial_call=True,
     )
     def clear_filters(_clicks: int):
-        return [], [], None, None, [], [], []
+        return "", [], [], None, None, [], [], []
 
     @callback(
         Output("track-sort", "data"),
@@ -1279,7 +1386,19 @@ def register_callbacks(
 
     app.clientside_callback(
         """
-        function(selected, selectedIndices, rows, hasMore, focus, actionMode, actionSelected, actionsChildren) {
+        function(selected, selectedIndices, rows, hasMore, focus, actionMode, actionSelected, actionsChildren, collection, restoreState) {
+            var collectionKey = String((collection || {}).type || 'liked') + ':' +
+                String((collection || {}).id || '');
+            var scrollStorageKey = 'musicsync.track-scroll.' + collectionKey;
+            if (window.__likedCollectionKey !== collectionKey) {
+                window.__likedCollectionKey = collectionKey;
+                window.__likedTracksCount = 0;
+                window.__likedTracksSelected = null;
+                window.__likedSelectionAnchor = null;
+                var rememberedScroll = Number(sessionStorage.getItem(scrollStorageKey));
+                window.__likedTracksScrollTop = Number.isFinite(rememberedScroll)
+                    ? rememberedScroll : 0;
+            }
             var previousCount = window.__likedTracksCount || 0;
             var previousSelected = window.__likedTracksSelected;
             window.__likedTracksCount = (rows || []).length;
@@ -1357,6 +1476,19 @@ def register_callbacks(
                     window.dash_clientside.set_props('liked-selected-indices', {data: selection});
                     window.dash_clientside.set_props('liked-focus', {data: 'tracks'});
                 });
+                document.addEventListener('scroll', function(event) {
+                    var viewport = event.target;
+                    if (!viewport || !viewport.classList ||
+                        !viewport.classList.contains('track-table-wrap') ||
+                        !viewport.closest('.track-list-pane')) return;
+                    window.__likedTracksScrollTop = viewport.scrollTop;
+                    if (window.__likedCollectionKey) {
+                        sessionStorage.setItem(
+                            'musicsync.track-scroll.' + window.__likedCollectionKey,
+                            String(viewport.scrollTop)
+                        );
+                    }
+                }, true);
                 document.addEventListener('click', function(event) {
                     var option = event.target.closest('[data-action-option]');
                     if (!option || !isTrackBrowserMounted()) return;
@@ -1548,10 +1680,20 @@ def register_callbacks(
                     window.dash_clientside.set_props('liked-selected-indices', {data: selection});
                 });
             }
-            window.setTimeout(function() {
-                var viewport = document.querySelector('.track-table-wrap');
+            function restoreViewportScroll(attempt) {
+                var viewport = document.querySelector(
+                    '.track-list-pane .track-table-wrap'
+                );
                 if (rowsChanged && viewport && Number.isFinite(window.__likedTracksScrollTop)) {
                     viewport.scrollTop = window.__likedTracksScrollTop;
+                    if (
+                        attempt < 8 &&
+                        Math.abs(viewport.scrollTop - window.__likedTracksScrollTop) > 1
+                    ) {
+                        window.setTimeout(function() {
+                            restoreViewportScroll(attempt + 1);
+                        }, 35 * (attempt + 1));
+                    }
                 }
                 paintSelection();
                 if (selectionChanged && !rowsChanged && Number.isInteger(selected)) {
@@ -1562,7 +1704,8 @@ def register_callbacks(
                         selectedRow.scrollIntoView({block: 'nearest', inline: 'nearest'});
                     }
                 }
-            }, 0);
+            }
+            window.setTimeout(function() { restoreViewportScroll(0); }, 0);
 
             if (window.__likedTracksObserver) {
                 window.__likedTracksObserver.disconnect();
@@ -1576,6 +1719,10 @@ def register_callbacks(
                         if (!entries.some(function(entry) { return entry.isIntersecting; })) return;
                         window.__likedTracksObserver.disconnect();
                         window.__likedTracksScrollTop = viewport.scrollTop;
+                        sessionStorage.setItem(
+                            'musicsync.track-scroll.' + window.__likedCollectionKey,
+                            String(viewport.scrollTop)
+                        );
                         window.__likedTracksLoadToken = (window.__likedTracksLoadToken || 0) + 1;
                         window.dash_clientside.set_props('liked-load-next', {
                             data: window.__likedTracksLoadToken
@@ -1596,4 +1743,6 @@ def register_callbacks(
         Input("liked-action-mode", "data"),
         Input("liked-action-selected", "data"),
         Input("liked-actions", "children"),
+        Input("track-collection", "data"),
+        Input("track-view-restore", "data"),
     )

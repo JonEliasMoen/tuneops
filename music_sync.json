@@ -168,8 +168,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "9d8848a29b24e2704fce80d5ed8df2d3f1fe4b498b39bbbb9bf544e0a8e24476",
-      "last_sync": "2026-09-15T22:15:29.428898+00:00",
+      "source_version": "51bb57efc5cc4aa323ddc889b462dada0255a51b5f9a071ab73f0eda705b1758",
+      "last_sync": "2026-09-20T17:23:51.414755+00:00",
       "collection_type": "playlist"
     },
     {
@@ -182,8 +182,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "ead475f8591100c5dcb3c4aaec0ce53d1ee060bda139aa1303c85478ea6141c8",
-      "last_sync": "2026-09-18T21:34:28.272692+00:00",
+      "source_version": "b814ec6420a80243754c5d498563686f913a54a0821e18ae65639d828c292c60",
+      "last_sync": "2026-09-19T13:05:05.593627+00:00",
       "collection_type": "playlist"
     },
     {
@@ -203,8 +203,8 @@
           }
         ]
       },
-      "source_version": "04d7dec8e4d48a08c65bed49b39592ac6601890c8738d7a6e5cbef9768dc50b5",
-      "last_sync": "2026-09-18T21:34:30.860773+00:00",
+      "source_version": "9ba1f5c5386a284b8cb46f1f7069afd8fa2c3fb4a8ff2f924fa119dfefcbb2a7",
+      "last_sync": "2026-09-19T13:05:09.981511+00:00",
       "collection_type": "playlist"
     },
     {
@@ -328,11 +328,23 @@
             "title": "What Am I Here For? - NDATL Vocal - Danny Krivit Edit",
             "artist": "The Dangerfeel Newbies, Kai Alce, Danny Krivit",
             "isrc": "GBCPZ1609472"
+          },
+          {
+            "key": "isrc:GB8KE2519602",
+            "title": "Part of me funk - Sped Up",
+            "artist": "ToroHaji",
+            "isrc": "GB8KE2519602"
+          },
+          {
+            "key": "isrc:GBLTF2600112",
+            "title": "Tropical Melons - Bart Skils Extended Remix",
+            "artist": "2000 And One, Bart Skils",
+            "isrc": "GBLTF2600112"
           }
         ]
       },
-      "source_version": "AAAAXg0ebEqAB1I+l3typYjZ1MHfP/Er",
-      "last_sync": "2026-09-18T20:33:13.990744+00:00",
+      "source_version": "AAAAd9oogx3fTUeffW9BGVCbN0oDKzi9",
+      "last_sync": "2026-09-20T09:49:38.629215+00:00",
       "collection_type": "source"
     },
     {
@@ -363,8 +375,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/ec9db1ff-3135-4dc7-bd56-9d660919ed3a",
       "tidal_name": "",
-      "source_version": "2026-09-17 20:35:25.155000+00:00",
-      "last_sync": "2026-09-17T20:40:35.759188+00:00",
+      "source_version": "2026-09-20 11:07:55.123000+00:00",
+      "last_sync": "2026-09-20T17:23:54.240116+00:00",
       "collection_type": "playlist"
     },
     {
@@ -385,20 +397,23 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/81b04eb5-f92f-46db-ac51-3d8b9947351c",
       "tidal_name": "",
-      "source_version": "2026-09-17 20:14:01.106000+00:00",
-      "last_sync": "2026-09-17T20:34:26.308425+00:00",
+      "source_version": "2026-09-20 10:15:04.591000+00:00",
+      "last_sync": "2026-09-20T10:34:36.662065+00:00",
       "collection_type": "playlist"
     },
     {
       "enabled": true,
       "name": "deep groove",
-      "direction": "tidal_cache",
-      "spotify": "",
+      "direction": "tidal_to_spotify",
+      "spotify": "1b21mY2Y9lRY5OPu0FtYXv",
       "tidal": "https://tidal.com/playlist/409c9a77-9854-4036-8d07-0b9e96e04f0e",
       "tidal_name": "",
-      "source_version": "2026-09-15 21:59:40.150000+00:00",
-      "last_sync": "2026-09-15T22:15:36.003311+00:00",
-      "collection_type": "playlist"
+      "source_version": "8956fd93543cf400104a4e84613143b7989450326395f66502eaa0f8ffa32773",
+      "last_sync": "2026-09-20T10:36:27.585860+00:00",
+      "collection_type": "playlist",
+      "unmatched": {
+        "tidal_to_spotify": []
+      }
     },
     {
       "enabled": true,
@@ -429,8 +444,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/a3579bcb-f369-4604-8f7f-493b73215397",
       "tidal_name": "",
-      "source_version": "2026-09-15 11:20:44.426000+00:00",
-      "last_sync": "2026-09-15T21:48:59.478839+00:00",
+      "source_version": "2026-09-19 13:16:50.351000+00:00",
+      "last_sync": "2026-09-20T09:49:41.376384+00:00",
       "collection_type": "event"
     },
     {
@@ -443,6 +458,31 @@
       "source_version": "2026-09-13 13:09:40.153000+00:00",
       "last_sync": "2026-09-15T22:24:49.132393+00:00",
       "collection_type": "source"
+    },
+    {
+      "enabled": true,
+      "name": "Praha 2026",
+      "direction": "tidal_cache",
+      "collection_type": "event",
+      "spotify": "",
+      "tidal": "https://tidal.com/playlist/ab3aa10e-25bf-4cd2-86c0-49feca0f1e1b",
+      "tidal_name": "",
+      "source_version": "2026-08-14 19:33:51.778000+00:00",
+      "last_sync": "2026-09-19T13:05:14.717578+00:00"
+    },
+    {
+      "enabled": true,
+      "name": "Nidarave 2026",
+      "direction": "tidal_to_spotify",
+      "collection_type": "event",
+      "spotify": "6HNYakLqQ2pJScSn658EeI",
+      "tidal": "https://tidal.com/playlist/1f7fb6c3-275e-4384-b87a-560e9f419ee4",
+      "tidal_name": "",
+      "unmatched": {
+        "tidal_to_spotify": []
+      },
+      "source_version": "dd371c570c802b29bb7f2097f0c96e3213dfda0875629387a37438d4ba42be32",
+      "last_sync": "2026-09-20T09:53:37.236243+00:00"
     }
   ],
   "quick_views": [

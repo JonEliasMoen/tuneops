@@ -22,7 +22,9 @@ from music_tools.track_browser.stopwatch import content as stopwatch_content
 from .tracklist import find_tidal_matches, parse_tracklist
 
 
-def content(html, dcc, video_id: str | None = None, quick_views=None):
+def content(
+    html, dcc, video_id: str | None = None, quick_views=None, view_state=None
+):
     if video_id is None:
         return [
             html.H1("Watched mixes"),
@@ -145,7 +147,7 @@ def content(html, dcc, video_id: str | None = None, quick_views=None):
             className="tracklist-import",
         ),
         html.Div(
-            track_browser_content(html, dcc, collection, quick_views),
+            track_browser_content(html, dcc, collection, quick_views, view_state),
             className="mix-track-browser",
         ),
     ]
