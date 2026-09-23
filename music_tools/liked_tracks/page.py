@@ -35,6 +35,7 @@ from .service import (
     fetch_artist_tracks,
     fetch_indexed_playlist_tracks,
     fetch_indexed_setlist_tracks,
+    fetch_library_tracks,
     fetch_liked_tracks,
     fetch_watched_mix_tracks,
 )
@@ -43,6 +44,11 @@ from .service import (
 def _collection_state_key(collection: dict[str, Any] | None) -> str:
     collection = collection or {"type": "liked"}
     return f"{collection.get('type', 'liked')}:{collection.get('id', '')}"
+
+
+def _tidal_track_uri(track_id: Any) -> str:
+    return f"tidal://track/{quote(str(track_id or ''), safe='')}"
+
 
 def _attach_memberships(
     rows: list[dict[str, Any]],
@@ -94,6 +100,7 @@ def content(
     is_liked = collection.get("type") == "liked"
     is_playlist = collection.get("type") == "playlist"
     is_setlist = collection.get("type") == "setlist"
+    is_search = collection.get("type") == "search"
     available_columns = columns_for(collection)
     available_keys = {key for key, _label in available_columns}
     default_quick_view = next(
@@ -138,6 +145,8 @@ def content(
                             if collection.get("type") == "artist"
                             else "Tracks associated with this watched mix."
                             if collection.get("type") == "watched_mix"
+                            else "Search liked tracks, playlists, events, sources, and My Mixes."
+                            if is_search
                             else "Tracks from the local TIDAL playlist index."
                         ),
                     ]
@@ -209,14 +218,17 @@ def content(
             [
                 html.Div(
                     [
-                        html.Label("Track"),
+                        html.Label("Search" if is_search else "Track"),
                         dcc.Input(
                             id="track-filter-title",
                             type="search",
                             debounce=0.35,
                             persistence=True,
                             persistence_type="local",
-                            placeholder="Title or remix",
+                            placeholder=(
+                                "Title, artist, remix, or album"
+                                if is_search else "Title or remix"
+                            ),
                         ),
                     ],
                     className="quick-filter quick-filter-title",
@@ -586,6 +598,11 @@ def register_callbacks(
                     (collection or {}).get("id", ""), limit=page_limit, offset=offset,
                     filters=active_filters, sort=sort,
                 )
+            elif (collection or {}).get("type") == "search":
+                page, has_more = fetch_library_tracks(
+                    limit=page_limit, offset=offset,
+                    filters=active_filters, sort=sort,
+                )
             else:
                 page, has_more = fetch_liked_tracks(
                     engine,
@@ -868,6 +885,15 @@ def register_callbacks(
                 )
                 if membership_blobs else None
             ),
+            (
+                html.A(
+                    "Open in TIDAL",
+                    href=_tidal_track_uri(row.get("id")),
+                    className="tidal-app-link",
+                    title="Open this track in the native TIDAL app",
+                )
+                if row.get("id") else None
+            ),
             html.Details(
                 [
                     html.Summary("Tags & ratings", className="detail-tags-summary"),
@@ -969,24 +995,54 @@ def register_callbacks(
                 else "Track is not in an indexed playlist"
             )
             return [html.Div(heading, className="action-prompt"), html.Div(empty, className="detail-empty")]
+
+        def action_option(playlist: dict[str, Any], index: int):
+            return html.Div(
+                playlist.get("name") or playlist.get("id"),
+                className="action-option selected"
+                if focus == "actions" and index == action_selected
+                else "action-option",
+                title=playlist.get("id", ""),
+                **{
+                    "data-action-option": str(index),
+                    (
+                        "data-watched-mix-id"
+                        if mode == "associate_watched"
+                        else "data-playlist-id"
+                    ): playlist.get("id", ""),
+                },
+            )
+
+        if mode == "associate_watched":
+            option_children = [
+                action_option(playlist, index)
+                for index, playlist in enumerate(playlists)
+            ]
+        else:
+            option_children = []
+            option_index = 0
+            for collection_type, label in (
+                ("playlist", "Playlists"),
+                ("event", "Events"),
+                ("source", "Sources"),
+            ):
+                group = [
+                    playlist
+                    for playlist in playlists
+                    if str(playlist.get("collection_type") or "playlist").lower()
+                    == collection_type
+                ]
+                if not group:
+                    continue
+                option_children.append(
+                    html.Div(label, className="action-section-heading")
+                )
+                for playlist in group:
+                    option_children.append(action_option(playlist, option_index))
+                    option_index += 1
         return [
             html.Div(heading, className="action-prompt"),
-            *[
-                html.Div(
-                    playlist.get("name") or playlist.get("id"),
-                    className="action-option selected" if focus == "actions" and index == action_selected else "action-option",
-                    title=playlist.get("id", ""),
-                    **{
-                        "data-action-option": str(index),
-                        (
-                            "data-watched-mix-id"
-                            if mode == "associate_watched"
-                            else "data-playlist-id"
-                        ): playlist.get("id", ""),
-                    },
-                )
-                for index, playlist in enumerate(playlists)
-            ],
+            *option_children,
         ]
 
     @callback(
@@ -1395,6 +1451,8 @@ def register_callbacks(
                 window.__likedTracksCount = 0;
                 window.__likedTracksSelected = null;
                 window.__likedSelectionAnchor = null;
+                window.__likedTracksPendingScrollTop = null;
+                window.__likedTracksRestoringScroll = false;
                 var rememberedScroll = Number(sessionStorage.getItem(scrollStorageKey));
                 window.__likedTracksScrollTop = Number.isFinite(rememberedScroll)
                     ? rememberedScroll : 0;
@@ -1481,6 +1539,11 @@ def register_callbacks(
                     if (!viewport || !viewport.classList ||
                         !viewport.classList.contains('track-table-wrap') ||
                         !viewport.closest('.track-list-pane')) return;
+                    // Dash replaces the complete table when another page is appended.
+                    // The replacement viewport starts at zero and may emit a scroll
+                    // event before our render callback can restore the old position.
+                    // Do not let that synthetic event destroy the pre-load snapshot.
+                    if (window.__likedTracksRestoringScroll) return;
                     window.__likedTracksScrollTop = viewport.scrollTop;
                     if (window.__likedCollectionKey) {
                         sessionStorage.setItem(
@@ -1684,16 +1747,41 @@ def register_callbacks(
                 var viewport = document.querySelector(
                     '.track-list-pane .track-table-wrap'
                 );
-                if (rowsChanged && viewport && Number.isFinite(window.__likedTracksScrollTop)) {
-                    viewport.scrollTop = window.__likedTracksScrollTop;
+                var pendingScrollTop = window.__likedTracksPendingScrollTop;
+                var restoreTarget = Number.isFinite(pendingScrollTop)
+                    ? pendingScrollTop : window.__likedTracksScrollTop;
+                if (rowsChanged && viewport && Number.isFinite(restoreTarget)) {
+                    window.__likedTracksRestoringScroll = true;
+                    viewport.scrollTop = restoreTarget;
                     if (
                         attempt < 8 &&
-                        Math.abs(viewport.scrollTop - window.__likedTracksScrollTop) > 1
+                        Math.abs(viewport.scrollTop - restoreTarget) > 1
                     ) {
                         window.setTimeout(function() {
                             restoreViewportScroll(attempt + 1);
                         }, 35 * (attempt + 1));
+                    } else {
+                        window.__likedTracksScrollTop = viewport.scrollTop;
+                        window.__likedTracksPendingScrollTop = null;
+                        sessionStorage.setItem(scrollStorageKey, String(viewport.scrollTop));
+                        window.setTimeout(function() {
+                            window.__likedTracksRestoringScroll = false;
+                        }, 80);
                     }
+                } else if (
+                    !rowsChanged && !hasMore && viewport &&
+                    Number.isFinite(pendingScrollTop)
+                ) {
+                    // A collection whose size is an exact page multiple needs one
+                    // final empty request to discover the end. That response does
+                    // not change the row count, but it must still release the lock.
+                    viewport.scrollTop = pendingScrollTop;
+                    window.__likedTracksScrollTop = viewport.scrollTop;
+                    window.__likedTracksPendingScrollTop = null;
+                    sessionStorage.setItem(scrollStorageKey, String(viewport.scrollTop));
+                    window.setTimeout(function() {
+                        window.__likedTracksRestoringScroll = false;
+                    }, 80);
                 }
                 paintSelection();
                 if (selectionChanged && !rowsChanged && Number.isInteger(selected)) {
@@ -1718,10 +1806,13 @@ def register_callbacks(
                     window.__likedTracksObserver = new IntersectionObserver(function(entries) {
                         if (!entries.some(function(entry) { return entry.isIntersecting; })) return;
                         window.__likedTracksObserver.disconnect();
-                        window.__likedTracksScrollTop = viewport.scrollTop;
+                        var requestedScrollTop = viewport.scrollTop;
+                        window.__likedTracksScrollTop = requestedScrollTop;
+                        window.__likedTracksPendingScrollTop = requestedScrollTop;
+                        window.__likedTracksRestoringScroll = true;
                         sessionStorage.setItem(
                             'musicsync.track-scroll.' + window.__likedCollectionKey,
-                            String(viewport.scrollTop)
+                            String(requestedScrollTop)
                         );
                         window.__likedTracksLoadToken = (window.__likedTracksLoadToken || 0) + 1;
                         window.dash_clientside.set_props('liked-load-next', {

@@ -12,6 +12,7 @@ from music_library.database import (
     tidal_artist_tracks_page,
     tidal_artists_for_tracks,
     tidal_dimensions_for_tracks,
+    tidal_library_tracks_page,
     tidal_liked_tracks_page,
     tidal_playlist_tracks_page,
     tidal_setlist_tracks_page,
@@ -297,6 +298,25 @@ def fetch_artist_tracks(
     return [_cached_track_row(record) for record in records], len(records) == limit
 
 
+def fetch_library_tracks(
+    limit: int = 30,
+    offset: int = 0,
+    filters: dict[str, Any] | None = None,
+    sort: dict[str, str] | None = None,
+) -> tuple[list[dict[str, str]], bool]:
+    """Search the deduplicated local library across every requested source."""
+    if filters:
+        records = tidal_library_tracks_page(limit=1_000_000)
+        global_filters = {**filters, "global_text": True}
+        return _filter_records(records, global_filters, limit, offset, sort)
+    if (sort or {}).get("field") == "date_added":
+        records = tidal_library_tracks_page(limit=1_000_000)
+        rows = [_cached_track_row(record) for record in records]
+        return _date_sorted_page(rows, sort, limit, offset)
+    records = tidal_library_tracks_page(limit=limit, offset=offset)
+    return [_cached_track_row(record) for record in records], len(records) == limit
+
+
 def _filter_records(
     records: list[dict[str, Any]],
     filters: dict[str, Any],
@@ -327,8 +347,11 @@ def _filter_records(
         row_dimensions = dimensions.get(row["id"], {})
         row["artists"] = row_artists
         row["dimensions"] = row_dimensions
+        searchable_fields = [row.get("title"), row.get("remix")]
+        if filters.get("global_text"):
+            searchable_fields.extend((row.get("artist"), row.get("album")))
         searchable_title = " ".join(
-            str(value or "") for value in (row.get("title"), row.get("remix"))
+            str(value or "") for value in searchable_fields
         ).casefold()
         if title_query and title_query not in searchable_title:
             continue
@@ -376,6 +399,8 @@ def collection_artist_summary(
         records = tidal_watched_mix_tracks_page(collection_id, limit=1_000_000)
     elif kind == "artist":
         records = tidal_artist_tracks_page(collection_id, limit=1_000_000)
+    elif kind == "search":
+        records = tidal_library_tracks_page(limit=1_000_000)
     else:
         user_id = latest_tidal_liked_user_id()
         records = tidal_liked_tracks_page(user_id, limit=1_000_000) if user_id else []

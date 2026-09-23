@@ -31,6 +31,8 @@ The working interpreter is:
   OAuth routes, playlist-sync layout, and callbacks.
 - `music_tools/track_browser/`: stable, tool-neutral public API for the shared
   interactive track browser.
+- `music_tools/global_search/`: SQLite-only search across liked tracks, indexed
+  Playlists/Events/Sources, and My Mixes through the shared track browser.
 - `music_tools/liked_tracks/`: current track-browser implementation plus TIDAL
   liked/indexed-playlist retrieval; consumers outside this feature import the
   neutral `music_tools.track_browser` API.
@@ -264,6 +266,11 @@ revalidation on the following run.
 ## Liked tracks UI
 
 - Route: `/liked-tracks`.
+- Route `/search` is the global library search. It deduplicates tracks across
+  liked tracks, indexed Playlists/Events/Sources, and My Mixes, never calls a
+  provider while searching, and matches free text against title, remix,
+  artist, and album. Watched mixes remain provenance and are not part of this
+  global library collection.
 - Opening the route performs exactly one bounded live-prefix refresh from TIDAL
   into SQLite; **Refresh from TIDAL** explicitly repeats it. Subsequent paging,
   scrolling, filtering, and sorting read only SQLite and must not call TIDAL.

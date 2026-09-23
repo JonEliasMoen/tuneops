@@ -1294,6 +1294,48 @@ def tidal_liked_tracks_page(
         return [dict(row) for row in rows]
 
 
+def tidal_library_tracks_page(
+    limit: int = 30,
+    offset: int = 0,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Read unique TIDAL tracks present in the searchable local library."""
+    if not path.exists():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            WITH library_memberships AS (
+                SELECT provider, provider_track_id, date_added
+                FROM liked_tracks
+                WHERE provider='tidal'
+                UNION ALL
+                SELECT provider, provider_track_id, date_added
+                FROM playlist_tracks
+                WHERE provider='tidal'
+                UNION ALL
+                SELECT provider, provider_track_id, date_added
+                FROM setlist_tracks
+                WHERE provider='tidal'
+            )
+            SELECT t.provider_track_id AS id, t.title, t.artist, t.remix,
+                   t.album, t.duration_seconds, t.bpm, t.musical_key,
+                   t.key_scale, t.release_year AS year, t.isrc,
+                   t.album_art_url, MAX(lm.date_added) AS date_added
+            FROM library_memberships lm
+            JOIN tracks t
+              ON t.provider=lm.provider
+             AND t.provider_track_id=lm.provider_track_id
+            GROUP BY t.provider, t.provider_track_id
+            ORDER BY t.artist COLLATE NOCASE, t.title COLLATE NOCASE
+            LIMIT ? OFFSET ?
+            """,
+            (int(limit), int(offset)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
 def latest_tidal_liked_user_id(path: Path = DATABASE_PATH) -> str | None:
     """Return the most recently refreshed local TIDAL liked-library owner."""
     if not path.exists():

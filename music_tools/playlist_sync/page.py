@@ -22,6 +22,7 @@ from music_tools.watched_mixes import register_callbacks as register_watched_mix
 from music_tools.settings import DEFAULT_QUICK_VIEWS
 from music_tools.settings import content as settings_content
 from music_tools.settings import register_callbacks as register_settings_callbacks
+from music_tools.global_search import content as global_search_content
 from music_tools.ui import INDEX_STRING, shell, sidebar
 
 
@@ -288,6 +289,14 @@ def create_app(engine):
                 html,
                 "liked-tracks",
                 track_browser_content(
+                    html, dcc, quick_views=quick_views, view_state=view_state
+                ),
+            )
+        if pathname == "/search":
+            return shell(
+                html,
+                "global-search",
+                global_search_content(
                     html, dcc, quick_views=quick_views, view_state=view_state
                 ),
             )
