@@ -95,6 +95,7 @@ def content(
     collection: dict[str, Any] | None = None,
     quick_views: list[dict[str, Any]] | None = None,
     view_state: dict[str, Any] | None = None,
+    header_extra: Any = None,
 ):
     collection = collection or {"type": "liked", "name": "TIDAL liked tracks"}
     is_liked = collection.get("type") == "liked"
@@ -213,6 +214,7 @@ def content(
             ],
             className="tool-heading",
         ),
+        header_extra,
         html.Div(id="track-top-artists", className="top-artists"),
         html.Div(
             [

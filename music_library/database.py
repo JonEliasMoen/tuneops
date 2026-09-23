@@ -89,6 +89,17 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
 CREATE INDEX IF NOT EXISTS playlist_tracks_by_track
     ON playlist_tracks(provider, provider_track_id);
 
+CREATE TABLE IF NOT EXISTS event_links (
+    provider TEXT NOT NULL DEFAULT 'tidal',
+    provider_playlist_id TEXT NOT NULL,
+    youtube_url TEXT NOT NULL DEFAULT '',
+    concert_archives_url TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (provider, provider_playlist_id),
+    FOREIGN KEY (provider, provider_playlist_id)
+        REFERENCES playlists(provider, provider_playlist_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS liked_track_snapshots (
     provider TEXT NOT NULL,
     provider_user_id TEXT NOT NULL,
@@ -416,6 +427,55 @@ def initialize(path: Path = DATABASE_PATH) -> None:
                 """
             )
             connection.execute("DROP TABLE mixes")
+
+
+def event_links(
+    playlist_id: str, path: Path = DATABASE_PATH
+) -> dict[str, str]:
+    """Return the user-owned links associated with one indexed TIDAL event."""
+    initialize(path)
+    with connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT youtube_url, concert_archives_url, updated_at
+            FROM event_links
+            WHERE provider='tidal' AND provider_playlist_id=?
+            """,
+            (str(playlist_id),),
+        ).fetchone()
+    return dict(row) if row else {
+        "youtube_url": "",
+        "concert_archives_url": "",
+        "updated_at": "",
+    }
+
+
+def save_event_links(
+    playlist_id: str,
+    youtube_url: str,
+    concert_archives_url: str,
+    path: Path = DATABASE_PATH,
+) -> None:
+    """Persist event links without fetching either destination."""
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO event_links(
+                provider, provider_playlist_id, youtube_url,
+                concert_archives_url, updated_at
+            ) VALUES('tidal', ?, ?, ?, ?)
+            ON CONFLICT(provider, provider_playlist_id) DO UPDATE SET
+                youtube_url=excluded.youtube_url,
+                concert_archives_url=excluded.concert_archives_url,
+                updated_at=excluded.updated_at
+            """,
+            (
+                str(playlist_id), str(youtube_url or "").strip(),
+                str(concert_archives_url or "").strip(), now,
+            ),
+        )
 
 
 def setlist_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, str]]:

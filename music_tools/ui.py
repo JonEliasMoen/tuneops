@@ -292,6 +292,7 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .mix-youtube-input{box-sizing:border-box;width:100%;margin-top:7px;padding:11px 12px;border:1px solid #46586b;border-radius:7px;background:#0d151e;color:#e8edf2;font:inherit}
 .mix-youtube-input:focus{outline:2px solid #35e0a1;border-color:transparent}.mix-save{margin:10px 8px 14px 0}.mix-save-status{color:#82edbd;font-size:13px}
 .watched-mix-add{max-width:760px;padding:20px;border:1px solid #344252;border-radius:12px;background:#18222d}.watched-mix-link{display:inline-block;margin:4px 0 18px;color:#65dbab;text-decoration:none}.watched-mix-link:hover{text-decoration:underline}
+.event-links-card{margin:4px 0 18px}.event-link-label{display:block;margin-top:13px}.event-link-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.event-open-link{margin:0}
 .tracklist-import{margin:22px 0;padding:18px;border:1px solid #344252;border-radius:12px;background:#111923}
 .tracklist-input{box-sizing:border-box;width:100%;min-height:160px;padding:12px;border:1px solid #46586b;border-radius:8px;resize:vertical;background:#0d151e;color:#e8edf2;font:14px ui-monospace,SFMono-Regular,Consolas,monospace}
 .tracklist-order{width:min(280px,100%);margin-top:10px;color:#111}

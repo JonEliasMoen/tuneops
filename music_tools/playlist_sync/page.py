@@ -23,6 +23,8 @@ from music_tools.settings import DEFAULT_QUICK_VIEWS
 from music_tools.settings import content as settings_content
 from music_tools.settings import register_callbacks as register_settings_callbacks
 from music_tools.global_search import content as global_search_content
+from music_tools.events import links_panel as event_links_panel
+from music_tools.events import register_callbacks as register_event_callbacks
 from music_tools.ui import INDEX_STRING, shell, sidebar
 
 
@@ -394,12 +396,22 @@ def create_app(engine):
                     "type": "playlist",
                     "id": playlist_id,
                     "name": playlist.get("name") or playlist_id,
+                    "collection_type": kind,
                 }
                 return shell(
                     html,
                     f"{active_prefix}:{playlist_id}",
                     track_browser_content(
-                        html, dcc, collection, quick_views, view_state
+                        html,
+                        dcc,
+                        collection,
+                        quick_views,
+                        view_state,
+                        header_extra=(
+                            event_links_panel(html, dcc, playlist_id)
+                            if kind == "event"
+                            else None
+                        ),
                     ),
                 )
         return playlist_sync_layout()
@@ -417,6 +429,7 @@ def create_app(engine):
     register_settings_callbacks(
         callback, Input, Output, State, ALL, html, dcc, ctx, no_update, engine
     )
+    register_event_callbacks(callback, Input, Output, State, ctx, html)
 
     @callback(Output("mapping-list", "children"), Input("mapping-store", "data"))
     def render_mappings(rows: list[dict[str, Any]]):

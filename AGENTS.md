@@ -163,6 +163,9 @@ Core tables:
   track to every mix/setlist containing it.
 - `pending_tracks`: independent release-watch queue for parsed watched-mix
   tracks, their source mix, last TIDAL candidates, and resolution state.
+- `event_links`: independent user-owned YouTube and Concert Archives URLs keyed
+  to an indexed TIDAL event. YouTube metadata may be fetched for presentation;
+  Concert Archives is storage/link-out only and must never be scraped or fetched.
 
 ## Mix explorer
 
