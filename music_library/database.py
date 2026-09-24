@@ -100,6 +100,27 @@ CREATE TABLE IF NOT EXISTS event_links (
         REFERENCES playlists(provider, provider_playlist_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS lastfm_scrobbles (
+    username TEXT NOT NULL,
+    played_at INTEGER NOT NULL,
+    artist TEXT NOT NULL,
+    title TEXT NOT NULL,
+    album TEXT NOT NULL DEFAULT '',
+    mbid TEXT NOT NULL DEFAULT '',
+    normalized_artist TEXT NOT NULL,
+    normalized_title TEXT NOT NULL,
+    tidal_track_id TEXT,
+    match_confidence TEXT NOT NULL DEFAULT '',
+    imported_at TEXT NOT NULL,
+    PRIMARY KEY (username, played_at, normalized_artist, normalized_title)
+);
+
+CREATE INDEX IF NOT EXISTS lastfm_scrobbles_by_tidal_track
+    ON lastfm_scrobbles(username, tidal_track_id, played_at);
+
+CREATE INDEX IF NOT EXISTS lastfm_scrobbles_by_month
+    ON lastfm_scrobbles(username, played_at);
+
 CREATE TABLE IF NOT EXISTS liked_track_snapshots (
     provider TEXT NOT NULL,
     provider_user_id TEXT NOT NULL,
@@ -476,6 +497,186 @@ def save_event_links(
                 str(concert_archives_url or "").strip(), now,
             ),
         )
+
+
+def lastfm_latest_scrobble(
+    username: str, path: Path = DATABASE_PATH
+) -> int | None:
+    """Return the newest imported Last.fm play timestamp for one user."""
+    initialize(path)
+    with connect(path) as connection:
+        value = connection.execute(
+            "SELECT MAX(played_at) FROM lastfm_scrobbles WHERE username=?",
+            (str(username).casefold(),),
+        ).fetchone()[0]
+    return int(value) if value is not None else None
+
+
+def store_lastfm_scrobbles(
+    username: str,
+    records: list[dict[str, Any]],
+    path: Path = DATABASE_PATH,
+) -> int:
+    """Insert immutable Last.fm plays and return the number newly stored."""
+    if not records:
+        return 0
+    initialize(path)
+    imported_at = datetime.now(timezone.utc).isoformat()
+    user_key = str(username).strip().casefold()
+    with connect(path) as connection:
+        before = connection.total_changes
+        connection.executemany(
+            """
+            INSERT OR IGNORE INTO lastfm_scrobbles(
+                username, played_at, artist, title, album, mbid,
+                normalized_artist, normalized_title, imported_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    user_key,
+                    int(record["played_at"]),
+                    str(record.get("artist") or ""),
+                    str(record.get("title") or ""),
+                    str(record.get("album") or ""),
+                    str(record.get("mbid") or ""),
+                    str(record.get("normalized_artist") or ""),
+                    str(record.get("normalized_title") or ""),
+                    imported_at,
+                )
+                for record in records
+            ],
+        )
+        return connection.total_changes - before
+
+
+def lastfm_unmatched_identities(
+    username: str, path: Path = DATABASE_PATH
+) -> list[dict[str, str]]:
+    """Return distinct imported identities that still lack a TIDAL match."""
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT normalized_artist, normalized_title,
+                   MIN(artist) AS artist, MIN(title) AS title
+            FROM lastfm_scrobbles
+            WHERE username=? AND tidal_track_id IS NULL
+            GROUP BY normalized_artist, normalized_title
+            """,
+            (str(username).strip().casefold(),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def set_lastfm_track_match(
+    username: str,
+    normalized_artist: str,
+    normalized_title: str,
+    track_id: str,
+    confidence: str,
+    path: Path = DATABASE_PATH,
+) -> None:
+    """Apply one conservative identity match to all corresponding scrobbles."""
+    initialize(path)
+    with connect(path) as connection:
+        connection.execute(
+            """
+            UPDATE lastfm_scrobbles
+            SET tidal_track_id=?, match_confidence=?
+            WHERE username=? AND normalized_artist=? AND normalized_title=?
+            """,
+            (
+                str(track_id), str(confidence), str(username).strip().casefold(),
+                str(normalized_artist), str(normalized_title),
+            ),
+        )
+
+
+def set_lastfm_track_matches(
+    username: str,
+    matches: list[dict[str, str]],
+    path: Path = DATABASE_PATH,
+) -> int:
+    """Apply several conservative Last.fm-to-TIDAL identity matches at once."""
+    if not matches:
+        return 0
+    initialize(path)
+    user_key = str(username).strip().casefold()
+    with connect(path) as connection:
+        before = connection.total_changes
+        connection.executemany(
+            """
+            UPDATE lastfm_scrobbles
+            SET tidal_track_id=?, match_confidence=?
+            WHERE username=? AND normalized_artist=? AND normalized_title=?
+              AND tidal_track_id IS NULL
+            """,
+            [
+                (
+                    str(match["track_id"]), str(match["confidence"]), user_key,
+                    str(match["normalized_artist"]),
+                    str(match["normalized_title"]),
+                )
+                for match in matches
+            ],
+        )
+        return connection.total_changes - before
+
+
+def lastfm_track_stats(
+    username: str,
+    track_ids: list[str],
+    path: Path = DATABASE_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return play count and most recent play for matched TIDAL tracks."""
+    unique_ids = list(dict.fromkeys(str(value) for value in track_ids if value))
+    if not unique_ids or not str(username or "").strip():
+        return {}
+    initialize(path)
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT tidal_track_id, COUNT(*) AS play_count,
+                   MAX(played_at) AS last_played
+            FROM lastfm_scrobbles
+            WHERE username=? AND tidal_track_id IN ({placeholders})
+            GROUP BY tidal_track_id
+            """,
+            [str(username).strip().casefold(), *unique_ids],
+        ).fetchall()
+    return {
+        str(row["tidal_track_id"]): {
+            "play_count": int(row["play_count"]),
+            "last_played": int(row["last_played"]),
+        }
+        for row in rows
+    }
+
+
+def lastfm_import_summary(
+    username: str, path: Path = DATABASE_PATH
+) -> dict[str, Any]:
+    """Summarize the local Last.fm history cache for Settings."""
+    if not str(username or "").strip():
+        return {"scrobbles": 0, "matched": 0, "latest": None}
+    initialize(path)
+    with connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS scrobbles,
+                   SUM(CASE WHEN tidal_track_id IS NOT NULL THEN 1 ELSE 0 END) AS matched,
+                   MAX(played_at) AS latest
+            FROM lastfm_scrobbles WHERE username=?
+            """,
+            (str(username).strip().casefold(),),
+        ).fetchone()
+    return {
+        "scrobbles": int(row["scrobbles"] or 0),
+        "matched": int(row["matched"] or 0),
+        "latest": int(row["latest"]) if row["latest"] is not None else None,
+    }
 
 
 def setlist_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, str]]:

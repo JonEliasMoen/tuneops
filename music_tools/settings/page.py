@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import os
+from datetime import datetime
 from typing import Any
 
+from music_library.database import lastfm_import_summary
+from music_tools.lastfm import import_scrobbles
 from music_tools.track_browser.table import columns_for, default_visible_fields
 
 
@@ -75,6 +79,22 @@ def _append_quick_view(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def _lastfm_summary_text(username: str) -> str:
+    summary = lastfm_import_summary(username)
+    if not summary["scrobbles"]:
+        return "No Last.fm listening history imported yet."
+    latest = (
+        datetime.fromtimestamp(summary["latest"]).strftime("%Y-%m-%d %H:%M")
+        if summary.get("latest")
+        else "unknown"
+    )
+    return (
+        f"{summary['scrobbles']:,} scrobbles cached · "
+        f"{summary['matched']:,} matched to indexed TIDAL tracks · "
+        f"latest {latest}"
+    )
+
+
 def _editor(views, html, dcc, all_columns):
     """Build the complete editor so the first render never depends on a callback."""
     views = _normalized(views)
@@ -132,6 +152,7 @@ def content(
     quick_views: list[dict[str, Any]] | None = None,
     dark_mode: bool = True,
     tags_collapsed_default: bool = True,
+    lastfm_username: str = "",
 ):
     editor, default_options, default_value = _editor(
         quick_views, html, dcc, columns_for({"type": "setlist"})
@@ -170,6 +191,53 @@ def content(
             ],
             className="settings-section",
         ),
+        html.Div(
+            [
+                html.H2("Last.fm"),
+                html.P(
+                    "Import listening history into SQLite for local play counts and future monthly charts.",
+                    className="hint",
+                ),
+                html.Div(
+                    "API key configured in .env"
+                    if os.getenv("LASTFM_API_KEY", "").strip()
+                    else "Add LASTFM_API_KEY to .env, then restart the app.",
+                    className=(
+                        "connection connected"
+                        if os.getenv("LASTFM_API_KEY", "").strip()
+                        else "connection disconnected"
+                    ),
+                ),
+                html.Label("Last.fm username"),
+                dcc.Input(
+                    id="lastfm-username",
+                    value=lastfm_username,
+                    type="text",
+                    placeholder="Your Last.fm username",
+                    className="quick-view-name lastfm-username",
+                ),
+                html.Div(
+                    [
+                        html.Button("Save username", id="lastfm-save"),
+                        html.Button(
+                            "Import listening history",
+                            id="lastfm-import",
+                            className="primary",
+                        ),
+                    ],
+                    className="actions",
+                ),
+                dcc.Loading(
+                    html.Div(
+                        _lastfm_summary_text(lastfm_username),
+                        id="lastfm-status",
+                        className="track-status",
+                    ),
+                    type="circle",
+                ),
+            ],
+            className="settings-section",
+        ),
         html.H2("Quick Views"),
         html.Div(
             [
@@ -199,6 +267,42 @@ def register_callbacks(
     callback, Input, Output, State, ALL, html, dcc, ctx, no_update, engine
 ):
     all_columns = columns_for({"type": "setlist"})
+
+    @callback(
+        Output("lastfm-status", "children"),
+        Input("lastfm-save", "n_clicks"),
+        Input("lastfm-import", "n_clicks"),
+        State("lastfm-username", "value"),
+        prevent_initial_call=True,
+        running=[(Output("lastfm-import", "disabled"), True, False)],
+    )
+    def update_lastfm(_save_clicks, _import_clicks, username):
+        username = str(username or "").strip()
+        if not username:
+            return "Enter your Last.fm username."
+        config = engine.load_config()
+        settings = config.setdefault("settings", {})
+        settings["lastfm_username"] = username
+        engine.save_config(config)
+        if ctx.triggered_id == "lastfm-save":
+            return f"Saved Last.fm username {username}. {_lastfm_summary_text(username)}"
+        try:
+            result = import_scrobbles(
+                username,
+                os.getenv("LASTFM_API_KEY", ""),
+                delay_seconds=float(
+                    settings.get("lastfm_import_delay_seconds", 0.5)
+                ),
+            )
+            summary = _lastfm_summary_text(username)
+            return (
+                f"Import complete: {result['added']:,} new of "
+                f"{result['fetched']:,} fetched; "
+                f"{result['scrobbles_matched']:,} plays newly matched. {summary}"
+            )
+        except Exception as exc:
+            engine.LOGGER.exception("lastfm.import_failed username=%r", username)
+            return f"Last.fm import failed: {exc}"
 
     @callback(
         Output("theme-settings", "data"),

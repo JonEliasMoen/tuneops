@@ -12,13 +12,15 @@
     "maintain_liked_tracks_cache": true,
     "liked_tracks_cache_page_size": 50,
     "liked_tracks_cache_max_pages": 10,
-    "liked_tracks_cache_delay_seconds": 0.25
+    "liked_tracks_cache_delay_seconds": 0.25,
+    "lastfm_username": "",
+    "lastfm_import_delay_seconds": 0.5
   },
   "quick_views": [
     {
       "id": "default",
       "name": "Default",
-      "fields": ["title", "artist", "remix", "album", "length", "bpm", "key", "year", "date_added", "playlists", "events", "sources", "mixes", "djmi"],
+      "fields": ["title", "artist", "remix", "album", "length", "bpm", "key", "year", "date_added", "play_count", "last_played", "playlists", "events", "sources", "mixes", "djmi"],
       "default": true
     }
   ],

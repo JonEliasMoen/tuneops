@@ -33,6 +33,9 @@ The working interpreter is:
   interactive track browser.
 - `music_tools/global_search/`: SQLite-only search across liked tracks, indexed
   Playlists/Events/Sources, and My Mixes through the shared track browser.
+- `music_tools/lastfm/`: provider-neutral listening-history import and
+  conservative Last.fm identity matching through `pylast`; it must not depend
+  on Dash. Translate provider errors without logging request URLs or API keys.
 - `music_tools/liked_tracks/`: current track-browser implementation plus TIDAL
   liked/indexed-playlist retrieval; consumers outside this feature import the
   neutral `music_tools.track_browser` API.
@@ -166,6 +169,9 @@ Core tables:
 - `event_links`: independent user-owned YouTube and Concert Archives URLs keyed
   to an indexed TIDAL event. YouTube metadata may be fetched for presentation;
   Concert Archives is storage/link-out only and must never be scraped or fetched.
+- `lastfm_scrobbles`: immutable listening-history rows keyed by user, timestamp,
+  and normalized identity. Preserve timestamps for monthly charts. Matching to
+  TIDAL tracks must be conservative: ambiguous identities remain unmatched.
 
 ## Mix explorer
 
@@ -269,6 +275,12 @@ revalidation on the following run.
 ## Liked tracks UI
 
 - Route: `/liked-tracks`.
+- Last.fm history is imported explicitly from Settings using `LASTFM_API_KEY`
+  from `.env` and `settings.lastfm_username` from `music_sync.json`. The first
+  import walks oldest-to-newest so an interrupted run can resume safely;
+  subsequent imports use the newest cached timestamp. Track tables expose
+  optional Play count and Last played fields, and the inspector shows the
+  current matched count. Importing must never modify TIDAL or scrobble plays.
 - Route `/search` is the global library search. It deduplicates tracks across
   liked tracks, indexed Playlists/Events/Sources, and My Mixes, never calls a
   provider while searching, and matches free text against title, remix,

@@ -45,6 +45,19 @@ with the newest tracks from TIDAL. More pages are retrieved and appended to the
 cache as the table reaches its scroll boundary. Its inspector uses the same
 database to list every indexed playlist containing the selected TIDAL track ID.
 
+## Last.fm listening history
+
+Add `LASTFM_API_KEY=...` to `.env`, restart the app, then open **Settings** and
+enter your Last.fm username. **Import listening history** performs a complete
+first import and incremental later imports. Scrobbles remain in their own
+SQLite table with their original timestamps, enabling track play counts, last
+played dates, and future monthly Top X views. Last.fm identities are matched
+conservatively to indexed TIDAL tracks; ambiguous matches remain unmatched.
+
+**Play count** and **Last played** are available in the Fields and Quick View
+selectors on every shared track table. The selected-track panel also shows the
+current count. Importing history reads Last.fm only and does not modify TIDAL.
+
 ## Setup
 
 1. Install Python 3.10 or newer and run `pip install -r requirements.txt`.

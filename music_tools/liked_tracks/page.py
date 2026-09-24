@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -9,6 +10,7 @@ from music_library.dimensions import DIMENSION_MAX_VALUES, DIMENSION_VALUES
 from music_library.database import (
     associate_tidal_tracks_with_watched_mix,
     add_tidal_playlist_membership,
+    lastfm_track_stats,
     replace_tidal_track_dimensions,
     remove_tidal_playlist_membership,
     tidal_dimensions_for_tracks,
@@ -627,12 +629,28 @@ def register_callbacks(
         watched_mix_memberships = tidal_watched_mixes_for_tracks(track_ids)
         dimensions = tidal_dimensions_for_tracks(track_ids)
         artists = tidal_artists_for_tracks(track_ids)
+        lastfm_username = str(
+            engine.load_config().get("settings", {}).get("lastfm_username", "")
+            or ""
+        ).strip()
+        listening_stats = lastfm_track_stats(lastfm_username, track_ids)
         _attach_memberships(
             page, memberships, setlists, watched_mix_memberships, collection
         )
         for index, row in enumerate(page):
             row["dimensions"] = dimensions.get(row.get("id", ""), {})
             row["artists"] = artists.get(row.get("id", ""), [])
+            track_stats = listening_stats.get(str(row.get("id") or ""), {})
+            row["play_count"] = (
+                str(track_stats.get("play_count", 0)) if lastfm_username else ""
+            )
+            row["last_played"] = (
+                datetime.fromtimestamp(int(track_stats["last_played"])).strftime(
+                    "%Y-%m-%d %H:%M"
+                )
+                if track_stats.get("last_played")
+                else ""
+            )
             row["_source_order"] = offset + index
         rows = sort_rows(existing_rows + page if append else page, sort)
 
@@ -880,6 +898,24 @@ def register_callbacks(
             ),
             html.H2(row.get("title") or "—", className="detail-title"),
             html.Div(row.get("artist") or "—", className="detail-artist"),
+            (
+                html.Div(
+                    " · ".join(
+                        value
+                        for value in (
+                            f"{row.get('play_count')} Last.fm play{'s' if row.get('play_count') != '1' else ''}",
+                            (
+                                f"Last played {row.get('last_played')}"
+                                if row.get("last_played") else ""
+                            ),
+                        )
+                        if value
+                    ),
+                    className="detail-listening-stats",
+                )
+                if row.get("play_count") not in (None, "")
+                else None
+            ),
             (
                 html.Div(
                     membership_blobs,

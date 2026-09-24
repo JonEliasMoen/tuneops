@@ -18,6 +18,8 @@ COLUMNS = [
     ("key", "Key"),
     ("year", "Year"),
     ("date_added", "Date added"),
+    ("play_count", "Play count"),
+    ("last_played", "Last played"),
     ("playlists", "Playlists"),
     ("events", "Events"),
     ("sources", "Sources"),
@@ -70,7 +72,7 @@ def _sort_value(row: dict[str, Any], field: str) -> tuple[bool, Any]:
     missing = value in (None, "", [], {})
     if field in {"length", "mix_position"}:
         normalized: Any = _time_seconds(value)
-    elif field in {"bpm", "year", "rating", "energy", "tension"}:
+    elif field in {"bpm", "year", "play_count", "rating", "energy", "tension"}:
         try:
             normalized = float(value[0] if isinstance(value, list) and value else value)
         except (TypeError, ValueError):
@@ -150,6 +152,8 @@ def render_track_table(
                     )
                 )
             return links
+        if key == "play_count" and row.get(key) not in (None, ""):
+            return str(row.get(key))
         if key not in {"playlists", "events", "sources", "mixes", "djmi"}:
             return row.get(key) or "—"
         memberships = row.get(key) or []
@@ -207,7 +211,7 @@ def render_track_table(
                         className=" ".join(
                             part for part in [
                                 f"track-column-{key}",
-                                "numeric" if key in {"length", "bpm", "year", "date_added"} else "",
+                                "numeric" if key in {"length", "bpm", "year", "date_added", "play_count", "last_played"} else "",
                             ] if part
                         ),
                         style=cell_style(key, row.get(key, "")),

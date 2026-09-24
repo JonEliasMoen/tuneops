@@ -257,7 +257,7 @@ INDEX_STRING = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%
 .action-feedback{min-height:18px;margin-top:10px;color:#82edbd;font-size:13px}
 .detail-eyebrow{color:#7f91a1;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
 .detail-title{margin:12px 0 5px;color:#fff;font-size:22px;line-height:1.2}
-.detail-artist{color:#bdc8d2;margin-bottom:10px}.detail-membership-blobs{margin:0 0 16px}
+.detail-artist{color:#bdc8d2;margin-bottom:10px}.detail-listening-stats{margin:-3px 0 12px;color:#72bdf2;font-size:13px;font-weight:600}.detail-membership-blobs{margin:0 0 16px}
 .tidal-app-link{display:inline-flex;align-items:center;justify-content:center;margin:0 0 14px;padding:8px 12px;border:1px solid #4fcf98;border-radius:7px;background:#17372c;color:#82edbd;font-size:13px;font-weight:700;text-decoration:none}.tidal-app-link:hover{background:#21483a;color:#fff}
 .detail-fields{display:grid;gap:0}
 .detail-field{display:grid;grid-template-columns:95px minmax(0,1fr);gap:10px;padding:10px 0;border-top:1px solid #2b3743}

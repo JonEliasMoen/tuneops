@@ -144,6 +144,8 @@ def default_config() -> dict[str, Any]:
             "liked_tracks_cache_page_size": 50,
             "liked_tracks_cache_max_pages": 10,
             "liked_tracks_cache_delay_seconds": 0.25,
+            "lastfm_username": "",
+            "lastfm_import_delay_seconds": 0.5,
         },
         "quick_views": [
             {
@@ -152,7 +154,7 @@ def default_config() -> dict[str, Any]:
                 "fields": [
                     "title", "artist", "remix", "album", "length", "bpm",
                     "key", "year", "date_added", "playlists", "events",
-                    "sources", "mixes", "djmi",
+                    "play_count", "last_played", "sources", "mixes", "djmi",
                 ],
                 "default": True,
             }

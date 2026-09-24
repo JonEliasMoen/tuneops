@@ -317,6 +317,7 @@ def create_app(engine):
                             "tags_collapsed_by_default", True
                         )
                     ),
+                    str(config.get("settings", {}).get("lastfm_username", "") or ""),
                 ),
             )
         if pathname == "/mixes":

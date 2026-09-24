@@ -7,7 +7,7 @@ import sys
 from dataclasses import asdict
 import time
 
-from musicsync import CONFIG_PATH, LOGGER, configure_logging, run_all_syncs
+from main import CONFIG_PATH, LOGGER, configure_logging, run_all_syncs
 
 
 def main() -> int:
