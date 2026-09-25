@@ -1402,12 +1402,17 @@ def main() -> None:
     LOGGER.info("application.start root=%s", ROOT)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sync", action="store_true", help="sync without starting the web UI")
+    parser.add_argument("--ui", choices=("dash", "react"), default="dash", help="web UI to run (default: dash)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
     if args.sync:
         for result in run_all_syncs(progress=print):
             print(json.dumps(asdict(result), ensure_ascii=False))
+        return
+    if args.ui == "react":
+        import uvicorn
+        uvicorn.run("backend.app.main:app", host=args.host, port=args.port, reload=False)
         return
     create_app().run(host=args.host, port=args.port, debug=False)
 

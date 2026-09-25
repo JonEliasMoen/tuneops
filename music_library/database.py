@@ -342,6 +342,47 @@ def connect(path: Path = DATABASE_PATH) -> Iterator[sqlite3.Connection]:
 def initialize(path: Path = DATABASE_PATH) -> None:
     with connect(path) as connection:
         connection.executescript(SCHEMA)
+        # A like is a membership, not a playlist occurrence. Older cache builds
+        # could retain the same TIDAL track across overlapping paged snapshots.
+        # Keep its earliest position/date and permanently enforce that invariant.
+        connection.execute(
+            """
+            DELETE FROM liked_tracks AS duplicate
+            WHERE EXISTS (
+                SELECT 1 FROM liked_tracks AS original
+                WHERE original.provider=duplicate.provider
+                  AND original.provider_user_id=duplicate.provider_user_id
+                  AND original.provider_track_id=duplicate.provider_track_id
+                  AND original.position < duplicate.position
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS liked_tracks_unique_membership
+            ON liked_tracks(provider, provider_user_id, provider_track_id)
+            """
+        )
+        # A playlist cache is also membership-based. Keep the first provider
+        # occurrence if an older overlapping fetch stored a track twice.
+        connection.execute(
+            """
+            DELETE FROM playlist_tracks AS duplicate
+            WHERE EXISTS (
+                SELECT 1 FROM playlist_tracks AS original
+                WHERE original.provider=duplicate.provider
+                  AND original.provider_playlist_id=duplicate.provider_playlist_id
+                  AND original.provider_track_id=duplicate.provider_track_id
+                  AND original.position < duplicate.position
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS playlist_tracks_unique_membership
+            ON playlist_tracks(provider, provider_playlist_id, provider_track_id)
+            """
+        )
         columns = {
             row["name"] for row in connection.execute("PRAGMA table_info(playlist_tracks)")
         }
@@ -767,6 +808,16 @@ def save_watched_mix(
     return watched_mix(normalized_id, path) or {}
 
 
+def delete_watched_mix(video_id: str, path: Path = DATABASE_PATH) -> bool:
+    """Remove one user-managed watched mix and its dependent associations."""
+    initialize(path)
+    with connect(path) as connection:
+        cursor = connection.execute(
+            "DELETE FROM watched_mixes WHERE video_id=?", (str(video_id),)
+        )
+    return cursor.rowcount > 0
+
+
 def associate_tidal_tracks_with_watched_mix(
     video_id: str, track_ids: list[str], path: Path = DATABASE_PATH
 ) -> int:
@@ -1054,6 +1105,26 @@ def save_setlist_tidal_source(
         )
 
 
+def save_setlist_tidal_url(
+    folder_name: str, tidal_url: str, path: Path = DATABASE_PATH
+) -> None:
+    """Edit only the saved TIDAL URL, preserving an imported setlist identity."""
+    name = str(folder_name).strip()
+    if not name:
+        raise ValueError("Mix folder name cannot be empty")
+    initialize(path)
+    with connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO setlists(folder_name, tidal_url, updated_at)
+            VALUES(?, ?, ?)
+            ON CONFLICT(folder_name) DO UPDATE SET
+                tidal_url=excluded.tidal_url, updated_at=excluded.updated_at
+            """,
+            (name, str(tidal_url or "").strip(), datetime.now(timezone.utc).isoformat()),
+        )
+
+
 def tidal_track_record(track: Any) -> dict[str, Any]:
     """Return all currently useful provider metadata without user-owned fields."""
     artists = getattr(track, "artists", None) or []
@@ -1192,7 +1263,7 @@ def store_tidal_playlist(
             )
             _store_track_artists(connection, track_id, record)
             connection.execute(
-                "INSERT INTO playlist_tracks(provider, provider_playlist_id, position, provider_track_id, date_added) "
+                "INSERT OR IGNORE INTO playlist_tracks(provider, provider_playlist_id, position, provider_track_id, date_added) "
                 "VALUES('tidal', ?, ?, ?, ?)",
                 (playlist_id, position, track_id, record.get("date_added")),
             )
@@ -2105,7 +2176,7 @@ def store_tidal_liked_tracks(
             added = getattr(track, "user_date_added", None) or getattr(track, "date_added", None)
             connection.execute(
                 """
-                INSERT INTO liked_tracks(
+                INSERT OR IGNORE INTO liked_tracks(
                     provider, provider_user_id, position, provider_track_id, date_added
                 ) VALUES('tidal', ?, ?, ?, ?)
                 """,

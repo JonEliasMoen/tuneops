@@ -9,6 +9,33 @@ in SQLite. It performs no Spotify reads or writes, participates in normal
 manual and startup runs, and uses TIDAL's `last_updated` value to avoid fetching
 unchanged playlist contents.
 
+## Choosing the web UI during migration
+
+Dash remains the default and compatibility UI:
+
+```powershell
+python main.py
+```
+
+To trial the React/FastAPI UI on the same local port choice, run:
+
+```powershell
+python main.py --ui react
+```
+
+`react_app.py` remains a convenience launcher for the React preview on port
+8081. `startup_sync.py` is unaffected by either UI choice.
+
+To measure the read-only SQLite preparation path for a large React collection,
+without calling a provider or changing the library, run:
+
+```powershell
+python profile_library.py --collection search --limit 5000
+```
+
+The table keeps 200-row pages and restores at most 1,000 rows per view; this
+probe helps decide when browser-side virtualization would become worthwhile.
+
 ## Project structure
 
 - `musicsync.py` contains the reusable sync engine and remains the command-line

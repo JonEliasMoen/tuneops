@@ -1,6 +1,8 @@
 # MusicSync agent guide
 
-This directory contains a local Dash application for TIDAL/Spotify music tools.
+This directory contains a local music-library application in an incremental
+Dash-to-React/FastAPI migration. Dash remains the compatibility application;
+the React application is the new implementation under active development.
 Preserve existing user configuration, OAuth caches, logs, and SQLite data. Never
 commit or print secrets from `.env`, `.spotify_cache`, `.tidal_session.json`, or
 `.connection_state.json`.
@@ -8,6 +10,9 @@ commit or print secrets from `.env`, `.spotify_cache`, `.tidal_session.json`, or
 ## Commands
 
 - Web application: `python musicsync.py` (defaults to `127.0.0.1:8080`)
+- React/FastAPI preview: build in `frontend` with `npm run build`, then run
+  `python react_app.py` (defaults to `127.0.0.1:8081`)
+- FastAPI documentation: `http://127.0.0.1:8081/api/docs`
 - Headless configured sync: `python startup_sync.py`
 - Full TIDAL liked-track cache: `python cache_liked_tracks.py`
 - Direct headless sync: `python musicsync.py --sync`
@@ -22,6 +27,12 @@ The working interpreter is:
 
 ## Architecture
 
+- `backend/app/`: FastAPI application, versioned local API, background jobs,
+  sanitized errors, and adapters over the existing Python services.
+- `frontend/src/`: React/TypeScript shell and feature UI. All provider and
+  filesystem access goes through `/api/v1`; never expose credentials here.
+- `react_app.py`: preview launcher that serves the built React application and
+  API together. It does not replace the Dash launcher until parity is verified.
 - `musicsync.py`: reusable playlist-sync engine, provider authentication, and
   backward-compatible CLI/application entry point.
 - `startup_sync.py`: delayed, headless startup runner using `run_all_syncs`.
@@ -48,6 +59,12 @@ The working interpreter is:
 New sidebar tools should live in `music_tools/<tool_name>/`. Keep provider and
 database work outside presentation callbacks when practical. Shared layout and
 styles belong in `music_tools/ui.py`.
+
+During migration, new HTTP routes belong in `backend/app/api`, use cases in
+`backend/app/services`, and new browser UI in `frontend/src/features`. Reuse
+existing provider/session functions and SQLite functions instead of duplicating
+authentication or storage logic. Browsing, sorting, filtering, and paging are
+SQLite-only. TIDAL refreshes run as explicit background jobs.
 
 ## Track browser extension contract
 

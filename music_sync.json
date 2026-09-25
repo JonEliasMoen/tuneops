@@ -5,7 +5,9 @@
     "spotify_search_delay_seconds": 0.75,
     "dark_mode": true,
     "tags_collapsed_by_default": true,
-    "lastfm_username": "Aruzhu"
+    "lastfm_username": "Aruzhu",
+    "ollama_model": "qwen3:4b",
+    "ollama_url": "http://127.0.0.1:11434"
   },
   "playlists": [
     {
@@ -25,8 +27,8 @@
           }
         ]
       },
-      "source_version": "4d0d1dfd83add74b4754e7fb582fa79bc3b357bf4b711173cb2a3746eb34fa91",
-      "last_sync": "2026-08-31T15:21:12.087735+00:00",
+      "source_version": "39edd1a9d7c5181fec307dd3ce75307087792af67863881bd9c253929c7f6739",
+      "last_sync": "2026-09-24T19:40:45.416383+00:00",
       "collection_type": "event"
     },
     {
@@ -170,8 +172,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "51bb57efc5cc4aa323ddc889b462dada0255a51b5f9a071ab73f0eda705b1758",
-      "last_sync": "2026-09-20T17:23:51.414755+00:00",
+      "source_version": "23abb070fe95c978836560e0eb46e8fda925c1b9bbc21c74d2730e48dbc86e22",
+      "last_sync": "2026-09-24T19:40:49.224502+00:00",
       "collection_type": "playlist"
     },
     {
@@ -184,8 +186,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "7dc5f4b982598f0814487acdcae64f3e7c1ab628b36f70594b1a90bdcc6323eb",
-      "last_sync": "2026-09-23T15:48:06.137655+00:00",
+      "source_version": "485ca9fe74b7899dadd8ffc760552db76f16fd081967ccf39030812a53831b27",
+      "last_sync": "2026-09-24T19:40:52.581625+00:00",
       "collection_type": "playlist"
     },
     {
@@ -205,8 +207,8 @@
           }
         ]
       },
-      "source_version": "e6b6ef391bc3b8ba9d42f142601733321ff85e08fd6106ac8e4aa5bf96f645a1",
-      "last_sync": "2026-09-24T15:17:03.257535+00:00",
+      "source_version": "8a62895940316324006388360ca5819258a8070806c1a01855d44d3792fd09d7",
+      "last_sync": "2026-09-24T19:40:54.000595+00:00",
       "collection_type": "playlist"
     },
     {
@@ -219,8 +221,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "985c08ae51cd8d266780ce408929285d1b99317aa836fccdccb3fb23763f3da3",
-      "last_sync": "2026-09-24T15:17:05.771675+00:00",
+      "source_version": "83c59c00006a96a378db86eecfc219ffbd9eb76c25fcc52f95d28c99784112e0",
+      "last_sync": "2026-09-24T19:40:54.758545+00:00",
       "collection_type": "playlist"
     },
     {
@@ -252,8 +254,8 @@
           }
         ]
       },
-      "source_version": "255439cdcab3e73b1998140e97861150d26a26f6da7c395853ae5ef30dcd1827",
-      "last_sync": "2026-08-27T20:07:15.397268+00:00",
+      "source_version": "1c755d77ee10d5ac24b1750532822739cd68163414fbdbde9eaad94c4f1af07a",
+      "last_sync": "2026-09-24T19:40:55.860184+00:00",
       "collection_type": "playlist"
     },
     {
@@ -351,8 +353,8 @@
           }
         ]
       },
-      "source_version": "AAAAhxptwzW5kjE/2F9GLJSY8id2Zpd3",
-      "last_sync": "2026-09-24T15:17:10.685693+00:00",
+      "source_version": "AAAAiHf+GeYB2w6eMX06ydJHvaFdjVPY",
+      "last_sync": "2026-09-24T19:40:57.828580+00:00",
       "collection_type": "source"
     },
     {
@@ -372,8 +374,8 @@
           }
         ]
       },
-      "source_version": "59f239843b9f7d56ceca9985a1d12888fb092a8e65de7ba00e4fbb9bc3e54ed8",
-      "last_sync": "2026-09-24T15:17:23.443357+00:00",
+      "source_version": "4735e4d5cafeffc9fa38ce236d7917d11928ad719910003f185552b05453de35",
+      "last_sync": "2026-09-25T15:49:51.634290+00:00",
       "collection_type": "playlist"
     },
     {
@@ -416,8 +418,8 @@
       "spotify": "1b21mY2Y9lRY5OPu0FtYXv",
       "tidal": "https://tidal.com/playlist/409c9a77-9854-4036-8d07-0b9e96e04f0e",
       "tidal_name": "",
-      "source_version": "2869348a6c71f346f522ec01f4c6d20bcf40ef5d48c24951015a6c8334152ceb",
-      "last_sync": "2026-09-23T15:48:25.055818+00:00",
+      "source_version": "0eff1ac5c6e39c532882c03e0eaec1aaf41723bdf9aa532349e0516183c9221c",
+      "last_sync": "2026-09-25T15:49:55.447422+00:00",
       "collection_type": "playlist",
       "unmatched": {
         "tidal_to_spotify": []
@@ -489,8 +491,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "dd9d2eb24403b22058e4899b524460f087db61139679b7d8db969baaf9f912cc",
-      "last_sync": "2026-09-24T15:17:28.407064+00:00"
+      "source_version": "c6791e648f66418d24be42c2c34fca596e2146c7c9e492399684658433a4b523",
+      "last_sync": "2026-09-24T19:41:07.930497+00:00"
     }
   ],
   "quick_views": [
@@ -512,7 +514,8 @@
         "scale",
         "mix_position",
         "playlists",
-        "date_added"
+        "date_added",
+        "play_count"
       ],
       "default": true
     },

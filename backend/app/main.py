@@ -1,0 +1,135 @@
+"""FastAPI application serving the local MusicSync API and React build."""
+
+from __future__ import annotations
+
+import logging
+import time
+import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+import main as engine
+
+from .api.router import api_router
+from .jobs import JOBS
+
+
+LOGGER = logging.getLogger("musicsync")
+ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_DIST = ROOT / "frontend" / "dist"
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    engine.configure_logging()
+    LOGGER.info("fastapi.start root=%s frontend_dist=%s", ROOT, FRONTEND_DIST)
+    yield
+    JOBS.shutdown()
+    LOGGER.info("fastapi.stop")
+
+
+def _error(request: Request, status: int, code: str, message: str, details=None):
+    return JSONResponse(
+        status_code=status,
+        content={
+            "error": {
+                "code": code,
+                "message": message,
+                "details": details,
+                "request_id": getattr(request.state, "request_id", None),
+            }
+        },
+    )
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="MusicSync local API",
+        version="0.1.0",
+        docs_url="/api/docs",
+        openapi_url="/api/openapi.json",
+        lifespan=lifespan,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.middleware("http")
+    async def request_context(request: Request, call_next):
+        request_id = uuid.uuid4().hex[:12]
+        request.state.request_id = request_id
+        started = time.perf_counter()
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        if request.url.path != "/api/v1/health":
+            LOGGER.info(
+                "http.complete request_id=%s method=%s path=%s status=%d duration_ms=%d",
+                request_id,
+                request.method,
+                request.url.path,
+                response.status_code,
+                round((time.perf_counter() - started) * 1000),
+            )
+        return response
+
+    @app.exception_handler(HTTPException)
+    async def http_error(request: Request, exc: HTTPException):
+        detail = exc.detail if isinstance(exc.detail, str) else "The request could not be completed."
+        return _error(request, exc.status_code, "request_failed", detail)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError):
+        return _error(request, 422, "validation_error", "Check the submitted values.", exc.errors())
+
+    @app.exception_handler(Exception)
+    async def unexpected_error(request: Request, exc: Exception):
+        LOGGER.exception(
+            "http.failed request_id=%s method=%s path=%s",
+            getattr(request.state, "request_id", "-"),
+            request.method,
+            request.url.path,
+        )
+        return _error(request, 500, "internal_error", "MusicSync could not complete the request.")
+
+    app.include_router(api_router)
+
+    assets = FRONTEND_DIST / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="frontend-assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def react_app(path: str, request: Request):
+        if path.startswith("api/"):
+            return _error(request, 404, "not_found", "API route was not found.")
+        requested = FRONTEND_DIST / path
+        if path and requested.is_file() and FRONTEND_DIST in requested.resolve().parents:
+            return FileResponse(requested)
+        index = FRONTEND_DIST / "index.html"
+        if index.is_file():
+            return FileResponse(index)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "frontend_not_built",
+                    "message": "Run npm install and npm run build in musicsync/frontend.",
+                    "details": None,
+                    "request_id": None,
+                }
+            },
+        )
+
+    return app
+
+
+app = create_app()

@@ -1,0 +1,513 @@
+from __future__ import annotations
+
+from pathlib import Path
+from urllib.parse import quote, urlparse
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
+
+from music_library.database import (
+    add_pending_track,
+    add_tidal_liked_track,
+    associate_tidal_tracks_with_watched_mix,
+    pending_tracks,
+    pending_track,
+    delete_pending_track,
+    delete_watched_mix,
+    event_links,
+    save_event_links,
+    resolve_pending_track,
+    replace_tidal_track_dimensions,
+    tidal_dimensions_for_tracks,
+    tidal_indexed_playlists,
+    save_watched_mix,
+    save_setlist_tidal_url,
+    save_setlist_youtube_url,
+    watched_mix,
+    watched_mixes,
+    toggle_tidal_track_dimension,
+)
+from music_library.dimensions import DIMENSION_LABELS, DIMENSION_MAX_VALUES, DIMENSION_VALUES
+from music_tools.mixes.service import (
+    cover_for,
+    discover_mixes,
+    fetch_youtube_metadata,
+    mix_for,
+    youtube_thumbnail_url,
+    youtube_video_id,
+)
+
+from ..schemas import (
+    CollectionDescriptor,
+    DimensionUpdate,
+    DimensionUpdateResponse,
+    DimensionToggle,
+    EventMediaUpdate,
+    MixUrlsUpdate,
+    NavigationGroup,
+    NavigationItem,
+    NavigationResponse,
+    PlaylistAction,
+    PlaylistActionResponse,
+    TrackPage,
+    WatchedMixAssociation,
+    WatchedMixCreate,
+    WatchedMixUpdate,
+    TracklistLikeRequest,
+    TracklistParseRequest,
+    TracklistWatchRequest,
+    PendingLikeRequest,
+)
+from ..services.library import CollectionNotFound, collection_page, descriptor
+from ..services.actions import TrackActionError, mutate_playlist_tracks
+from music_tools.watched_mixes.tracklist import parse_tracklist
+
+
+router = APIRouter(tags=["library"])
+
+
+def _path(prefix: str, value: str) -> str:
+    return f"/{prefix}/{quote(str(value), safe='')}"
+
+
+def _web_url(value: str) -> str:
+    url = str(value or "").strip()
+    parsed = urlparse(url)
+    return url if parsed.scheme in {"http", "https"} and parsed.netloc else ""
+
+
+@router.get("/navigation", response_model=NavigationResponse)
+def navigation() -> NavigationResponse:
+    tools = [
+        NavigationItem(id="playlist-sync", label="Playlist sync", path="/", kind="tool", icon="⇄"),
+        NavigationItem(id="liked", label="Liked tracks", path="/liked-tracks", kind="tool", icon="♥"),
+        NavigationItem(id="search", label="Global search", path="/search", kind="tool", icon="⌕"),
+        NavigationItem(id="settings", label="Settings", path="/settings", kind="tool", icon="⚙"),
+    ]
+    indexed = tidal_indexed_playlists()
+    groups: list[NavigationGroup] = []
+    for kind, label, prefix in (
+        ("playlist", "Playlists", "playlists"),
+        ("event", "Events", "events"),
+        ("source", "Sources", "sources"),
+    ):
+        groups.append(
+            NavigationGroup(
+                id=f"{kind}s",
+                label=label,
+                items=[
+                    NavigationItem(
+                        id=str(item["id"]),
+                        label=str(item.get("name") or item["id"]),
+                        path=_path(prefix, str(item["id"])),
+                        kind=kind,
+                        icon="♫",
+                    )
+                    for item in indexed
+                    if str(item.get("collection_type") or "playlist") == kind
+                ],
+            )
+        )
+    groups.append(
+        NavigationGroup(
+            id="my-mixes",
+            label="My mixes",
+            items=[
+                NavigationItem(
+                    id=mix.folder_name,
+                    label=mix.folder_name,
+                    path=_path("mixes", mix.folder_name),
+                    kind="setlist",
+                    icon="♪",
+                )
+                for mix in discover_mixes()
+            ],
+        )
+    )
+    watched_items = [
+        NavigationItem(id="add", label="Add mix", path="/watched-mixes", kind="watched_mix_add", icon="+"),
+        NavigationItem(id="pending", label="Pending tracks", path="/watched-mixes/pending", kind="pending", icon="▷"),
+    ]
+    watched_items.extend(
+        NavigationItem(
+            id=str(item["video_id"]),
+            label=str(item.get("title") or item["video_id"]),
+            path=_path("watched-mixes", str(item["video_id"])),
+            kind="watched_mix",
+            icon="▶",
+        )
+        for item in watched_mixes()
+    )
+    groups.append(NavigationGroup(id="watched-mixes", label="Watched mixes", items=watched_items))
+    return NavigationResponse(tools=tools, groups=groups)
+
+
+@router.get("/collections/{kind}/{collection_id}", response_model=CollectionDescriptor)
+def collection(kind: str, collection_id: str) -> CollectionDescriptor:
+    try:
+        return CollectionDescriptor.model_validate(descriptor(kind, collection_id))
+    except CollectionNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/events/{playlist_id}/media")
+def event_media(playlist_id: str) -> dict[str, str]:
+    """Read locally stored event links; never fetch Concert Archives here."""
+    try:
+        event = descriptor("event", playlist_id)
+    except CollectionNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    links = event_links(playlist_id)
+    youtube_url = str(links.get("youtube_url") or "")
+    return {
+        "event_name": event["name"],
+        "youtube_url": youtube_url,
+        "concert_archives_url": str(links.get("concert_archives_url") or ""),
+        "thumbnail_url": youtube_thumbnail_url(youtube_url),
+        "updated_at": str(links.get("updated_at") or ""),
+    }
+
+
+@router.put("/events/{playlist_id}/media")
+def save_event_media(playlist_id: str, body: EventMediaUpdate) -> dict[str, str]:
+    """Save user-provided event references without fetching either site."""
+    try:
+        event = descriptor("event", playlist_id)
+    except CollectionNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    youtube_url = _web_url(body.youtube_url)
+    concert_url = _web_url(body.concert_archives_url)
+    if body.youtube_url.strip() and not youtube_url:
+        raise HTTPException(status_code=422, detail="YouTube must be a valid http(s) URL")
+    if body.concert_archives_url.strip() and not concert_url:
+        raise HTTPException(status_code=422, detail="Concert Archives must be a valid http(s) URL")
+    if youtube_url and not youtube_video_id(youtube_url):
+        raise HTTPException(status_code=422, detail="Enter a valid YouTube video URL")
+    save_event_links(playlist_id, youtube_url, concert_url)
+    links = event_links(playlist_id)
+    return {
+        "event_name": event["name"],
+        "youtube_url": str(links.get("youtube_url") or ""),
+        "concert_archives_url": str(links.get("concert_archives_url") or ""),
+        "thumbnail_url": youtube_thumbnail_url(str(links.get("youtube_url") or "")),
+        "updated_at": str(links.get("updated_at") or ""),
+    }
+
+
+@router.get("/collections/{kind}/{collection_id}/tracks", response_model=TrackPage)
+def tracks(
+    kind: str,
+    collection_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    sort_field: str = "",
+    sort_direction: str = "",
+    q: str = "",
+    artist: list[str] = Query(default=[]),
+    key: list[str] = Query(default=[]),
+    rating: list[str] = Query(default=[]),
+    tag: list[str] = Query(default=[]),
+    bpm_min: float | None = None,
+    bpm_max: float | None = None,
+    collection_type: list[str] = Query(default=[]),
+) -> TrackPage:
+    try:
+        payload = collection_page(
+            kind,
+            collection_id,
+            offset=offset,
+            limit=limit,
+            sort_field=sort_field,
+            sort_direction=sort_direction,
+            query=q,
+            artists=artist,
+            keys=key,
+            ratings=rating,
+            tags=tag,
+            bpm_min=bpm_min,
+            bpm_max=bpm_max,
+            collection_types=collection_type,
+        )
+    except CollectionNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return TrackPage.model_validate(payload)
+
+
+@router.get("/dimensions")
+def dimensions() -> dict[str, object]:
+    return {
+        "values": DIMENSION_VALUES,
+        "labels": DIMENSION_LABELS,
+        "max_values": DIMENSION_MAX_VALUES,
+    }
+
+
+@router.put("/tracks/dimensions", response_model=DimensionUpdateResponse)
+def update_dimensions(body: DimensionUpdate) -> DimensionUpdateResponse:
+    if body.dimension not in DIMENSION_VALUES:
+        raise HTTPException(status_code=422, detail="Unknown dimension")
+    allowed = set(DIMENSION_VALUES[body.dimension])
+    if any(value not in allowed for value in body.values):
+        raise HTTPException(status_code=422, detail="Invalid dimension value")
+    maximum = DIMENSION_MAX_VALUES.get(body.dimension)
+    if maximum and len(dict.fromkeys(body.values)) > maximum:
+        raise HTTPException(status_code=422, detail=f"This dimension allows at most {maximum} value(s)")
+    for track_id in dict.fromkeys(body.track_ids):
+        replace_tidal_track_dimensions(track_id, {body.dimension: body.values})
+    stored = tidal_dimensions_for_tracks(body.track_ids)
+    return DimensionUpdateResponse(updated=stored)
+
+
+@router.post("/tracks/dimensions/toggle", response_model=DimensionUpdateResponse)
+def toggle_dimensions(body: DimensionToggle) -> DimensionUpdateResponse:
+    if body.dimension not in DIMENSION_VALUES or body.value not in DIMENSION_VALUES[body.dimension]:
+        raise HTTPException(status_code=422, detail="Invalid dimension value")
+    current = tidal_dimensions_for_tracks(body.track_ids)
+    multiple = DIMENSION_MAX_VALUES.get(body.dimension, 999) != 1
+    for track_id in dict.fromkeys(body.track_ids):
+        values = current.get(track_id, {}).get(body.dimension, [])
+        should_toggle = (body.enable and body.value not in values) or (not body.enable and body.value in values)
+        if should_toggle:
+            toggle_tidal_track_dimension(track_id, body.dimension, body.value, multiple=multiple)
+    return DimensionUpdateResponse(updated=tidal_dimensions_for_tracks(body.track_ids))
+
+
+@router.get("/playlist-options")
+def playlist_options() -> list[dict[str, str]]:
+    return [
+        {
+            "id": str(item.get("id") or ""),
+            "name": str(item.get("name") or item.get("id") or ""),
+            "collection_type": str(item.get("collection_type") or "playlist"),
+        }
+        for item in tidal_indexed_playlists()
+    ]
+
+
+@router.post("/tracks/playlist-action", response_model=PlaylistActionResponse)
+def playlist_action(body: PlaylistAction) -> PlaylistActionResponse:
+    try:
+        result = mutate_playlist_tracks(
+            body.action,
+            body.track_ids,
+            body.playlist_id,
+            body.source_playlist_id,
+        )
+    except TrackActionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return PlaylistActionResponse.model_validate(result)
+
+
+@router.post("/tracks/associate-watched-mix")
+def associate_watched_mix(body: WatchedMixAssociation) -> dict[str, object]:
+    if not watched_mix(body.video_id):
+        raise HTTPException(status_code=404, detail="Watched mix was not found")
+    track_ids = list(dict.fromkeys(body.track_ids))
+    added = associate_tidal_tracks_with_watched_mix(body.video_id, track_ids)
+    return {"added": added, "selected": len(track_ids)}
+
+
+@router.get("/watched-mixes")
+def watched_mix_list() -> list[dict[str, str]]:
+    return watched_mixes()
+
+
+@router.post("/watched-mixes", status_code=201)
+def create_watched_mix(body: WatchedMixCreate) -> dict[str, str]:
+    video_id = youtube_video_id(body.youtube_url)
+    if not video_id:
+        raise HTTPException(status_code=422, detail="Enter a valid YouTube video URL")
+    metadata = fetch_youtube_metadata(body.youtube_url)
+    return save_watched_mix(
+        video_id,
+        body.youtube_url,
+        title=metadata.title,
+        channel_name=metadata.channel_name,
+        upload_date=metadata.upload_date,
+    )
+
+
+@router.get("/watched-mixes/{video_id}")
+def watched_mix_detail(video_id: str) -> dict[str, object]:
+    record = watched_mix(video_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Watched mix was not found")
+    # The YouTube ID is the durable identity for a watched mix. Build the
+    # canonical URL from it so old/short/tracking-heavy stored URLs cannot stop
+    # live metadata or thumbnail loading.
+    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+    metadata = fetch_youtube_metadata(canonical_url)
+    return {
+        **record,
+        "youtube_url": canonical_url,
+        "thumbnail_url": youtube_thumbnail_url(canonical_url),
+        "live_title": metadata.title,
+        "live_channel_name": metadata.channel_name,
+        "live_view_count": metadata.view_count,
+        "live_upload_date": metadata.upload_date,
+        "live_metadata_error": metadata.error,
+    }
+
+
+@router.patch("/watched-mixes/{video_id}")
+def update_watched_mix(video_id: str, body: WatchedMixUpdate) -> dict[str, str]:
+    record = watched_mix(video_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Watched mix was not found")
+    return save_watched_mix(
+        video_id,
+        str(record["youtube_url"]),
+        title=body.title,
+        channel_name=body.channel_name,
+        upload_date=body.upload_date,
+    )
+
+
+@router.delete("/watched-mixes/{video_id}", status_code=204)
+def remove_watched_mix(video_id: str) -> None:
+    if not delete_watched_mix(video_id):
+        raise HTTPException(status_code=404, detail="Watched mix was not found")
+
+
+@router.post("/watched-mixes/{video_id}/tracklist/parse")
+def parse_watched_mix_tracklist(video_id: str, body: TracklistParseRequest) -> dict[str, object]:
+    if not watched_mix(video_id):
+        raise HTTPException(status_code=404, detail="Watched mix was not found")
+    rows = parse_tracklist(body.text, body.order)
+    searchable = sum(row.get("status") not in {"invalid", "unresolved"} for row in rows)
+    return {"rows": rows, "searchable": searchable}
+
+
+@router.post("/watched-mixes/{video_id}/tracklist/like")
+def like_watched_mix_track(video_id: str, body: TracklistLikeRequest) -> dict[str, object]:
+    if not watched_mix(video_id):
+        raise HTTPException(status_code=404, detail="Watched mix was not found")
+    candidate = dict(body.candidate)
+    track_id = str(candidate.get("id") or "").strip()
+    if not track_id:
+        raise HTTPException(status_code=422, detail="Choose a valid TIDAL candidate")
+    try:
+        session = engine.tidal_client(interactive=False)
+        engine._call(
+            "tidal",
+            "favorite_track_from_watched_mix",
+            lambda: session.user.favorites.add_track(track_id),
+            track_id=track_id,
+            watched_mix=video_id,
+        )
+        cached = add_tidal_liked_track(str(session.user.id), candidate)
+        associated = associate_tidal_tracks_with_watched_mix(video_id, [track_id])
+    except Exception as exc:
+        engine.LOGGER.exception("api.watched_mix like_failed track_id=%s", track_id)
+        raise HTTPException(status_code=409, detail="TIDAL could not like the selected track") from exc
+    return {"track_id": track_id, "cached": cached, "associated": bool(associated)}
+
+
+@router.post("/watched-mixes/{video_id}/tracklist/watch")
+def watch_watched_mix_track(video_id: str, body: TracklistWatchRequest) -> dict[str, object]:
+    if not watched_mix(video_id):
+        raise HTTPException(status_code=404, detail="Watched mix was not found")
+    pending, added = add_pending_track(
+        video_id,
+        body.artist,
+        body.title,
+        mix_position=body.timestamp,
+        raw_line=body.raw_line,
+    )
+    return {"pending": pending, "added": added}
+
+
+@router.get("/pending-tracks")
+def pending_track_list() -> list[dict[str, object]]:
+    return pending_tracks()
+
+
+@router.post("/pending-tracks/{pending_id}/like")
+def like_pending_track(pending_id: int, body: PendingLikeRequest) -> dict[str, object]:
+    record = pending_track(pending_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Pending track was not found")
+    candidate = next(
+        (item for item in record.get("candidates", []) if str(item.get("id") or "") == body.track_id),
+        None,
+    )
+    if not candidate:
+        raise HTTPException(status_code=422, detail="Choose a valid cached TIDAL candidate")
+    try:
+        session = engine.tidal_client(interactive=False)
+        engine._call(
+            "tidal",
+            "favorite_pending_track",
+            lambda: session.user.favorites.add_track(body.track_id),
+            track_id=body.track_id,
+            watched_mix=record.get("video_id", ""),
+        )
+        add_tidal_liked_track(str(session.user.id), candidate)
+        associate_tidal_tracks_with_watched_mix(str(record["video_id"]), [body.track_id])
+        resolve_pending_track(pending_id)
+    except Exception as exc:
+        engine.LOGGER.exception("api.pending_track like_failed pending_id=%s", pending_id)
+        raise HTTPException(status_code=409, detail="TIDAL could not like the pending track") from exc
+    return {"resolved": pending_id, "track_id": body.track_id}
+
+
+@router.delete("/pending-tracks/{pending_id}", status_code=204)
+def remove_pending_track(pending_id: int) -> None:
+    if not pending_track(pending_id):
+        raise HTTPException(status_code=404, detail="Pending track was not found")
+    delete_pending_track(pending_id)
+
+
+@router.get("/mixes")
+def mixes() -> list[dict[str, object]]:
+    return [
+        {
+            "folder_name": mix.folder_name,
+            "youtube_url": mix.youtube_url,
+            "tidal_url": mix.tidal_url,
+            "tidal_playlist_id": mix.tidal_playlist_id,
+            "tidal_playlist_name": mix.tidal_playlist_name,
+            "has_cover": mix.cover_path is not None,
+            "cover_url": _path("api/v1/mixes", mix.folder_name) + "/cover" if mix.cover_path else youtube_thumbnail_url(mix.youtube_url),
+        }
+        for mix in discover_mixes()
+    ]
+
+
+@router.get("/mixes/{folder_name}")
+def mix_detail(folder_name: str) -> dict[str, object]:
+    mix = mix_for(folder_name)
+    if mix is None:
+        raise HTTPException(status_code=404, detail="Mix was not found")
+    metadata = fetch_youtube_metadata(mix.youtube_url) if mix.youtube_url else None
+    return {
+        "folder_name": mix.folder_name,
+        "youtube_url": mix.youtube_url,
+        "tidal_url": mix.tidal_url,
+        "tidal_playlist_name": mix.tidal_playlist_name,
+        "cover_url": _path("api/v1/mixes", mix.folder_name) + "/cover" if mix.cover_path else youtube_thumbnail_url(mix.youtube_url),
+        "youtube_title": metadata.title if metadata else "",
+        "youtube_channel": metadata.channel_name if metadata else "",
+        "youtube_views": metadata.view_count if metadata and metadata.view_count is not None else None,
+        "youtube_upload_date": metadata.upload_date if metadata else "",
+        "youtube_metadata_error": metadata.error if metadata else "",
+    }
+
+
+@router.put("/mixes/{folder_name}/urls")
+def save_mix_urls(folder_name: str, body: MixUrlsUpdate) -> dict[str, object]:
+    if mix_for(folder_name) is None:
+        raise HTTPException(status_code=404, detail="Mix was not found")
+    if body.youtube_url.strip() and not youtube_video_id(body.youtube_url):
+        raise HTTPException(status_code=422, detail="Enter a valid YouTube video URL")
+    save_setlist_youtube_url(folder_name, body.youtube_url)
+    save_setlist_tidal_url(folder_name, body.tidal_url)
+    return mix_detail(folder_name)
+
+
+@router.get("/mixes/{folder_name}/cover", response_class=FileResponse)
+def mix_cover(folder_name: str):
+    path: Path | None = cover_for(folder_name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Mix cover was not found")
+    return FileResponse(path, media_type="image/png")

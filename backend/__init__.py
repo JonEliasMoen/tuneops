@@ -1,0 +1,1 @@
+"""MusicSync FastAPI backend package."""

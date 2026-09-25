@@ -7,3 +7,6 @@ __pycache__
 *.sqlite3-wal
 *.sqlite3.*_backup
 *.sqlite3.*.backup
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
