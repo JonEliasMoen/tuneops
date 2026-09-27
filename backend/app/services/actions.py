@@ -11,10 +11,13 @@ from typing import Literal
 
 import main as engine
 from music_library.database import (
+    add_tidal_liked_track,
     add_tidal_playlist_membership,
     remove_tidal_playlist_membership,
     tidal_indexed_playlists,
+    tidal_liked_track_ids,
     tidal_playlists_for_tracks,
+    tidal_track_by_id,
 )
 
 
@@ -24,6 +27,49 @@ PlaylistActionName = Literal["add", "remove", "move"]
 
 class TrackActionError(RuntimeError):
     """A safe, user-facing action failure."""
+
+
+def like_tidal_tracks(track_ids: list[str]) -> dict[str, object]:
+    """Like cached tracks in TIDAL first, then mirror successes locally."""
+    unique_ids = [value for value in dict.fromkeys(str(item).strip() for item in track_ids) if value]
+    if not unique_ids:
+        raise TrackActionError("Select at least one track.")
+    try:
+        session = engine.tidal_client(interactive=False)
+        user_id = str(session.user.id)
+        already_liked = set(tidal_liked_track_ids(user_id))
+        changed = skipped = failed = 0
+        for track_id in unique_ids:
+            if track_id in already_liked:
+                skipped += 1
+                continue
+            record = tidal_track_by_id(track_id)
+            if record is None:
+                failed += 1
+                continue
+            try:
+                engine._call(
+                    "tidal",
+                    "favorite_track_from_react",
+                    lambda current=track_id: session.user.favorites.add_track(current),
+                    track_id=track_id,
+                )
+                add_tidal_liked_track(user_id, record)
+                changed += 1
+            except Exception:
+                failed += 1
+                LOGGER.exception("react.track_like track_failed track_id=%s", track_id)
+    except Exception as exc:
+        LOGGER.exception("react.track_like failed tracks=%d", len(unique_ids))
+        raise TrackActionError("TIDAL could not like the selected tracks. Check the log for details.") from exc
+
+    message = f"Liked {changed} track{'s' if changed != 1 else ''} in TIDAL."
+    if skipped:
+        message += f" {skipped} already liked."
+    if failed:
+        message += f" {failed} could not be liked; successful changes were kept."
+    LOGGER.info("react.track_like ok changed=%d skipped=%d failed=%d", changed, skipped, failed)
+    return {"changed": changed, "skipped": skipped, "failed": failed, "message": message}
 
 
 def _indexed_playlist(playlist_id: str) -> dict[str, object]:

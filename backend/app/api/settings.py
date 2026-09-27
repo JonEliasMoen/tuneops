@@ -19,6 +19,7 @@ PUBLIC_SETTING_KEYS = {
     "ollama_model",
     "ollama_url",
     "lastfm_username",
+    "history_top_tracks",
     "spotify_search_delay_seconds",
 }
 

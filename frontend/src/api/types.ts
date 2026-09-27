@@ -34,7 +34,7 @@ export type Track = {
 }
 
 export type Collection = {
-  type: 'liked' | 'playlist' | 'event' | 'source' | 'setlist' | 'watched_mix' | 'artist' | 'search'
+  type: 'liked' | 'playlist' | 'event' | 'source' | 'setlist' | 'watched_mix' | 'artist' | 'search' | 'history'
   id: string
   name: string
   collection_type: string
@@ -65,6 +65,7 @@ export type NavigationItem = {
   path: string
   kind: string
   icon: string
+  children?: NavigationItem[]
 }
 
 export type Navigation = {
@@ -78,6 +79,7 @@ export type PublicSettings = {
   ollama_model: string
   ollama_url: string
   lastfm_username: string
+  history_top_tracks: number
   spotify_search_delay_seconds: number
   quick_views: Array<{ id: string; name: string; fields: string[]; default?: boolean }>
   lastfm_api_key_configured: boolean

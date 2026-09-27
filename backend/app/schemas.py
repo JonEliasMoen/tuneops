@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 CollectionType = Literal[
-    "liked", "playlist", "event", "source", "setlist", "watched_mix", "artist", "search"
+    "liked", "playlist", "event", "source", "setlist", "watched_mix", "artist", "search", "history"
 ]
 
 
@@ -41,6 +41,7 @@ class NavigationItem(BaseModel):
     path: str
     kind: str
     icon: str = ""
+    children: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class NavigationGroup(BaseModel):
@@ -118,6 +119,17 @@ class PlaylistActionResponse(BaseModel):
     message: str
 
 
+class LikeTracksRequest(BaseModel):
+    track_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class LikeTracksResponse(BaseModel):
+    changed: int
+    skipped: int
+    failed: int = 0
+    message: str
+
+
 class WatchedMixAssociation(BaseModel):
     track_ids: list[str] = Field(min_length=1, max_length=500)
     video_id: str = Field(min_length=1)
@@ -133,6 +145,7 @@ class PublicSettings(BaseModel):
     ollama_model: str = "qwen3:4b"
     ollama_url: str = "http://127.0.0.1:11434"
     lastfm_username: str = ""
+    history_top_tracks: int = Field(default=20, ge=1, le=100)
     spotify_search_delay_seconds: float = 0.75
     quick_views: list[dict[str, Any]] = Field(default_factory=list)
     lastfm_api_key_configured: bool = False
@@ -144,6 +157,7 @@ class SettingsPatch(BaseModel):
     ollama_model: str | None = None
     ollama_url: str | None = None
     lastfm_username: str | None = None
+    history_top_tracks: int | None = Field(default=None, ge=1, le=100)
     spotify_search_delay_seconds: float | None = Field(default=None, ge=0, le=30)
     quick_views: list[dict[str, Any]] | None = None
 

@@ -696,6 +696,152 @@ def lastfm_track_stats(
     }
 
 
+def lastfm_history_months(
+    username: str,
+    minimum_tracks: int = 20,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Return months containing at least the requested distinct matched tracks."""
+    if not str(username or "").strip():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT strftime('%Y', played_at, 'unixepoch', 'localtime') AS year,
+                   strftime('%m', played_at, 'unixepoch', 'localtime') AS month,
+                   COUNT(DISTINCT tidal_track_id) AS track_count,
+                   COUNT(*) AS play_count
+            FROM lastfm_scrobbles
+            WHERE username=? AND tidal_track_id IS NOT NULL
+            GROUP BY year, month
+            HAVING COUNT(DISTINCT tidal_track_id) >= ?
+            ORDER BY year DESC, month DESC
+            """,
+            (str(username).strip().casefold(), max(1, int(minimum_tracks))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def lastfm_history_years(
+    username: str,
+    minimum_tracks: int = 20,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Return years containing at least the requested distinct matched tracks."""
+    if not str(username or "").strip():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT strftime('%Y', played_at, 'unixepoch', 'localtime') AS year,
+                   COUNT(DISTINCT tidal_track_id) AS track_count,
+                   COUNT(*) AS play_count
+            FROM lastfm_scrobbles
+            WHERE username=? AND tidal_track_id IS NOT NULL
+            GROUP BY year
+            HAVING COUNT(DISTINCT tidal_track_id) >= ?
+            ORDER BY year DESC
+            """,
+            (str(username).strip().casefold(), max(1, int(minimum_tracks))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def lastfm_month_top_tracks(
+    username: str,
+    year: int,
+    month: int,
+    limit: int = 20,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Return the most-played matched TIDAL tracks for one local calendar month."""
+    if not str(username or "").strip() or month < 1 or month > 12:
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT t.provider_track_id AS id, t.title, t.artist, t.remix,
+                   t.album, t.album_art_url, t.duration_seconds, t.bpm,
+                   t.musical_key, t.key_scale, t.release_year AS year, t.isrc,
+                   COUNT(*) AS play_count, MAX(ls.played_at) AS last_played
+            FROM lastfm_scrobbles ls
+            JOIN tracks t ON t.provider='tidal'
+                         AND t.provider_track_id=ls.tidal_track_id
+            WHERE ls.username=?
+              AND strftime('%Y', ls.played_at, 'unixepoch', 'localtime')=?
+              AND strftime('%m', ls.played_at, 'unixepoch', 'localtime')=?
+            GROUP BY ls.tidal_track_id
+            ORDER BY play_count DESC, last_played DESC, t.title COLLATE NOCASE
+            LIMIT ?
+            """,
+            (str(username).strip().casefold(), f"{int(year):04d}", f"{int(month):02d}", max(1, int(limit))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def lastfm_year_top_tracks(
+    username: str,
+    year: int,
+    limit: int = 20,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Return the most-played matched TIDAL tracks for one local calendar year."""
+    if not str(username or "").strip():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT t.provider_track_id AS id, t.title, t.artist, t.remix,
+                   t.album, t.album_art_url, t.duration_seconds, t.bpm,
+                   t.musical_key, t.key_scale, t.release_year AS year, t.isrc,
+                   COUNT(*) AS play_count, MAX(ls.played_at) AS last_played
+            FROM lastfm_scrobbles ls
+            JOIN tracks t ON t.provider='tidal'
+                         AND t.provider_track_id=ls.tidal_track_id
+            WHERE ls.username=?
+              AND strftime('%Y', ls.played_at, 'unixepoch', 'localtime')=?
+            GROUP BY ls.tidal_track_id
+            ORDER BY play_count DESC, last_played DESC, t.title COLLATE NOCASE
+            LIMIT ?
+            """,
+            (str(username).strip().casefold(), f"{int(year):04d}", max(1, int(limit))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def lastfm_all_time_top_tracks(
+    username: str,
+    limit: int = 20,
+    path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Return the most-played matched TIDAL tracks across all cached history."""
+    if not str(username or "").strip():
+        return []
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT t.provider_track_id AS id, t.title, t.artist, t.remix,
+                   t.album, t.album_art_url, t.duration_seconds, t.bpm,
+                   t.musical_key, t.key_scale, t.release_year AS year, t.isrc,
+                   COUNT(*) AS play_count, MAX(ls.played_at) AS last_played
+            FROM lastfm_scrobbles ls
+            JOIN tracks t ON t.provider='tidal'
+                         AND t.provider_track_id=ls.tidal_track_id
+            WHERE ls.username=?
+            GROUP BY ls.tidal_track_id
+            ORDER BY play_count DESC, last_played DESC, t.title COLLATE NOCASE
+            LIMIT ?
+            """,
+            (str(username).strip().casefold(), max(1, int(limit))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def lastfm_import_summary(
     username: str, path: Path = DATABASE_PATH
 ) -> dict[str, Any]:
@@ -1704,6 +1850,26 @@ def tidal_liked_track_ids(
             (str(user_id),),
         ).fetchall()
     return [str(row["provider_track_id"]) for row in rows]
+
+
+def tidal_track_by_id(
+    track_id: str,
+    path: Path = DATABASE_PATH,
+) -> dict[str, Any] | None:
+    """Return one cached canonical TIDAL track record."""
+    initialize(path)
+    with connect(path) as connection:
+        row = connection.execute(
+            """
+            SELECT provider_track_id AS id, title, artist, remix, album,
+                   album_art_url, duration_seconds, bpm, musical_key,
+                   key_scale, release_year AS year, isrc
+            FROM tracks
+            WHERE provider='tidal' AND provider_track_id=?
+            """,
+            (str(track_id),),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def merge_tidal_liked_tracks_prefix(

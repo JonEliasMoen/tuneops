@@ -350,11 +350,17 @@
             "title": "A Gira (with Emanuel Satie, Maga, Sean Doron, Tim Engelhardt & Scenarios) - Remix",
             "artist": "unfazed, Emanuel Satie, Maga, Sean Doron, Scenarios, Tim Engelhardt",
             "isrc": "NLZ542600201"
+          },
+          {
+            "key": "isrc:USRC11702811",
+            "title": "Better On Me (feat. Ty Dolla $ign) - Joe Maz Remix",
+            "artist": "Pitbull, Ty Dolla $ign, Joe Maz",
+            "isrc": "USRC11702811"
           }
         ]
       },
-      "source_version": "AAAAiHf+GeYB2w6eMX06ydJHvaFdjVPY",
-      "last_sync": "2026-09-24T19:40:57.828580+00:00",
+      "source_version": "AAAAijhM3MPWmil37jAf5DHQLIbhMm2h",
+      "last_sync": "2026-09-27T13:29:55.754885+00:00",
       "collection_type": "source"
     },
     {
@@ -374,8 +380,8 @@
           }
         ]
       },
-      "source_version": "4735e4d5cafeffc9fa38ce236d7917d11928ad719910003f185552b05453de35",
-      "last_sync": "2026-09-25T15:49:51.634290+00:00",
+      "source_version": "19c17b5c3bfd2c7046c74eff41809d5de39a89d5836be4c19fe7c6a76642b0e7",
+      "last_sync": "2026-09-27T17:47:28.893731+00:00",
       "collection_type": "playlist"
     },
     {
@@ -385,8 +391,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/ec9db1ff-3135-4dc7-bd56-9d660919ed3a",
       "tidal_name": "",
-      "source_version": "2026-09-23 16:19:25.067000+00:00",
-      "last_sync": "2026-09-24T15:17:23.751746+00:00",
+      "source_version": "2026-09-26 22:53:14.971000+00:00",
+      "last_sync": "2026-09-27T13:30:09.434558+00:00",
       "collection_type": "playlist"
     },
     {
@@ -407,8 +413,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/81b04eb5-f92f-46db-ac51-3d8b9947351c",
       "tidal_name": "",
-      "source_version": "2026-09-20 19:43:55.299000+00:00",
-      "last_sync": "2026-09-20T21:28:48.317922+00:00",
+      "source_version": "2026-09-26 23:12:52.645000+00:00",
+      "last_sync": "2026-09-27T13:30:10.489328+00:00",
       "collection_type": "playlist"
     },
     {
@@ -418,8 +424,8 @@
       "spotify": "1b21mY2Y9lRY5OPu0FtYXv",
       "tidal": "https://tidal.com/playlist/409c9a77-9854-4036-8d07-0b9e96e04f0e",
       "tidal_name": "",
-      "source_version": "0eff1ac5c6e39c532882c03e0eaec1aaf41723bdf9aa532349e0516183c9221c",
-      "last_sync": "2026-09-25T15:49:55.447422+00:00",
+      "source_version": "b024449582cacc56ad656d6f02b8394632a41438e9d768bbfeb5da5ca114cee0",
+      "last_sync": "2026-09-27T17:47:32.324671+00:00",
       "collection_type": "playlist",
       "unmatched": {
         "tidal_to_spotify": []
@@ -432,8 +438,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/e873d913-f9b7-4425-bda4-186ba4b40957",
       "tidal_name": "",
-      "source_version": "2026-09-21 18:59:10.325000+00:00",
-      "last_sync": "2026-09-23T15:48:25.588784+00:00",
+      "source_version": "2026-09-26 23:12:03.784000+00:00",
+      "last_sync": "2026-09-27T13:30:11.487741+00:00",
       "collection_type": "playlist"
     },
     {
@@ -477,8 +483,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/ab3aa10e-25bf-4cd2-86c0-49feca0f1e1b",
       "tidal_name": "",
-      "source_version": "2026-09-23 15:48:50.039000+00:00",
-      "last_sync": "2026-09-23T15:48:58.451406+00:00"
+      "source_version": "2026-09-26 10:55:56.004000+00:00",
+      "last_sync": "2026-09-26T11:02:19.792597+00:00"
     },
     {
       "enabled": true,
@@ -493,6 +499,27 @@
       },
       "source_version": "c6791e648f66418d24be42c2c34fca596e2146c7c9e492399684658433a4b523",
       "last_sync": "2026-09-24T19:41:07.930497+00:00"
+    },
+    {
+      "enabled": true,
+      "name": "tech house future house music",
+      "direction": "spotify_to_tidal",
+      "collection_type": "source",
+      "spotify": "https://open.spotify.com/playlist/1xvSSULt9fYBe1zY4HQcRf?si=7f5c8e6c54e4457f&pt=0c6a39b346e8e1e78428bc34fa4238f3",
+      "tidal": "235a4a91-d97b-44bb-856e-e84f406b8ee3",
+      "tidal_name": "Tech house - future house music",
+      "unmatched": {
+        "spotify_to_tidal": [
+          {
+            "key": "isrc:DEZC62696254",
+            "title": "THE PRICE - Radio Mix",
+            "artist": "PAJANE",
+            "isrc": "DEZC62696254"
+          }
+        ]
+      },
+      "source_version": "AAAAAx2v3J4+wR1PP777oWEGBV7d6zee",
+      "last_sync": "2026-09-25T20:17:24.495492+00:00"
     }
   ],
   "quick_views": [

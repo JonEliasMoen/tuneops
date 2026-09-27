@@ -70,6 +70,10 @@ a { color: inherit; }
 .nav-children { display: grid; gap: 2px; }
 .nav-child { padding-left: 20px; font-size: 13px; }
 .nav-child span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-nested { display: grid; gap: 2px; }
+.nav-nested-parent { width: 100%; padding-left: 20px; }
+.nav-grandchildren { display: grid; gap: 2px; }
+.nav-grandchild { padding-left: 38px; }
 .sidebar-error { padding: 8px; color: var(--danger); font-size: 12px; }
 .page-content { min-width: 0; padding: 24px 28px 40px; background: var(--panel); }
 
@@ -106,6 +110,8 @@ a { color: inherit; }
 .quiet-link { border: 1px solid var(--line); background: var(--panel-3); color: var(--text); }
 .mix-stopwatch { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--panel) 94%, black); }
 .mix-stopwatch-time { min-width: 92px; color: var(--text); font: 700 20px ui-monospace, SFMono-Regular, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.stopwatch-start { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+.stopwatch-start input { width: 86px; padding: 7px 9px; font: 600 13px ui-monospace, SFMono-Regular, Consolas, monospace; }
 .mix-current-track { background: color-mix(in srgb, #ffd45c 18%, var(--panel)) !important; box-shadow: inset 4px 0 #ffd45c; }
 .mix-current-track td:first-child { color: #e5ab15 !important; font-weight: 700; }
 .track-status { min-height: 23px; color: var(--muted); font-size: 13px; }

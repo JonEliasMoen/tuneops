@@ -22,6 +22,13 @@ const navigation = {
         { id: 'festival', label: 'Festival', path: '/events/festival', kind: 'event', icon: '♫' },
       ],
     },
+    {
+      id: 'history', label: 'History', items: [
+        { id: '2026', label: '2026', path: '', kind: 'history_year', icon: '◷', children: [
+          { id: '2026-09', label: 'September', path: '/history/2026-09', kind: 'history_month', icon: '◷' },
+        ] },
+      ],
+    },
   ],
 }
 
@@ -92,5 +99,20 @@ describe('Sidebar keyboard navigation', () => {
 
     await waitFor(() => expect(screen.getByTestId('route').textContent).toBe('/liked-tracks'))
     expect(sessionStorage.getItem('musicsync.react.focus-track-list')).toBe('/liked-tracks')
+  })
+
+  it('opens History, then a year, and navigates to a month', async () => {
+    const user = userEvent.setup()
+    renderSidebar()
+    const history = await screen.findByRole('button', { name: /History/ })
+    history.focus()
+    await user.keyboard('{ArrowRight}{ArrowDown}')
+
+    const year = screen.getByRole('button', { name: /2026/ })
+    expect(document.activeElement).toBe(year)
+    await user.keyboard('{ArrowRight}{ArrowDown}{Enter}')
+
+    await waitFor(() => expect(screen.getByTestId('route').textContent).toBe('/history/2026-09'))
+    expect(sessionStorage.getItem('musicsync.react.focus-track-list')).toBe('/history/2026-09')
   })
 })

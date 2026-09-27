@@ -88,6 +88,69 @@ def test_collection_length_sort_uses_duration_not_display_text(monkeypatch):
     assert [item["id"] for item in page["items"]] == ["short", "nine", "ten"]
 
 
+def test_history_collection_preserves_monthly_instead_of_all_time_play_count(monkeypatch):
+    row = _row("track", "Track", None)
+    row.update(play_count=7, last_played=1_790_000_000)
+    monkeypatch.setattr(library, "tidal_playlists_for_tracks", lambda *_: {})
+    monkeypatch.setattr(library, "tidal_setlists_for_tracks", lambda *_: {})
+    monkeypatch.setattr(library, "tidal_watched_mixes_for_tracks", lambda *_: {})
+    monkeypatch.setattr(library, "tidal_artists_for_tracks", lambda *_: {})
+    monkeypatch.setattr(library, "tidal_dimensions_for_tracks", lambda *_: {})
+    monkeypatch.setattr(library, "lastfm_track_stats", lambda *_: {"track": {"play_count": 999, "last_played": 1_800_000_000}})
+    monkeypatch.setattr(library.engine, "load_config", lambda: {"settings": {"lastfm_username": "user"}})
+
+    library._attach_related([row], {"type": "history", "id": "2026-09", "name": "September 2026"})
+
+    assert row["play_count"] == 7
+    assert row["last_played"] != ""
+
+
+def test_navigation_builds_history_from_configured_lastfm_cache(monkeypatch):
+    monkeypatch.setattr(library_api.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu", "history_top_tracks": 20}})
+    monkeypatch.setattr(library_api, "tidal_indexed_playlists", lambda: [])
+    monkeypatch.setattr(library_api, "discover_mixes", lambda: [])
+    monkeypatch.setattr(library_api, "watched_mixes", lambda: [])
+    monkeypatch.setattr(library_api, "lastfm_history_years", lambda username, limit: [
+        {"year": "2026", "track_count": 40, "play_count": 120},
+    ])
+    monkeypatch.setattr(library_api, "lastfm_history_months", lambda username, limit: [
+        {"year": "2026", "month": "09", "track_count": 25, "play_count": 80},
+    ])
+
+    result = library_api.navigation()
+
+    history = next(group for group in result.groups if group.id == "history")
+    assert history.items[0].label == "Overall"
+    assert history.items[0].path == "/history/overall"
+    assert history.items[1].label == "2026"
+    assert history.items[1].children[0]["path"] == "/history/2026-overall"
+    assert history.items[1].children[1]["path"] == "/history/2026-09"
+
+
+def test_history_overall_uses_the_configured_yearly_top_tracks(monkeypatch):
+    monkeypatch.setattr(library.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu", "history_top_tracks": 20}})
+    monkeypatch.setattr(library, "lastfm_year_top_tracks", lambda username, year, limit: [{
+        "id": "top", "title": "Top track", "artist": "Artist", "play_count": 12, "last_played": 1_790_000_000,
+    }])
+
+    rows = library._base_rows("history", "2026-overall")
+
+    assert rows[0]["id"] == "top"
+    assert rows[0]["play_count"] == 12
+
+
+def test_history_root_overall_uses_all_cached_scrobbles(monkeypatch):
+    monkeypatch.setattr(library.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu", "history_top_tracks": 20}})
+    monkeypatch.setattr(library, "lastfm_all_time_top_tracks", lambda username, limit: [{
+        "id": "forever", "title": "All-time track", "artist": "Artist", "play_count": 88, "last_played": 1_790_000_000,
+    }])
+
+    rows = library._base_rows("history", "overall")
+
+    assert rows[0]["id"] == "forever"
+    assert rows[0]["play_count"] == 88
+
+
 def test_event_media_reads_stored_links_without_fetching_concert_archives(monkeypatch):
     monkeypatch.setattr(
         library_api,
@@ -217,14 +280,12 @@ def test_watched_mix_detail_uses_video_id_for_live_youtube_media(monkeypatch):
             error="",
         ),
     )
-    monkeypatch.setattr(library_api, "youtube_thumbnail_url", lambda url: f"thumb:{url}")
-
     result = library_api.watched_mix_detail("abc123")
 
     canonical = "https://www.youtube.com/watch?v=abc123"
     assert fetched == [canonical]
     assert result["youtube_url"] == canonical
-    assert result["thumbnail_url"] == f"thumb:{canonical}"
+    assert result["thumbnail_url"] == "/api/v1/watched-mixes/abc123/cover"
     assert result["live_title"] == "Live title"
     assert result["live_channel_name"] == "Live channel"
     assert result["live_view_count"] == 42

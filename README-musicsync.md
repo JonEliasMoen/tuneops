@@ -142,3 +142,29 @@ fails.
 The TIDAL integration currently uses the unofficial `tidalapi` Python package.
 Keep the dependency updated, and expect that TIDAL service changes can
 occasionally require a package update.
+
+# Discogs metadata probe
+
+To test Discogs coverage for labels, genres, and electronic styles, generate a
+personal token under **Discogs Settings → Developers**, then add it to the local
+`.env` file:
+
+```dotenv
+DISCOGS_USER_TOKEN=your_personal_token
+```
+
+Run a small read-only sample:
+
+```powershell
+python probe_discogs.py --limit 5
+```
+
+Or probe a particular cached TIDAL track:
+
+```powershell
+python probe_discogs.py --id 107839319
+```
+
+The probe searches Discogs releases and verifies the release tracklist before
+accepting label, genre, or style metadata. It does not modify SQLite or either
+music service.

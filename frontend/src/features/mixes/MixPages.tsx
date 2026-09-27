@@ -5,9 +5,11 @@ import { api } from '../../api/client'
 import type { Job } from '../../api/types'
 import { JobStatus } from '../../components/JobStatus'
 import { TrackBrowser } from '../track-browser/TrackBrowser'
+import { MixStopwatch } from '../track-browser/MixStopwatch'
+import { loadTemporaryState, saveTemporaryState } from './watchedMixState'
 
 type Mix = { folder_name: string; youtube_url: string; tidal_url: string; tidal_playlist_name: string; cover_url: string; youtube_title?: string; youtube_channel?: string; youtube_views?: number | null; youtube_upload_date?: string; youtube_metadata_error?: string }
-type WatchedMix = { video_id: string; title: string; channel_name: string; upload_date: string; youtube_url: string; live_title?: string; live_channel_name?: string; live_view_count?: number | null; live_upload_date?: string; live_metadata_error?: string }
+type WatchedMix = { video_id: string; title: string; channel_name: string; upload_date: string; youtube_url: string; cover_url?: string; live_title?: string; live_channel_name?: string; live_view_count?: number | null; live_upload_date?: string; live_metadata_error?: string }
 type Candidate = Record<string, unknown> & { id: string; label: string; score: number }
 type Pending = { id: number; artist: string; title: string; mix_position: string; mix_title: string; channel_name: string; status: string; candidates: Candidate[] }
 type StagingRow = { row_id: number; raw_line: string; timestamp: string; artist: string; title: string; status: string; matches: Candidate[]; selected_id: string }
@@ -52,7 +54,7 @@ export function WatchedMixesPage() {
   return <section><h1>Watched mixes</h1><p>Save mixes where you discovered tracks.</p>
     <form className="add-mix" onSubmit={(event) => { event.preventDefault(); add.mutate() }}><label>YouTube mix URL<input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://youtube.com/watch?v=…" /></label><button className="primary" disabled={!url || add.isPending}>Add mix</button></form>
     {add.isError ? <div className="error-banner">{add.error.message}</div> : null}
-    <div className="media-grid">{mixes.data?.map((mix) => <Link className="media-card" to={`/watched-mixes/${encodeURIComponent(mix.video_id)}`} key={mix.video_id}><img src={`https://i.ytimg.com/vi/${mix.video_id}/hqdefault.jpg`} alt="" /><div><h2>{mix.title || 'Untitled watched mix'}</h2><p>{[mix.channel_name, mix.upload_date].filter(Boolean).join(' · ')}</p></div></Link>)}</div>
+    <div className="media-grid">{mixes.data?.map((mix) => <Link className="media-card" to={`/watched-mixes/${encodeURIComponent(mix.video_id)}`} key={mix.video_id}><img src={mix.cover_url || `/api/v1/watched-mixes/${encodeURIComponent(mix.video_id)}/cover`} alt="" /><div><h2>{mix.title || 'Untitled watched mix'}</h2><p>{[mix.channel_name, mix.upload_date].filter(Boolean).join(' · ')}</p></div></Link>)}</div>
   </section>
 }
 
@@ -94,10 +96,14 @@ export function WatchedMixDetailPage() {
   const navigate = useNavigate()
   const client = useQueryClient()
   const mix = useQuery({ queryKey: ['watched-mix', videoId], queryFn: () => api<WatchedMix & { thumbnail_url: string }>(`/watched-mixes/${encodeURIComponent(videoId)}`) })
+  const stagingKey = `musicsync.watched-mix-staging:${videoId}`
+  const initialStaging = loadTemporaryState<{ rows: StagingRow[]; order: 'artist_title' | 'title_artist'; message: string }>(stagingKey, { rows: [], order: 'artist_title', message: '' })
   const [text, setText] = useState('')
-  const [order, setOrder] = useState<'artist_title' | 'title_artist'>('artist_title')
-  const [rows, setRows] = useState<StagingRow[]>([])
-  const [message, setMessage] = useState('')
+  const [order, setOrder] = useState<'artist_title' | 'title_artist'>(initialStaging.order)
+  const [rows, setRows] = useState<StagingRow[]>(initialStaging.rows)
+  const [message, setMessage] = useState(initialStaging.message)
+  const [loadedStagingKey, setLoadedStagingKey] = useState(stagingKey)
+  const [activeStagingId, setActiveStagingId] = useState<string | null>(null)
   const [searchJobId, setSearchJobId] = useState<string | null>(null)
   const [thumbnailFailed, setThumbnailFailed] = useState(false)
   const [storedTitle, setStoredTitle] = useState('')
@@ -106,6 +112,16 @@ export function WatchedMixDetailPage() {
   useLayoutEffect(() => {
     window.scrollTo(0, 0)
   }, [videoId])
+  useEffect(() => {
+    const restored = loadTemporaryState<{ rows: StagingRow[]; order: 'artist_title' | 'title_artist'; message: string }>(stagingKey, { rows: [], order: 'artist_title', message: '' })
+    setRows(restored.rows)
+    setOrder(restored.order)
+    setMessage(restored.message)
+    setLoadedStagingKey(stagingKey)
+  }, [stagingKey])
+  useEffect(() => {
+    if (loadedStagingKey === stagingKey) saveTemporaryState(stagingKey, { rows, order, message })
+  }, [loadedStagingKey, message, order, rows, stagingKey])
   useEffect(() => {
     if (!mix.data) return
     setStoredTitle(mix.data.title || '')
@@ -186,9 +202,10 @@ export function WatchedMixDetailPage() {
       {message ? <p className="good">{message}</p> : null}
       {parse.isError || startSearch.isError || like.isError || watch.isError ? <div className="error-banner">{parse.error?.message || startSearch.error?.message || like.error?.message || watch.error?.message}</div> : null}
       <JobStatus jobId={searchJobId} />
+      {rows.some((row) => Boolean(row.timestamp)) ? <MixStopwatch rows={rows.map((row) => ({ id: String(row.row_id), mix_position: row.timestamp }))} onActiveTrackChange={setActiveStagingId} storageKey={`musicsync.stopwatch:watched-staging:${videoId}`} /> : null}
       {rows.length ? <div className="staging-table-wrap"><table className="track-table staging-table"><thead><tr><th>Time</th><th>Artist</th><th>Title</th><th>TIDAL candidate</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows.map((row) => {
         const candidate = row.matches.find((item) => String(item.id) === String(row.selected_id))
-        return <tr key={row.row_id}><td>{row.timestamp || '—'}</td><td>{row.artist || '—'}</td><td>{row.title}</td><td>{row.matches.length ? <select value={row.selected_id} onChange={(event) => selectCandidate(row.row_id, event.target.value)}>{row.matches.map((item) => <option key={String(item.id)} value={String(item.id)}>{item.label}</option>)}</select> : '—'}</td><td><span className={`status-badge ${row.status}`}>{row.status}</span></td><td><div className="button-row"><button type="button" disabled={!candidate || row.status === 'imported' || like.isPending} onClick={() => candidate && like.mutate({ row, candidate })}>Like</button><button type="button" disabled={['invalid', 'unresolved', 'watching'].includes(row.status) || watch.isPending} onClick={() => watch.mutate(row)}>Watch</button></div></td></tr>
+        return <tr key={row.row_id} className={activeStagingId === String(row.row_id) ? 'mix-current-track' : ''}><td>{row.timestamp || '—'}</td><td>{row.artist || '—'}</td><td>{row.title}</td><td>{row.matches.length ? <select value={row.selected_id} onChange={(event) => selectCandidate(row.row_id, event.target.value)}>{row.matches.map((item) => <option key={String(item.id)} value={String(item.id)}>{item.label}</option>)}</select> : '—'}</td><td><span className={`status-badge ${row.status}`}>{row.status}</span></td><td><div className="button-row"><button type="button" disabled={!candidate || row.status === 'imported' || like.isPending} onClick={() => candidate && like.mutate({ row, candidate })}>Like</button><button type="button" disabled={['invalid', 'unresolved', 'watching'].includes(row.status) || watch.isPending} onClick={() => watch.mutate(row)}>Watch</button></div></td></tr>
       })}</tbody></table></div> : null}
     </details>
     <TrackBrowser collectionType="watched_mix" collectionId={videoId} hideCollectionHeading />

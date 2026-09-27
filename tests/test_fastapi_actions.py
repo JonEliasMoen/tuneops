@@ -27,6 +27,7 @@ class FakePlaylist:
 class FakeSession:
     def __init__(self, playlists):
         self.playlists = playlists
+        self.user = type("User", (), {"id": "user-1", "favorites": type("Favorites", (), {"added": [], "add_track": lambda self, track_id: self.added.append(track_id)})()})()
 
     def playlist(self, playlist_id):
         return self.playlists[playlist_id]
@@ -93,3 +94,19 @@ def test_bulk_action_reports_partial_failures_and_keeps_successful_cache_updates
     assert result["changed"] == 1
     assert result["failed"] == 1
     assert result["skipped"] == 0
+
+
+def test_like_tracks_skips_cached_likes_and_mirrors_provider_success(monkeypatch):
+    session = FakeSession({})
+    monkeypatch.setattr(actions.engine, "tidal_client", lambda interactive=False: session)
+    monkeypatch.setattr(actions.engine, "_call", lambda _provider, _action, callback, **_context: callback())
+    monkeypatch.setattr(actions, "tidal_liked_track_ids", lambda user_id: ["already"])
+    monkeypatch.setattr(actions, "tidal_track_by_id", lambda track_id: {"id": track_id, "title": "Track", "artist": "Artist"})
+    cached = []
+    monkeypatch.setattr(actions, "add_tidal_liked_track", lambda user_id, record: cached.append((user_id, record["id"])))
+
+    result = actions.like_tidal_tracks(["already", "new", "new"])
+
+    assert session.user.favorites.added == ["new"]
+    assert cached == [("user-1", "new")]
+    assert result == {"changed": 1, "skipped": 1, "failed": 0, "message": "Liked 1 track in TIDAL. 1 already liked."}

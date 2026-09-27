@@ -1,9 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MixStopwatch, activeTrackIdAt, formatElapsed, parseSeconds } from './MixStopwatch'
 
 describe('mix stopwatch timing', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); sessionStorage.clear() })
 
   it('parses mix timestamps and formats elapsed time consistently', () => {
     expect(parseSeconds('[01:02:03.5]')).toBe(3723.5)
@@ -30,5 +30,17 @@ describe('mix stopwatch timing', () => {
 
     expect(onActiveTrackChange).toHaveBeenLastCalledWith(null)
     expect((screen.getByRole('button', { name: 'Stop' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('can start at a supplied mix timestamp', () => {
+    const onActiveTrackChange = vi.fn()
+    render(<MixStopwatch rows={[{ id: 'intro', mix_position: '00:00' }, { id: 'second', mix_position: '07:20' }]} onActiveTrackChange={onActiveTrackChange} storageKey="timer:test" />)
+
+    fireEvent.change(screen.getByLabelText('Stopwatch start time'), { target: { value: '07:20' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Set' }))
+
+    expect(screen.getByText('07:20.0')).toBeTruthy()
+    expect(onActiveTrackChange).toHaveBeenLastCalledWith('second')
+    expect(sessionStorage.getItem('timer:test')).toContain('440000')
   })
 })

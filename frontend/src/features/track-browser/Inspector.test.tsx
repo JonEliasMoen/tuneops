@@ -45,6 +45,7 @@ describe('track inspector playlist actions', () => {
         { id: 'source-1', name: 'Shazam source', collection_type: 'source' },
       ]) })
       if (url.endsWith('/watched-mixes')) return Promise.resolve({ ok: true, json: async () => [] })
+      if (url.endsWith('/tracks/like') && init?.method === 'POST') return Promise.resolve({ ok: true, json: async () => ({ message: 'Liked 1 track in TIDAL.' }) })
       if (url.endsWith('/tracks/playlist-action') && init?.method === 'POST') return Promise.resolve({ ok: true, json: async () => ({ message: 'Added 1 track.' }) })
       return Promise.reject(new Error(`Unexpected API request: ${url}`))
     }))
@@ -65,6 +66,16 @@ describe('track inspector playlist actions', () => {
     expect(screen.getByRole('button', { name: 'Normal playlist' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Festival set' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Shazam source' })).toBeTruthy()
+  })
+
+  it('likes the selected tracks in TIDAL', async () => {
+    const user = userEvent.setup()
+    renderInspector()
+    await user.click(screen.getByRole('button', { name: 'Like in TIDAL' }))
+
+    await waitFor(() => expect(screen.getByText('Liked 1 track in TIDAL.')).toBeTruthy())
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.find(([url]) => String(url).endsWith('/tracks/like'))
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ track_ids: ['track-1'] })
   })
 
   it('sends only the selected local IDs and destination when a destination is chosen', async () => {
@@ -99,12 +110,28 @@ describe('track inspector playlist actions', () => {
     )
     const actions = document.getElementById('track-actions')!
     actions.focus()
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add to playlist' }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Like in TIDAL' }))
 
-    await user.keyboard('{ArrowDown}{Enter}')
+    await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
 
     const destination = await screen.findByRole('button', { name: 'Normal playlist' })
     await waitFor(() => expect(document.activeElement).toBe(destination))
+  })
+
+  it('includes the currently open playlist as a Remove destination even when memberships hide it', async () => {
+    const user = userEvent.setup()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <Inspector track={track} selectedTracks={[track]} queryKey={['tracks']} collapsedDefault collectionType="playlist" collectionId="playlist-1" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Remove from playlist' }))
+
+    expect(await screen.findByRole('button', { name: 'Normal playlist' })).toBeTruthy()
   })
 
   it('moves Left from Actions back to the track list', async () => {

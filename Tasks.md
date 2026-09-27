@@ -5,6 +5,17 @@ Last reviewed: 2026-09-24. Dash remains the compatibility UI on port 8080.
 the existing configuration, OAuth/session caches, services, and SQLite library;
 authentication redesign is intentionally deferred.
 
+
+# MESSAGE FROM JON
+- [x] Cache watched-mix YouTube covers locally and reuse the local cover endpoint
+  in both the list and detail views.
+- [x] Allow setting the mix stopwatch start time.
+- [x] Embedded YouTube playback was tested and removed because YouTube's
+  third-party player is unreliable under the local Firefox/privacy setup.
+  Keep the cached cover and explicit **Open on YouTube** link instead.
+- [x] Retain parsed watched-mix staging rows and running stopwatch state across
+  navigation/reloads, expiring the temporary state after 24 hours.
+
 ## Done
 
 - [x] FastAPI local API, static React SPA, health/info, request IDs, sanitized
@@ -17,9 +28,12 @@ authentication redesign is intentionally deferred.
   actions, watched-mix association, Qwen job, and native TIDAL track links.
 - [x] Playlist Sync, settings, Last.fm jobs, My Mix stopwatch, Watched Mix
   tracklist staging/pending queue, and Event media links.
+- [x] Last.fm History sidebar with nested Year/Month navigation and configurable
+  monthly, yearly Overall, and all-time Overall Top X shared track-table views
+  from cached imported scrobbles.
 - [x] Existing liked/playlist cache duplicates cleaned; unique membership
   indexes now prevent overlapping cache results from returning duplicates.
-- [x] Automated checks: 34 Python tests, 15 Vitest browser-state/navigation/action/scroll/stopwatch tests,
+- [x] Automated checks: 39 Python tests, 21 Vitest browser-state/navigation/action/scroll/stopwatch tests,
   Python compilation, and React production build.
 
 ## Required before React is the default
@@ -43,7 +57,7 @@ authentication redesign is intentionally deferred.
   pagination restoration, the sidebar keyboard group/navigation contract, and
   local mocked action-menu grouping/payloads for Playlist/Event/Source targets,
   plus stopwatch parsing, active-track calculation, and stopping.
-- [ ] Add Playwright checks for bottom scrolling, Back/Forward state, deep
+- [ ] Add Playwright (SCRATCH THIS. i do not want playwright on my computer. its bloaty asf) checks for bottom scrolling, Back/Forward state, deep
   links, and light/dark contrast.
 - [ ] Manually verify keyboard navigation contract end-to-end.
 - [x] Profiled 5,000 real cached global-library rows: median SQLite/Python

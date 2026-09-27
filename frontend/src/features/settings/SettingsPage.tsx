@@ -13,7 +13,7 @@ export function SettingsPage() {
   useEffect(() => { if (settings.data) setDraft(settings.data) }, [settings.data])
   const save = useMutation({
     mutationFn: (value: PublicSettings) => api<PublicSettings>('/settings', { method: 'PATCH', body: JSON.stringify(value) }),
-    onSuccess: (value) => { client.setQueryData(['settings'], value); setDraft(value) },
+    onSuccess: (value) => { client.setQueryData(['settings'], value); setDraft(value); void client.invalidateQueries({ queryKey: ['navigation'] }) },
   })
   const startJob = useMutation({
     mutationFn: (path: string) => api<Job>(path, { method: 'POST' }),
@@ -49,6 +49,7 @@ export function SettingsPage() {
       </section>
       <section className="settings-card"><h2>Last.fm</h2>
         <label>Username<input value={draft.lastfm_username} onChange={(event) => setDraft({ ...draft, lastfm_username: event.target.value })} /></label>
+        <label>Top tracks per month<input type="number" min="1" max="100" value={draft.history_top_tracks} onChange={(event) => setDraft({ ...draft, history_top_tracks: Number(event.target.value) })} /></label>
         <p className={draft.lastfm_api_key_configured ? 'good' : 'warning'}>{draft.lastfm_api_key_configured ? 'API key configured in .env' : 'LASTFM_API_KEY is missing from .env'}</p>
         <div className="button-row"><button type="button" onClick={() => startJob.mutate('/lastfm/import')}>Import plays</button><button type="button" onClick={() => startJob.mutate('/lastfm/reconcile')}>Reconcile cached plays</button></div>
         <JobStatus jobId={jobId} />

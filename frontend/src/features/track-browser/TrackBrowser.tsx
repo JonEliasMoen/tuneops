@@ -206,7 +206,7 @@ export function TrackBrowser({ collectionType, collectionId, hideCollectionHeadi
   const columns = useMemo(() => {
     const allowed = new Set(visibleFields)
     allowed.delete('mix_position')
-    if (collectionType === 'setlist' || collectionType === 'watched_mix') allowed.add('mix_position')
+    if (collectionType === 'setlist') allowed.add('mix_position')
     return COLUMNS.filter((column) => allowed.has(column.key))
   }, [visibleFields, collectionType])
 
@@ -310,7 +310,7 @@ export function TrackBrowser({ collectionType, collectionId, hideCollectionHeadi
     {tracks.isError ? <div className="error-banner">{tracks.error.message}</div> : null}
     <div className="library-layout">
       <div className="track-list-pane">
-        {collectionType === 'setlist' ? <MixStopwatch rows={rows} onActiveTrackChange={setActiveTrackId} /> : null}
+        {collectionType === 'setlist' ? <MixStopwatch rows={rows} onActiveTrackChange={setActiveTrackId} storageKey={`musicsync.stopwatch:${collectionType}:${collectionId}`} /> : null}
         <div className="track-status">{tracks.isFetching && !rows.length ? 'Loading from SQLite…' : `${rows.length.toLocaleString()} of ${(pageInfo?.total ?? 0).toLocaleString()} tracks loaded.`}</div>
         <div className="track-table-wrap" ref={tableRef}>
           <table className="track-table">

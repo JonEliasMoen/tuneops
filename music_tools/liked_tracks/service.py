@@ -177,6 +177,11 @@ def _cached_track_row(record: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def cached_track_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Map cached provider records for non-playlist library collections."""
+    return [{**_cached_track_row(record), **{key: record[key] for key in ("play_count", "last_played") if key in record}} for record in records]
+
+
 def _date_sorted_page(
     rows: list[dict[str, Any]],
     sort: dict[str, str] | None,

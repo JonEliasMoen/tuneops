@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from calendar import month_name
 from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
+
+import main as engine
 
 from music_library.database import (
     add_pending_track,
@@ -15,6 +19,8 @@ from music_library.database import (
     delete_pending_track,
     delete_watched_mix,
     event_links,
+    lastfm_history_months,
+    lastfm_history_years,
     save_event_links,
     resolve_pending_track,
     replace_tidal_track_dimensions,
@@ -49,6 +55,8 @@ from ..schemas import (
     NavigationResponse,
     PlaylistAction,
     PlaylistActionResponse,
+    LikeTracksRequest,
+    LikeTracksResponse,
     TrackPage,
     WatchedMixAssociation,
     WatchedMixCreate,
@@ -59,11 +67,12 @@ from ..schemas import (
     PendingLikeRequest,
 )
 from ..services.library import CollectionNotFound, collection_page, descriptor
-from ..services.actions import TrackActionError, mutate_playlist_tracks
+from ..services.actions import TrackActionError, like_tidal_tracks, mutate_playlist_tracks
 from music_tools.watched_mixes.tracklist import parse_tracklist
 
 
 router = APIRouter(tags=["library"])
+WATCHED_MIX_COVER_ROOT = Path(__file__).resolve().parents[3] / ".watched_mix_covers"
 
 
 def _path(prefix: str, value: str) -> str:
@@ -74,6 +83,34 @@ def _web_url(value: str) -> str:
     url = str(value or "").strip()
     parsed = urlparse(url)
     return url if parsed.scheme in {"http", "https"} and parsed.netloc else ""
+
+
+def _watched_mix_cover_path(video_id: str) -> Path:
+    safe_id = "".join(character for character in str(video_id) if character.isalnum() or character in {"-", "_"})
+    if not safe_id or safe_id != str(video_id):
+        raise HTTPException(status_code=404, detail="Watched mix cover was not found")
+    return WATCHED_MIX_COVER_ROOT / f"{safe_id}.jpg"
+
+
+def _cache_watched_mix_cover(video_id: str) -> Path | None:
+    path = _watched_mix_cover_path(video_id)
+    if path.is_file():
+        return path
+    try:
+        request = Request(f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg", headers={"User-Agent": "MusicSync/1.0"})
+        with urlopen(request, timeout=10) as response:
+            content = response.read(5 * 1024 * 1024)
+            content_type = str(response.headers.get("Content-Type") or "")
+        if not content or not content_type.startswith("image/"):
+            return None
+        WATCHED_MIX_COVER_ROOT.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_bytes(content)
+        temporary.replace(path)
+        return path
+    except Exception:
+        engine.LOGGER.warning("watched_mix.cover_cache_failed video_id=%s", video_id, exc_info=True)
+        return None
 
 
 @router.get("/navigation", response_model=NavigationResponse)
@@ -108,6 +145,62 @@ def navigation() -> NavigationResponse:
                 ],
             )
         )
+    settings = engine.load_config().get("settings", {})
+    history_limit = max(1, min(100, int(settings.get("history_top_tracks", 20) or 20)))
+    history_username = str(settings.get("lastfm_username", "") or "")
+    history_rows = lastfm_history_months(history_username, history_limit)
+    history_years: dict[str, list[dict[str, str]]] = {
+        str(row.get("year") or ""): [{
+            "id": f"{row.get('year')}-overall",
+            "label": "Overall",
+            "path": _path("history", f"{row.get('year')}-overall"),
+            "kind": "history_year_overall",
+            "icon": "★",
+        }]
+        for row in lastfm_history_years(history_username, history_limit)
+        if str(row.get("year") or "")
+    }
+    for row in history_rows:
+        year = str(row.get("year") or "")
+        month = str(row.get("month") or "")
+        if year and month:
+            history_years.setdefault(year, [{
+                "id": f"{year}-overall", "label": "Overall",
+                "path": _path("history", f"{year}-overall"),
+                "kind": "history_year_overall", "icon": "★",
+            }]).append({
+                "id": f"{year}-{month}",
+                "label": month_name[int(month)],
+                "path": _path("history", f"{year}-{month}"),
+                "kind": "history_month",
+                "icon": "◷",
+            })
+    groups.append(
+        NavigationGroup(
+            id="history",
+            label="History",
+            items=[
+                NavigationItem(
+                    id="overall",
+                    label="Overall",
+                    path="/history/overall",
+                    kind="history_overall",
+                    icon="★",
+                ),
+                *[
+                NavigationItem(
+                    id=year,
+                    label=year,
+                    path="",
+                    kind="history_year",
+                    icon="◷",
+                    children=months,
+                )
+                for year, months in history_years.items()
+                ],
+            ],
+        )
+    )
     groups.append(
         NavigationGroup(
             id="my-mixes",
@@ -298,6 +391,15 @@ def playlist_action(body: PlaylistAction) -> PlaylistActionResponse:
     return PlaylistActionResponse.model_validate(result)
 
 
+@router.post("/tracks/like", response_model=LikeTracksResponse)
+def like_tracks(body: LikeTracksRequest) -> LikeTracksResponse:
+    try:
+        result = like_tidal_tracks(body.track_ids)
+    except TrackActionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return LikeTracksResponse.model_validate(result)
+
+
 @router.post("/tracks/associate-watched-mix")
 def associate_watched_mix(body: WatchedMixAssociation) -> dict[str, object]:
     if not watched_mix(body.video_id):
@@ -309,7 +411,10 @@ def associate_watched_mix(body: WatchedMixAssociation) -> dict[str, object]:
 
 @router.get("/watched-mixes")
 def watched_mix_list() -> list[dict[str, str]]:
-    return watched_mixes()
+    return [
+        {**item, "cover_url": f"/api/v1/watched-mixes/{quote(str(item.get('video_id') or ''), safe='')}/cover"}
+        for item in watched_mixes()
+    ]
 
 
 @router.post("/watched-mixes", status_code=201)
@@ -318,13 +423,15 @@ def create_watched_mix(body: WatchedMixCreate) -> dict[str, str]:
     if not video_id:
         raise HTTPException(status_code=422, detail="Enter a valid YouTube video URL")
     metadata = fetch_youtube_metadata(body.youtube_url)
-    return save_watched_mix(
+    saved = save_watched_mix(
         video_id,
         body.youtube_url,
         title=metadata.title,
         channel_name=metadata.channel_name,
         upload_date=metadata.upload_date,
     )
+    _cache_watched_mix_cover(video_id)
+    return {**saved, "cover_url": f"/api/v1/watched-mixes/{quote(video_id, safe='')}/cover"}
 
 
 @router.get("/watched-mixes/{video_id}")
@@ -340,13 +447,24 @@ def watched_mix_detail(video_id: str) -> dict[str, object]:
     return {
         **record,
         "youtube_url": canonical_url,
-        "thumbnail_url": youtube_thumbnail_url(canonical_url),
+        "thumbnail_url": f"/api/v1/watched-mixes/{quote(video_id, safe='')}/cover",
+        "cover_url": f"/api/v1/watched-mixes/{quote(video_id, safe='')}/cover",
         "live_title": metadata.title,
         "live_channel_name": metadata.channel_name,
         "live_view_count": metadata.view_count,
         "live_upload_date": metadata.upload_date,
         "live_metadata_error": metadata.error,
     }
+
+
+@router.get("/watched-mixes/{video_id}/cover", response_class=FileResponse)
+def watched_mix_cover(video_id: str) -> FileResponse:
+    if not watched_mix(video_id):
+        raise HTTPException(status_code=404, detail="Watched mix was not found")
+    path = _cache_watched_mix_cover(video_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="YouTube cover is unavailable")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.patch("/watched-mixes/{video_id}")
@@ -367,6 +485,10 @@ def update_watched_mix(video_id: str, body: WatchedMixUpdate) -> dict[str, str]:
 def remove_watched_mix(video_id: str) -> None:
     if not delete_watched_mix(video_id):
         raise HTTPException(status_code=404, detail="Watched mix was not found")
+    try:
+        _watched_mix_cover_path(video_id).unlink(missing_ok=True)
+    except OSError:
+        engine.LOGGER.warning("watched_mix.cover_delete_failed video_id=%s", video_id, exc_info=True)
 
 
 @router.post("/watched-mixes/{video_id}/tracklist/parse")

@@ -173,7 +173,9 @@ def import_mix_tidal_setlist(folder_name: str, body: MixTidalImportRequest) -> J
 def search_watched_mix_tracklist(video_id: str, body: TracklistSearchRequest) -> JobResponse:
     if not watched_mix(video_id):
         raise HTTPException(status_code=404, detail="Watched mix was not found")
+    settings = engine.load_config().get("settings", {})
     rows = [dict(row) for row in body.rows]
+
     def execute(progress):
         session = engine.tidal_client(interactive=False)
         delay = max(0.0, float(settings.get("tidal_search_delay_seconds", 0.35)))

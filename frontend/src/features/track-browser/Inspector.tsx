@@ -133,6 +133,17 @@ export function Inspector({
     },
     onError: (error) => setFeedback(error.message),
   })
+  const likeTracks = useMutation({
+    mutationFn: () => api<{ message: string }>('/tracks/like', {
+      method: 'POST', body: JSON.stringify({ track_ids: selectedTracks.map((item) => item.id) }),
+    }),
+    onSuccess: async (result) => {
+      setFeedback(result.message)
+      await client.invalidateQueries({ queryKey: ['tracks'] })
+      document.querySelector<HTMLElement>('[data-track-browser-root]')?.focus({ preventScroll: true })
+    },
+    onError: (error) => setFeedback(error.message),
+  })
 
   const destinationOptions = useMemo(() => {
     const all = playlists.data ?? []
@@ -140,10 +151,11 @@ export function Inspector({
     if (mode === 'move') return all.filter((item) => item.id !== collectionId)
     if (mode === 'remove') {
       const ids = new Set(selectedTracks.flatMap((item) => [...item.playlists, ...item.events, ...item.sources].map((entry) => entry.id)))
+      if (['playlist', 'event', 'source'].includes(collectionType)) ids.add(collectionId)
       return all.filter((item) => ids.has(item.id))
     }
     return []
-  }, [collectionId, mode, playlists.data, selectedTracks])
+  }, [collectionId, collectionType, mode, playlists.data, selectedTracks])
 
   useEffect(() => {
     if (mode === null) return
@@ -220,6 +232,7 @@ export function Inspector({
       <h2>Actions</h2>
       {feedback ? <p className={action.isError ? 'action-feedback error' : 'action-feedback'}>{feedback}</p> : null}
       {mode === null ? <div className="action-list">
+        <button data-action-entry type="button" disabled={likeTracks.isPending} onClick={() => { setFeedback(''); likeTracks.mutate() }}>Like in TIDAL</button>
         <button data-action-entry type="button" onClick={() => { setFeedback(''); setMode('add') }}>Add to playlist</button>
         <button data-action-entry type="button" onClick={() => { setFeedback(''); setMode('remove') }}>Remove from playlist</button>
         {collectionType === 'playlist' ? <button data-action-entry type="button" onClick={() => { setFeedback(''); setMode('move') }}>Move to playlist</button> : null}

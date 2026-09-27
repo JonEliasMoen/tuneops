@@ -179,6 +179,40 @@ def test_manual_mix_import_runs_only_as_an_explicit_background_job(monkeypatch):
     assert registry.result == {"playlist_name": "Dark Progressive", "tracks": 2}
 
 
+def test_watched_mix_tracklist_search_loads_delay_settings_before_job_runs(monkeypatch):
+    registry = ImmediateJobs()
+    session = object()
+    monkeypatch.setattr(jobs, "JOBS", registry)
+    monkeypatch.setattr(jobs, "watched_mix", lambda video_id: {"video_id": video_id})
+    monkeypatch.setattr(
+        jobs.engine,
+        "load_config",
+        lambda: {"settings": {"tidal_search_delay_seconds": 0}},
+    )
+    monkeypatch.setattr(jobs.engine, "tidal_client", lambda interactive=False: session)
+    monkeypatch.setattr(
+        jobs,
+        "find_tidal_matches",
+        lambda _engine, actual_session, row: (
+            [{"id": "tidal-id", "score": 9}] if actual_session is session else []
+        ),
+    )
+    request = jobs.TracklistSearchRequest.model_validate({
+        "rows": [{
+            "row_id": "row-1", "raw": "Artist - Track", "time": "00:00",
+            "artist": "Artist", "title": "Track", "remix": "", "status": "parsed",
+            "matches": [], "selected_id": "",
+        }]
+    })
+
+    response = jobs.search_watched_mix_tracklist("video-id", request)
+
+    assert response.state == "succeeded"
+    assert registry.kind == "watched-tracklist-search:video-id"
+    assert registry.result["searched"] == 1
+    assert registry.result["rows"][0]["status"] == "matched"
+
+
 def test_job_errors_redact_secret_query_values():
     error = RuntimeError(
         "403 for https://example.test/path?method=x&api_key=super-secret&token=also-secret"

@@ -10,7 +10,7 @@ function isEditing(target: EventTarget | null) {
 }
 
 function isTrackRoute(path: string | undefined) {
-  return Boolean(path && (path === '/liked-tracks' || path === '/search' || /^\/(playlists|events|sources|mixes|watched-mixes|artists)\//.test(path)))
+  return Boolean(path && (path === '/liked-tracks' || path === '/search' || /^\/(playlists|events|sources|mixes|watched-mixes|artists|history)\//.test(path)))
 }
 
 export function Sidebar() {
@@ -18,7 +18,16 @@ export function Sidebar() {
   const sidebarRef = useRef<HTMLElement>(null)
   const navigation = useQuery({ queryKey: ['navigation'], queryFn: () => api<Navigation>('/navigation') })
   const initialOpen = useMemo(
-    () => new Set((navigation.data?.groups ?? []).filter((group) => group.items.some((item) => item.path === pathname)).map((group) => group.id)),
+    () => {
+      const open = new Set<string>()
+      for (const group of navigation.data?.groups ?? []) {
+        for (const item of group.items) {
+          if (item.path === pathname || item.children?.some((child) => child.path === pathname)) open.add(group.id)
+          if (item.children?.some((child) => child.path === pathname)) open.add(`${group.id}:${item.id}`)
+        }
+      }
+      return open
+    },
     [navigation.data, pathname],
   )
   const [openOverrides, setOpenOverrides] = useState<Record<string, boolean>>({})
@@ -56,6 +65,18 @@ export function Sidebar() {
     }
     const current = document.activeElement as HTMLElement | null
     const groupId = current?.dataset.group
+    const nestedId = current?.dataset.nested
+    if (nestedId && current?.dataset.nestedParent === 'true' && (event.key === 'Enter' || event.key === 'ArrowRight')) {
+      event.preventDefault()
+      setOpenOverrides((previous) => ({ ...previous, [nestedId]: event.key === 'Enter' && isOpen(nestedId) ? false : true }))
+      return
+    }
+    if (nestedId && current?.dataset.nestedChild === 'true' && event.key === 'ArrowLeft') {
+      event.preventDefault()
+      setOpenOverrides((previous) => ({ ...previous, [nestedId]: false }))
+      requestAnimationFrame(() => sidebarRef.current?.querySelector<HTMLElement>(`[data-nested="${CSS.escape(nestedId)}"][data-nested-parent="true"]`)?.focus())
+      return
+    }
     if (groupId && current?.dataset.groupParent === 'true' && (event.key === 'Enter' || event.key === 'ArrowRight')) {
       event.preventDefault()
       setOpenOverrides((previous) => ({
@@ -105,7 +126,31 @@ export function Sidebar() {
                 <small>{group.items.length}</small>
               </button>
               {expanded ? <div className="nav-children">
-                {group.items.map((item) => (
+                {group.items.map((item) => item.children?.length ? <div className="nav-nested" key={`${item.kind}:${item.id}`}>
+                  <button
+                    type="button"
+                    className="nav-item nav-child nav-nested-parent"
+                    aria-expanded={isOpen(`${group.id}:${item.id}`)}
+                    data-nav-entry
+                    data-group={group.id}
+                    data-group-child="true"
+                    data-nested={`${group.id}:${item.id}`}
+                    data-nested-parent="true"
+                    onClick={() => setOpenOverrides((previous) => ({ ...previous, [`${group.id}:${item.id}`]: !isOpen(`${group.id}:${item.id}`) }))}
+                  ><span className={`nav-chevron ${isOpen(`${group.id}:${item.id}`) ? 'open' : ''}`}>▸</span><span>{item.label}</span><small>{item.children.length}</small></button>
+                  {isOpen(`${group.id}:${item.id}`) ? <div className="nav-grandchildren">{item.children.map((child) => <Link
+                    key={`${child.kind}:${child.id}`}
+                    to={child.path}
+                    data-nav-entry
+                    data-path={child.path}
+                    data-group={group.id}
+                    data-group-child="true"
+                    data-nested={`${group.id}:${item.id}`}
+                    data-nested-child="true"
+                    className={`nav-item nav-child nav-grandchild ${pathname === child.path ? 'active' : ''}`}
+                    onClick={() => sessionStorage.setItem('musicsync.react.focus-track-list', child.path)}
+                  ><span className="nav-icon">{child.icon}</span><span title={child.label}>{child.label}</span></Link>)}</div> : null}
+                </div> : (
                   <Link
                     key={`${item.kind}:${item.id}`}
                     to={item.path}

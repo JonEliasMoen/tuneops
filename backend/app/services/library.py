@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 from collections import Counter
+from calendar import month_name
 from datetime import datetime
+import re
 from typing import Any
 
 import main as engine
 from music_library.database import (
     lastfm_track_stats,
+    lastfm_history_months,
+    lastfm_month_top_tracks,
+    lastfm_year_top_tracks,
+    lastfm_all_time_top_tracks,
     latest_tidal_liked_user_id,
     tidal_artist,
     tidal_artists_for_tracks,
@@ -26,12 +32,13 @@ from music_tools.liked_tracks.service import (
     fetch_library_tracks,
     fetch_liked_tracks,
     fetch_watched_mix_tracks,
+    cached_track_rows,
 )
 from music_tools.mixes.service import mix_for
 
 
 COLLECTION_TYPES = {
-    "liked", "playlist", "event", "source", "setlist", "watched_mix", "artist", "search"
+    "liked", "playlist", "event", "source", "setlist", "watched_mix", "artist", "search", "history"
 }
 NUMERIC_SORT_FIELDS = {"bpm", "year", "play_count"}
 
@@ -47,6 +54,15 @@ def descriptor(kind: str, collection_id: str = "") -> dict[str, str]:
         return {"type": "liked", "id": "liked", "name": "TIDAL liked tracks", "collection_type": ""}
     if kind == "search":
         return {"type": "search", "id": "library", "name": "Global search", "collection_type": ""}
+    if kind == "history":
+        if collection_id == "overall":
+            return {"type": "history", "id": "overall", "name": "All-time Overall", "collection_type": ""}
+        match = re.fullmatch(r"(\d{4})-(overall|\d{2})", collection_id)
+        if not match or (match.group(2) != "overall" and not 1 <= int(match.group(2)) <= 12):
+            raise CollectionNotFound("History month was not found")
+        year, period = int(match.group(1)), match.group(2)
+        name = f"{year} Overall" if period == "overall" else f"{month_name[int(period)]} {year}"
+        return {"type": "history", "id": collection_id, "name": name, "collection_type": ""}
     if kind in {"playlist", "event", "source"}:
         item = next(
             (row for row in tidal_indexed_playlists() if str(row.get("id")) == collection_id),
@@ -90,6 +106,16 @@ def _base_rows(kind: str, collection_id: str) -> list[dict[str, Any]]:
         rows, _ = fetch_artist_tracks(collection_id, limit=limit)
     elif kind == "search":
         rows, _ = fetch_library_tracks(limit=limit)
+    elif kind == "history":
+        settings = engine.load_config().get("settings", {})
+        username = str(settings.get("lastfm_username", "") or "").strip()
+        top_tracks = max(1, min(100, int(settings.get("history_top_tracks", 20) or 20)))
+        if collection_id == "overall":
+            records = lastfm_all_time_top_tracks(username, top_tracks)
+        else:
+            year_text, period = collection_id.split("-", 1)
+            records = lastfm_year_top_tracks(username, int(year_text), top_tracks) if period == "overall" else lastfm_month_top_tracks(username, int(year_text), int(period), top_tracks)
+        rows = cached_track_rows(records)
     else:
         raise CollectionNotFound(f"Unknown collection type: {kind}")
     return [dict(row) for row in rows]
@@ -127,8 +153,9 @@ def _attach_related(rows: list[dict[str, Any]], collection: dict[str, str]) -> N
         ]
         row["artists"] = artists.get(track_id, [])
         row["dimensions"] = dimensions.get(track_id, {})
-        row["play_count"] = int(listening.get(track_id, {}).get("play_count", 0)) if username else 0
-        last_played = listening.get(track_id, {}).get("last_played")
+        if current_type != "history":
+            row["play_count"] = int(listening.get(track_id, {}).get("play_count", 0)) if username else 0
+        last_played = row.get("last_played") if current_type == "history" else listening.get(track_id, {}).get("last_played")
         row["last_played"] = (
             datetime.fromtimestamp(int(last_played)).strftime("%Y-%m-%d %H:%M")
             if last_played else ""
