@@ -33,7 +33,7 @@ authentication redesign is intentionally deferred.
   from cached imported scrobbles.
 - [x] Existing liked/playlist cache duplicates cleaned; unique membership
   indexes now prevent overlapping cache results from returning duplicates.
-- [x] Automated checks: 39 Python tests, 21 Vitest browser-state/navigation/action/scroll/stopwatch tests,
+- [x] Automated checks: 49 Python tests, 24 Vitest browser-state/navigation/action/scroll/stopwatch/presentation tests,
   Python compilation, and React production build.
 
 ## Required before React is the default

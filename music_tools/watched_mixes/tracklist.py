@@ -15,6 +15,18 @@ TIMESTAMP_RE = re.compile(
 )
 SEPARATOR_RE = re.compile(r"\s+[\-–—]\s+")
 TRAILING_MARKER_RE = re.compile(r"\s+(?:\\?\*)+\s*$")
+VERSUS_RE = re.compile(r"\s+vs\.?\s+", re.IGNORECASE)
+MASHUP_SUFFIX_RE = re.compile(r"\s*\([^)]*\bmashup\b[^)]*\)\s*$", re.IGNORECASE)
+
+
+def _track_parts(artist: str, title: str) -> list[tuple[str, str]]:
+    """Expand an ``Artist A vs Artist B - Song A vs Song B`` mashup line."""
+    artists = [part.strip() for part in VERSUS_RE.split(artist)]
+    clean_title = MASHUP_SUFFIX_RE.sub("", title).strip()
+    titles = [part.strip() for part in VERSUS_RE.split(clean_title)]
+    if len(artists) > 1 and len(artists) == len(titles) and all(artists + titles):
+        return list(zip(artists, titles))
+    return [(artist, title)]
 
 
 def parse_tracklist(text: str, order: str = "artist_title") -> list[dict[str, Any]]:
@@ -48,19 +60,21 @@ def parse_tracklist(text: str, order: str = "artist_title") -> list[dict[str, An
             continue
         left, right = (part.strip() for part in parts)
         artist, title = (right, left) if order == "title_artist" else (left, right)
-        unresolved = title.casefold() in {"id", "unknown", "?"}
-        rows.append(
-            {
-                "row_id": line_number,
-                "raw_line": raw_line,
-                "timestamp": timestamp,
-                "artist": artist,
-                "title": title,
-                "status": "unresolved" if unresolved else "unsearched",
-                "matches": [],
-                "selected_id": "",
-            }
-        )
+        for part_index, (part_artist, part_title) in enumerate(_track_parts(artist, title)):
+            unresolved = part_title.casefold() in {"id", "unknown", "?"}
+            rows.append(
+                {
+                    # Mashup components need separate stable staging identities.
+                    "row_id": line_number * 1000 + part_index,
+                    "raw_line": raw_line,
+                    "timestamp": timestamp,
+                    "artist": part_artist,
+                    "title": part_title,
+                    "status": "unresolved" if unresolved else "unsearched",
+                    "matches": [],
+                    "selected_id": "",
+                }
+            )
     return rows
 
 

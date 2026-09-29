@@ -23,3 +23,25 @@ def test_parse_tracklist_can_reverse_title_artist_order():
     row = parse_tracklist("03:20 Home - Marsh", "title_artist")[0]
     assert row["artist"] == "Marsh"
     assert row["title"] == "Home"
+
+
+def test_parse_tracklist_expands_versus_mashup_into_searchable_tracks():
+    rows = parse_tracklist(
+        "32:30 Armin van Buuren & Sharon Den Adel vs. OTTAGON – "
+        "In And Out Of Love vs. Fathers And Sons (Armin van Buuren Mashup)"
+    )
+
+    assert [(row["artist"], row["title"]) for row in rows] == [
+        ("Armin van Buuren & Sharon Den Adel", "In And Out Of Love"),
+        ("OTTAGON", "Fathers And Sons"),
+    ]
+    assert {row["timestamp"] for row in rows} == {"32:30"}
+    assert len({row["row_id"] for row in rows}) == 2
+    assert all(row["status"] == "unsearched" for row in rows)
+
+
+def test_parse_tracklist_keeps_unbalanced_versus_text_as_one_track():
+    row = parse_tracklist("01:00 Artist A vs. Artist B - One Song")[0]
+
+    assert row["artist"] == "Artist A vs. Artist B"
+    assert row["title"] == "One Song"

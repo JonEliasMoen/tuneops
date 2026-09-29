@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 import main as engine
+from backend.app.config import integer_setting
 from music_library.database import (
     lastfm_track_stats,
     lastfm_history_months,
@@ -109,7 +110,9 @@ def _base_rows(kind: str, collection_id: str) -> list[dict[str, Any]]:
     elif kind == "history":
         settings = engine.load_config().get("settings", {})
         username = str(settings.get("lastfm_username", "") or "").strip()
-        top_tracks = max(1, min(100, int(settings.get("history_top_tracks", 20) or 20)))
+        top_tracks = integer_setting(
+            settings, "history_top_tracks", 20, minimum=1, maximum=100,
+        )
         if collection_id == "overall":
             records = lastfm_all_time_top_tracks(username, top_tracks)
         else:

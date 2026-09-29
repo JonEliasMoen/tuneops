@@ -16,6 +16,7 @@ from music_tools.lastfm import import_scrobbles, reconcile_track_matches
 from music_tools.mixes.service import import_tidal_setlist, mix_for
 from music_tools.watched_mixes.tracklist import find_tidal_matches
 
+from ..config import number_setting
 from ..jobs import JOBS
 from ..schemas import AutoTagRequest, JobResponse, MixTidalImportRequest, TracklistSearchRequest
 from ..services.library import CollectionNotFound, descriptor
@@ -66,7 +67,9 @@ def run_lastfm_import() -> JobResponse:
         return import_scrobbles(
             username,
             api_key,
-            delay_seconds=float(settings.get("lastfm_import_delay_seconds", 0.5)),
+            delay_seconds=number_setting(
+                settings, "lastfm_import_delay_seconds", 0.5, minimum=0,
+            ),
             progress=progress,
         )
 
@@ -101,7 +104,9 @@ def run_auto_tag(body: AutoTagRequest) -> JobResponse:
             selected,
             model=str(settings.get("ollama_model", "qwen3:4b")),
             base_url=str(settings.get("ollama_url", "http://127.0.0.1:11434")),
-            timeout_seconds=float(settings.get("ollama_timeout_seconds", 300)),
+            timeout_seconds=number_setting(
+                settings, "ollama_timeout_seconds", 300, minimum=1,
+            ),
         )
         tagged = 0
         for track in selected:
@@ -178,7 +183,7 @@ def search_watched_mix_tracklist(video_id: str, body: TracklistSearchRequest) ->
 
     def execute(progress):
         session = engine.tidal_client(interactive=False)
-        delay = max(0.0, float(settings.get("tidal_search_delay_seconds", 0.35)))
+        delay = number_setting(settings, "tidal_search_delay_seconds", 0.35, minimum=0)
         searchable = [
             row for row in rows
             if row.get("status") not in {"invalid", "unresolved", "imported", "watching"}
@@ -208,7 +213,7 @@ def refresh_pending_tracks() -> JobResponse:
     def execute(progress):
         rows = pending_tracks()
         session = engine.tidal_client(interactive=False) if rows else None
-        delay = max(0.0, float(settings.get("tidal_search_delay_seconds", 0.35)))
+        delay = number_setting(settings, "tidal_search_delay_seconds", 0.35, minimum=0)
         for index, row in enumerate(rows):
             progress(f"Searching pending tracks: {index + 1}/{len(rows)}")
             candidates = find_tidal_matches(engine, session, row)
