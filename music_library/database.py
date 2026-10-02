@@ -207,6 +207,26 @@ CREATE TABLE IF NOT EXISTS setlist_tracks (
 CREATE INDEX IF NOT EXISTS setlist_tracks_by_track
     ON setlist_tracks(provider, provider_track_id);
 
+CREATE TABLE IF NOT EXISTS youtube_mix_analytics (
+    folder_name TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL,
+    views INTEGER NOT NULL DEFAULT 0,
+    estimated_minutes_watched REAL NOT NULL DEFAULT 0,
+    average_view_duration REAL NOT NULL DEFAULT 0,
+    average_view_percentage REAL NOT NULL DEFAULT 0,
+    likes INTEGER NOT NULL DEFAULT 0,
+    comments INTEGER NOT NULL DEFAULT 0,
+    subscribers_gained INTEGER NOT NULL DEFAULT 0,
+    fetched_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS youtube_video_metadata (
+    video_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    upload_date TEXT NOT NULL DEFAULT '',
+    fetched_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS watched_mixes (
     video_id TEXT PRIMARY KEY,
     youtube_url TEXT NOT NULL,
@@ -866,15 +886,28 @@ def lastfm_import_summary(
     }
 
 
-def setlist_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, str]]:
+def setlist_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, Any]]:
     """Return all persisted user-owned metadata for local setlists."""
     initialize(path)
     with connect(path) as connection:
         rows = connection.execute(
             """
-            SELECT folder_name, youtube_url, tidal_url,
-                   tidal_playlist_id, tidal_playlist_name
-            FROM setlists ORDER BY folder_name COLLATE NOCASE
+            SELECT s.folder_name, s.youtube_url, s.tidal_url,
+                   s.tidal_playlist_id, s.tidal_playlist_name, s.updated_at,
+                   COUNT(st.provider_track_id) AS track_count,
+                   ya.video_id, ya.views, ya.estimated_minutes_watched,
+                   ya.average_view_duration, ya.average_view_percentage,
+                   ya.likes, ya.comments, ya.subscribers_gained,
+                   ya.fetched_at AS analytics_fetched_at
+            FROM setlists AS s
+            LEFT JOIN setlist_tracks AS st ON st.folder_name = s.folder_name
+            LEFT JOIN youtube_mix_analytics AS ya ON ya.folder_name = s.folder_name
+            GROUP BY s.folder_name, s.youtube_url, s.tidal_url,
+                     s.tidal_playlist_id, s.tidal_playlist_name, s.updated_at,
+                     ya.video_id, ya.views, ya.estimated_minutes_watched,
+                     ya.average_view_duration, ya.average_view_percentage,
+                     ya.likes, ya.comments, ya.subscribers_gained, ya.fetched_at
+            ORDER BY s.folder_name COLLATE NOCASE
             """
         ).fetchall()
     return {
@@ -883,9 +916,108 @@ def setlist_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, str]]:
             "tidal_url": str(row["tidal_url"] or ""),
             "tidal_playlist_id": str(row["tidal_playlist_id"] or ""),
             "tidal_playlist_name": str(row["tidal_playlist_name"] or ""),
+            "updated_at": str(row["updated_at"] or ""),
+            "track_count": int(row["track_count"] or 0),
+            "youtube_video_id": str(row["video_id"] or ""),
+            "youtube_views": int(row["views"] or 0) if row["video_id"] else None,
+            "youtube_watch_minutes": float(row["estimated_minutes_watched"] or 0) if row["video_id"] else None,
+            "youtube_average_view_duration": float(row["average_view_duration"] or 0) if row["video_id"] else None,
+            "youtube_average_view_percentage": float(row["average_view_percentage"] or 0) if row["video_id"] else None,
+            "youtube_likes": int(row["likes"] or 0) if row["video_id"] else None,
+            "youtube_comments": int(row["comments"] or 0) if row["video_id"] else None,
+            "youtube_subscribers_gained": int(row["subscribers_gained"] or 0) if row["video_id"] else None,
+            "youtube_analytics_fetched_at": str(row["analytics_fetched_at"] or ""),
         }
         for row in rows
     }
+
+
+def store_youtube_mix_analytics(
+    records: list[dict[str, Any]], path: Path = DATABASE_PATH,
+) -> int:
+    """Upsert independent cached YouTube Analytics rows for local mixes."""
+    initialize(path)
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    accepted = [
+        record for record in records
+        if str(record.get("folder_name") or "") and str(record.get("video_id") or "")
+    ]
+    with connect(path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO youtube_mix_analytics(
+                folder_name, video_id, views, estimated_minutes_watched,
+                average_view_duration, average_view_percentage, likes,
+                comments, subscribers_gained, fetched_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(folder_name) DO UPDATE SET
+                video_id=excluded.video_id,
+                views=excluded.views,
+                estimated_minutes_watched=excluded.estimated_minutes_watched,
+                average_view_duration=excluded.average_view_duration,
+                average_view_percentage=excluded.average_view_percentage,
+                likes=excluded.likes,
+                comments=excluded.comments,
+                subscribers_gained=excluded.subscribers_gained,
+                fetched_at=excluded.fetched_at
+            """,
+            [
+                (
+                    str(record.get("folder_name") or ""),
+                    str(record.get("video_id") or ""),
+                    int(record.get("views") or 0),
+                    float(record.get("estimatedMinutesWatched") or 0),
+                    float(record.get("averageViewDuration") or 0),
+                    float(record.get("averageViewPercentage") or 0),
+                    int(record.get("likes") or 0),
+                    int(record.get("comments") or 0),
+                    int(record.get("subscribersGained") or 0),
+                    fetched_at,
+                )
+                for record in accepted
+            ],
+        )
+    return len(accepted)
+
+
+def store_youtube_video_metadata(
+    records: list[dict[str, Any]], path: Path = DATABASE_PATH,
+) -> int:
+    """Upsert independent cached public metadata for YouTube videos."""
+    initialize(path)
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    accepted = [record for record in records if str(record.get("video_id") or "").strip()]
+    with connect(path) as connection:
+        connection.executemany(
+            """
+            INSERT INTO youtube_video_metadata(video_id, title, upload_date, fetched_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(video_id) DO UPDATE SET
+                title=excluded.title,
+                upload_date=excluded.upload_date,
+                fetched_at=excluded.fetched_at
+            """,
+            [
+                (
+                    str(record.get("video_id") or "").strip(),
+                    str(record.get("title") or "").strip(),
+                    str(record.get("upload_date") or "").strip(),
+                    fetched_at,
+                )
+                for record in accepted
+            ],
+        )
+    return len(accepted)
+
+
+def youtube_video_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, str]]:
+    """Return cached YouTube metadata keyed by video ID."""
+    initialize(path)
+    with connect(path) as connection:
+        rows = connection.execute(
+            "SELECT video_id, title, upload_date, fetched_at FROM youtube_video_metadata"
+        ).fetchall()
+    return {str(row["video_id"]): dict(row) for row in rows}
 
 
 def watched_mixes(path: Path = DATABASE_PATH) -> list[dict[str, str]]:

@@ -1,6 +1,6 @@
 # React + FastAPI migration status
 
-Last reviewed: 2026-09-24. Dash remains the compatibility UI on port 8080.
+Last reviewed: 2026-09-29. Dash remains the compatibility UI on port 8080.
 `react_app.py` serves the React/FastAPI preview locally on port 8081. It reuses
 the existing configuration, OAuth/session caches, services, and SQLite library;
 authentication redesign is intentionally deferred.
@@ -31,9 +31,15 @@ authentication redesign is intentionally deferred.
 - [x] Last.fm History sidebar with nested Year/Month navigation and configurable
   monthly, yearly Overall, and all-time Overall Top X shared track-table views
   from cached imported scrobbles.
+- [x] My Mixes overview table backed by existing SQLite setlist metadata, with
+  sortable mix/setlist/track-count/update columns and local media availability;
+  read-only Google OAuth plus explicitly refreshed/cached YouTube owner
+  analytics columns.
 - [x] Existing liked/playlist cache duplicates cleaned; unique membership
   indexes now prevent overlapping cache results from returning duplicates.
-- [x] Automated checks: 49 Python tests, 24 Vitest browser-state/navigation/action/scroll/stopwatch/presentation tests,
+- [x] Automated checks cover Python contracts plus React browser-state,
+  navigation, action, selection, Quick View, scroll, stopwatch, and presentation
+  behavior; exact passing totals are recorded by the current test runs.
   Python compilation, and React production build.
 
 ## Required before React is the default
@@ -51,14 +57,14 @@ authentication redesign is intentionally deferred.
 
 ### Browser reliability
 
-- [ ] Expand Vitest/React Testing Library coverage to track selection and Quick
-  Views. Vitest now covers stateful
+- [x] Expanded Vitest coverage to track selection and Quick Views. Vitest now covers stateful
   sorting/filter/field persistence, collection-specific selection/scroll/
   pagination restoration, the sidebar keyboard group/navigation contract, and
   local mocked action-menu grouping/payloads for Playlist/Event/Source targets,
   plus stopwatch parsing, active-track calculation, and stopping.
-- [ ] Add Playwright (SCRATCH THIS. i do not want playwright on my computer. its bloaty asf) checks for bottom scrolling, Back/Forward state, deep
-  links, and light/dark contrast.
+- [x] Playwright intentionally excluded. Browser reliability is covered with
+  lightweight Vitest tests plus manual Chrome verification; do not add the
+  Playwright browser/runtime dependency.
 - [ ] Manually verify keyboard navigation contract end-to-end.
 - [x] Profiled 5,000 real cached global-library rows: median SQLite/Python
   preparation was 252 ms. Keep 200-row paging and the existing 1,000-row
@@ -83,7 +89,9 @@ authentication redesign is intentionally deferred.
   without treating a liked-track-only membership as a searchable collection.
 - [x] Empty collections now explain the relevant recovery path: clear filters,
   refresh TIDAL, sync a My Mix setlist, or associate watched-mix tracks.
-- [ ] Future: Last.fm monthly Top X views/playlists.
+- [x] Last.fm monthly, yearly, and all-time Top X history views.
+- [ ] Future: optionally materialize a Last.fm Top X history view as a TIDAL
+  playlist; the current history views are read-only.
 - [ ] Future: VirtualDJ export, label confidence, compatible BPM/key/tag artist
   exploration, and scheduled cache/sync UI.
 

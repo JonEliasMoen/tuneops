@@ -96,3 +96,32 @@ export type Job = {
   error: string
   created_at: string
 }
+
+export type MixSummary = {
+  folder_name: string
+  youtube_url: string
+  youtube_analytics_url: string
+  tidal_url: string
+  tidal_playlist_id: string
+  tidal_playlist_name: string
+  cover_url: string
+  has_cover: boolean
+  track_count: number
+  updated_at: string
+  youtube_title: string
+  youtube_upload_date: string
+  youtube_views: number | null
+  youtube_watch_minutes: number | null
+  youtube_average_view_duration: number | null
+  youtube_average_view_percentage: number | null
+  youtube_likes: number | null
+  youtube_comments: number | null
+  youtube_subscribers_gained: number | null
+  youtube_analytics_fetched_at: string
+}
+
+export type YouTubeStatus = {
+  configured: boolean
+  connected: boolean
+  expires_at: number | null
+}

@@ -8,6 +8,7 @@ import { COLUMNS, DEFAULT_FIELDS } from './columns'
 import { Inspector } from './Inspector'
 import { MixStopwatch } from './MixStopwatch'
 import { EventMedia } from './EventMedia'
+import { nextSort, normalizeQuickViewFields, selectTrackRange } from './browserLogic'
 import { loadBrowserState, saveBrowserState, type BrowserFilters, type SortState } from './viewState'
 
 const PAGE_SIZE = 200
@@ -211,16 +212,11 @@ export function TrackBrowser({ collectionType, collectionId, hideCollectionHeadi
   }, [visibleFields, collectionType])
 
   function selectRow(index: number, extend: boolean) {
-    const row = rows[index]
-    if (!row) return
-    if (extend && lastRangeIndex !== null) {
-      const [start, end] = [lastRangeIndex, index].sort((a, b) => a - b)
-      setSelectedIds(new Set(rows.slice(start, end + 1).map((item) => item.id)))
-    } else {
-      setSelectedIds(new Set([row.id]))
-      setLastRangeIndex(index)
-    }
-    setAnchorId(row.id)
+    const selection = selectTrackRange(rows.map((row) => row.id), index, lastRangeIndex, extend)
+    if (!selection.anchorId) return
+    setSelectedIds(new Set(selection.selectedIds))
+    setLastRangeIndex(selection.lastRangeIndex)
+    setAnchorId(selection.anchorId)
   }
 
   function handleTableKeys(event: React.KeyboardEvent<HTMLDivElement>) {
@@ -238,15 +234,11 @@ export function TrackBrowser({ collectionType, collectionId, hideCollectionHeadi
 
   function cycleSort(field: string) {
     setLoaded(PAGE_SIZE)
-    setSort((current) => {
-      if (!current || current.field !== field) return { field, direction: 'asc' }
-      if (current.direction === 'asc') return { field, direction: 'desc' }
-      return null
-    })
+    setSort((current) => nextSort(current, field))
   }
 
   function applyQuickView(fields: string[]) {
-    setVisibleFields(fields)
+    setVisibleFields(normalizeQuickViewFields(fields, COLUMNS.map((column) => column.key)))
     setFieldsOpen(false)
   }
 

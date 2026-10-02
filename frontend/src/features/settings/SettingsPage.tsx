@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
-import type { Job, PublicSettings } from '../../api/types'
+import type { Job, PublicSettings, YouTubeStatus } from '../../api/types'
 import { JobStatus } from '../../components/JobStatus'
 import { COLUMNS, DEFAULT_FIELDS } from '../track-browser/columns'
 
 export function SettingsPage() {
   const client = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: () => api<PublicSettings>('/settings') })
+  const youtube = useQuery({ queryKey: ['youtube-status'], queryFn: () => api<YouTubeStatus>('/youtube/status') })
   const [draft, setDraft] = useState<PublicSettings | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
   useEffect(() => { if (settings.data) setDraft(settings.data) }, [settings.data])
@@ -53,6 +54,10 @@ export function SettingsPage() {
         <p className={draft.lastfm_api_key_configured ? 'good' : 'warning'}>{draft.lastfm_api_key_configured ? 'API key configured in .env' : 'LASTFM_API_KEY is missing from .env'}</p>
         <div className="button-row"><button type="button" onClick={() => startJob.mutate('/lastfm/import')}>Import plays</button><button type="button" onClick={() => startJob.mutate('/lastfm/reconcile')}>Reconcile cached plays</button></div>
         <JobStatus jobId={jobId} />
+      </section>
+      <section className="settings-card"><h2>YouTube Analytics</h2>
+        <p>Connect the Google account that owns your My Mixes videos. Credentials and tokens stay in the Python backend.</p>
+        {!youtube.data ? <p>Checking connection…</p> : !youtube.data.configured ? <p className="warning">Google OAuth credentials or the redirect URI are missing from .env.</p> : youtube.data.connected ? <><p className="good">YouTube is connected.</p><a className="button-link" href="/api/v1/youtube/connect">Reconnect YouTube</a></> : <a className="button-link primary" href="/api/v1/youtube/connect">Connect YouTube</a>}
       </section>
       <section className="settings-card"><h2>Spotify matching</h2>
         <label>Search delay (seconds)<input type="number" min="0" step="0.05" value={draft.spotify_search_delay_seconds} onChange={(event) => setDraft({ ...draft, spotify_search_delay_seconds: Number(event.target.value) })} /></label>

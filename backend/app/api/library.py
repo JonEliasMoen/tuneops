@@ -32,6 +32,7 @@ from music_library.database import (
     watched_mix,
     watched_mixes,
     toggle_tidal_track_dimension,
+    youtube_video_metadata,
 )
 from music_library.dimensions import DIMENSION_LABELS, DIMENSION_MAX_VALUES, DIMENSION_VALUES
 from music_tools.mixes.service import (
@@ -207,6 +208,14 @@ def navigation() -> NavigationResponse:
             label="My mixes",
             items=[
                 NavigationItem(
+                    id="overview",
+                    label="Overview",
+                    path="/mixes",
+                    kind="mix_overview",
+                    icon="▦",
+                ),
+                *[
+                NavigationItem(
                     id=mix.folder_name,
                     label=mix.folder_name,
                     path=_path("mixes", mix.folder_name),
@@ -214,6 +223,7 @@ def navigation() -> NavigationResponse:
                     icon="♪",
                 )
                 for mix in discover_mixes()
+                ],
             ],
         )
     )
@@ -582,13 +592,30 @@ def remove_pending_track(pending_id: int) -> None:
 
 @router.get("/mixes")
 def mixes() -> list[dict[str, object]]:
+    video_metadata = youtube_video_metadata()
     return [
         {
             "folder_name": mix.folder_name,
             "youtube_url": mix.youtube_url,
+            "youtube_analytics_url": (
+                f"https://studio.youtube.com/video/{youtube_video_id(mix.youtube_url)}/analytics/tab-overview/period-default"
+                if youtube_video_id(mix.youtube_url) else ""
+            ),
             "tidal_url": mix.tidal_url,
             "tidal_playlist_id": mix.tidal_playlist_id,
             "tidal_playlist_name": mix.tidal_playlist_name,
+            "track_count": mix.track_count,
+            "updated_at": mix.updated_at,
+            "youtube_title": str(video_metadata.get(youtube_video_id(mix.youtube_url) or "", {}).get("title") or ""),
+            "youtube_upload_date": str(video_metadata.get(youtube_video_id(mix.youtube_url) or "", {}).get("upload_date") or ""),
+            "youtube_views": getattr(mix, "youtube_views", None),
+            "youtube_watch_minutes": getattr(mix, "youtube_watch_minutes", None),
+            "youtube_average_view_duration": getattr(mix, "youtube_average_view_duration", None),
+            "youtube_average_view_percentage": getattr(mix, "youtube_average_view_percentage", None),
+            "youtube_likes": getattr(mix, "youtube_likes", None),
+            "youtube_comments": getattr(mix, "youtube_comments", None),
+            "youtube_subscribers_gained": getattr(mix, "youtube_subscribers_gained", None),
+            "youtube_analytics_fetched_at": getattr(mix, "youtube_analytics_fetched_at", ""),
             "has_cover": mix.cover_path is not None,
             "cover_url": _path("api/v1/mixes", mix.folder_name) + "/cover" if mix.cover_path else youtube_thumbnail_url(mix.youtube_url),
         }

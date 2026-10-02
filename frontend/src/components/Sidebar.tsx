@@ -10,7 +10,7 @@ function isEditing(target: EventTarget | null) {
 }
 
 function isTrackRoute(path: string | undefined) {
-  return Boolean(path && (path === '/liked-tracks' || path === '/search' || /^\/(playlists|events|sources|mixes|watched-mixes|artists|history)\//.test(path)))
+  return Boolean(path && (path === '/liked-tracks' || path === '/search' || path === '/mixes' || /^\/(playlists|events|sources|mixes|watched-mixes|artists|history)\//.test(path)))
 }
 
 export function Sidebar() {

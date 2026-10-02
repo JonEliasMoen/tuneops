@@ -127,6 +127,27 @@ def test_navigation_builds_history_from_configured_lastfm_cache(monkeypatch):
     assert history.items[1].children[1]["path"] == "/history/2026-09"
 
 
+def test_navigation_puts_overview_first_in_my_mixes(monkeypatch):
+    monkeypatch.setattr(library_api.engine, "load_config", lambda: {"settings": {}})
+    monkeypatch.setattr(library_api, "tidal_indexed_playlists", lambda: [])
+    monkeypatch.setattr(library_api, "lastfm_history_years", lambda *_: [])
+    monkeypatch.setattr(library_api, "lastfm_history_months", lambda *_: [])
+    monkeypatch.setattr(library_api, "watched_mixes", lambda: [])
+    monkeypatch.setattr(
+        library_api,
+        "discover_mixes",
+        lambda: [SimpleNamespace(folder_name="darkprog")],
+    )
+
+    result = library_api.navigation()
+
+    my_mixes = next(group for group in result.groups if group.id == "my-mixes")
+    assert [(item.label, item.path) for item in my_mixes.items] == [
+        ("Overview", "/mixes"),
+        ("darkprog", "/mixes/darkprog"),
+    ]
+
+
 def test_history_overall_uses_the_configured_yearly_top_tracks(monkeypatch):
     monkeypatch.setattr(library.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu", "history_top_tracks": 20}})
     monkeypatch.setattr(library, "lastfm_year_top_tracks", lambda username, year, limit: [{
@@ -220,6 +241,53 @@ def test_mix_url_editor_reuses_existing_setlist_storage(monkeypatch):
 
     assert saved == [("youtube", "darkprog", "https://youtu.be/abc123"), ("tidal", "darkprog", "https://tidal.com/playlist/abc")]
     assert result == {"folder_name": "darkprog"}
+
+
+def test_mix_overview_exposes_cached_counts_and_local_availability(monkeypatch):
+    monkeypatch.setattr(
+        library_api,
+        "discover_mixes",
+        lambda: [SimpleNamespace(
+            folder_name="darkprog",
+            youtube_url="https://youtu.be/abc123",
+            tidal_url="https://tidal.com/playlist/id",
+            tidal_playlist_id="id",
+            tidal_playlist_name="DJ Set Darkprog",
+            track_count=12,
+            updated_at="2026-10-02T12:30:00",
+            audio_path=object(),
+            cover_path=None,
+        )],
+    )
+    monkeypatch.setattr(library_api, "youtube_thumbnail_url", lambda _url: "thumbnail")
+    monkeypatch.setattr(library_api, "youtube_video_metadata", lambda: {
+        "abc123": {"title": "Dark Progressive Mix", "upload_date": "2026-01-05"},
+    })
+
+    result = library_api.mixes()
+
+    assert result[0] == {
+        "folder_name": "darkprog",
+        "youtube_url": "https://youtu.be/abc123",
+        "youtube_analytics_url": "https://studio.youtube.com/video/abc123/analytics/tab-overview/period-default",
+        "tidal_url": "https://tidal.com/playlist/id",
+        "tidal_playlist_id": "id",
+        "tidal_playlist_name": "DJ Set Darkprog",
+        "track_count": 12,
+        "updated_at": "2026-10-02T12:30:00",
+        "youtube_title": "Dark Progressive Mix",
+        "youtube_upload_date": "2026-01-05",
+        "youtube_views": None,
+        "youtube_watch_minutes": None,
+        "youtube_average_view_duration": None,
+        "youtube_average_view_percentage": None,
+        "youtube_likes": None,
+        "youtube_comments": None,
+        "youtube_subscribers_gained": None,
+        "youtube_analytics_fetched_at": "",
+        "has_cover": False,
+        "cover_url": "thumbnail",
+    }
 
 
 def test_watched_mix_edit_reuses_existing_record_and_delete_is_explicit(monkeypatch):

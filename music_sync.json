@@ -186,8 +186,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "3001d6aea3ebcd68cb73b5cfd6e53218ed54b08485a5f78b7f97dbf04d282fea",
-      "last_sync": "2026-09-29T16:40:09.800233+00:00",
+      "source_version": "bf9d19ce5e0496a8f6c959ab13390f2760da20907a0989f6a3473821b93d633d",
+      "last_sync": "2026-10-01T15:01:39.791298+00:00",
       "collection_type": "playlist"
     },
     {
@@ -207,8 +207,8 @@
           }
         ]
       },
-      "source_version": "98e91b75e4a8ef395e7763b3acacc8577b672790258e8e2f8de39ba8a3024af2",
-      "last_sync": "2026-09-29T16:40:13.131035+00:00",
+      "source_version": "45a6818823a6a9d3ae4396d2a704eea0cdeb978ddaee2217acbddf8cd91c6a6a",
+      "last_sync": "2026-10-01T15:01:41.099808+00:00",
       "collection_type": "playlist"
     },
     {
@@ -380,8 +380,8 @@
           }
         ]
       },
-      "source_version": "dd2d8a285d39b78d0567fb58018daa47058dd0f3e6fe54d1866f98f84e445a37",
-      "last_sync": "2026-09-29T16:40:24.887342+00:00",
+      "source_version": "ba963ca3ce3f8901713863972e7d9a4844a12d7ccaf0abc482e2081913384204",
+      "last_sync": "2026-10-01T15:01:49.698151+00:00",
       "collection_type": "playlist"
     },
     {
@@ -413,8 +413,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/81b04eb5-f92f-46db-ac51-3d8b9947351c",
       "tidal_name": "",
-      "source_version": "2026-09-29 12:16:54.271000+00:00",
-      "last_sync": "2026-09-29T16:40:26.581219+00:00",
+      "source_version": "2026-09-29 19:02:09.077000+00:00",
+      "last_sync": "2026-10-01T15:01:51.044025+00:00",
       "collection_type": "playlist"
     },
     {
@@ -438,8 +438,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/e873d913-f9b7-4425-bda4-186ba4b40957",
       "tidal_name": "",
-      "source_version": "2026-09-29 09:43:58.439000+00:00",
-      "last_sync": "2026-09-29T16:40:29.831748+00:00",
+      "source_version": "2026-09-29 17:12:03.049000+00:00",
+      "last_sync": "2026-10-01T15:01:51.926872+00:00",
       "collection_type": "playlist"
     },
     {

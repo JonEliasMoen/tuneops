@@ -68,6 +68,12 @@ SQLite-only. TIDAL refreshes run as explicit background jobs.
 
 ## Track browser extension contract
 
+All present and future data tables should follow the shared track-table interaction
+contract unless a table is strictly presentational: persist the active sort through
+reloads/navigation, cycle sort ascending → descending → off, support mouse row
+selection, and support Up/Down selection plus Enter or Right Arrow activation.
+Build reusable table-state/navigation helpers instead of one-off key handlers.
+
 - Reuse the browser through `music_tools.track_browser`; do not import its
   current `liked_tracks` implementation from another tool.
 - Browser keyboard activation is based on the mounted
@@ -189,6 +195,11 @@ Core tables:
 - `lastfm_scrobbles`: immutable listening-history rows keyed by user, timestamp,
   and normalized identity. Preserve timestamps for monthly charts. Matching to
   TIDAL tracks must be conservative: ambiguous identities remain unmatched.
+- `youtube_mix_analytics`: independent cached owner analytics keyed by local
+  My Mix folder. Only show a row when its cached video ID still matches the
+  mix's saved YouTube URL; entering My Mixes Overview triggers one refresh.
+- `youtube_video_metadata`: independent cached YouTube title and upload date
+  keyed by video ID so overview metadata survives backend restarts.
 
 ## Mix explorer
 
@@ -207,6 +218,10 @@ Core tables:
   view count, and upload date on demand, but do not persist fetched metadata.
   Only make requests for validated YouTube video IDs and fail gracefully when
   metadata is unavailable.
+- Google OAuth stays in the FastAPI backend. Store its refresh token only in the
+  ignored `.youtube_oauth.json` file, request read-only YouTube scopes, validate
+  the callback state cookie, and expose connection controls in Settings. Entering
+  My Mixes Overview refreshes cached analytics once; manual refresh remains a retry.
 - Each mix can store a TIDAL playlist URL plus its resolved playlist ID/name.
   TIDAL playlist import is manual through the mix's **Sync playlist** button;
   do not add mix setlists to startup sync implicitly. A TIDAL playlist is only
@@ -240,12 +255,14 @@ Core tables:
 
 ## Watched-mix tracklist import
 
-- Watched-mix detail pages contain an in-memory staging table for pasted
+- Watched-mix detail pages contain a temporary staging table for pasted
   tracklists. Timestamps are optional and may be plain or bracketed. Support
   explicit `Artist - Title` and `Title - Artist` parsing modes, common spaced
-  dash variants, and harmless trailing star markers; never create canonical
-  track rows while parsing. `ID`/unknown titles remain unresolved and are not
-  searched.
+  dash variants, harmless trailing star markers, and paired
+  `Artist A vs. Artist B - Song A vs. Song B (Mashup)` entries. Expand a
+  balanced mashup into separately searchable staging rows while preserving its
+  timestamp and original line; never create canonical track rows while parsing.
+  `ID`/unknown titles remain unresolved and are not searched.
 - Search TIDAL only when explicitly requested, throttle sequential searches,
   cache serializable alternatives in the staging store, and let the user choose
   a candidate before liking it.
@@ -330,7 +347,7 @@ revalidation on the following run.
   Reconcile those values into SQLite when Playlist Sync opens, and refresh the
   mounted sidebar after Save/Sync so a changed classification moves immediately.
 - Sorted by TIDAL favorite date, newest first.
-- Loads 30 rows at a time; an `IntersectionObserver` requests the next offset
+- The React browser loads 200 rows at a time; an `IntersectionObserver` requests the next offset
   near the bottom of the table.
 - Loaded pages are appended to SQLite. Recent cached pages are reused for five
   minutes; Refresh starts again at offset zero and bypasses the cache.

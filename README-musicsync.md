@@ -143,7 +143,29 @@ The TIDAL integration currently uses the unofficial `tidalapi` Python package.
 Keep the dependency updated, and expect that TIDAL service changes can
 occasionally require a package update.
 
-# Discogs metadata probe
+## YouTube Analytics for My Mixes
+
+Enable the YouTube Data API v3 and YouTube Analytics API in Google Cloud, then
+configure a Web OAuth client with this exact redirect URI:
+
+```text
+http://localhost:8081/api/v1/youtube/callback
+```
+
+The local `.env` values are:
+
+```dotenv
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REDIRECT_URI=http://localhost:8081/api/v1/youtube/callback
+```
+
+Restart the backend, open **Settings**, and choose **Connect YouTube**. OAuth
+tokens stay in the ignored `.youtube_oauth.json` file. Opening **My mixes →
+Overview** refreshes the owner analytics automatically; the overview also keeps
+a manual refresh button for retries. Returned analytics are cached in SQLite.
+
+## Discogs metadata probe
 
 To test Discogs coverage for labels, genres, and electronic styles, generate a
 personal token under **Discogs Settings → Developers**, then add it to the local

@@ -209,6 +209,12 @@ a { color: inherit; }
 .job-status.failed strong { color: var(--danger); }
 
 .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 13px; }
+.mix-overview-table-wrap { margin-top: 18px; overflow: auto; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--panel) 94%, black); }
+.mix-overview-table { min-width: 850px; }
+.mix-overview-table td { height: 58px; }
+.mix-overview-table .mix-cover-column { width: 96px; min-width: 96px; }
+.mix-overview-table img, .mix-cover-empty { display: grid; width: 82px; aspect-ratio: 16 / 9; place-items: center; border-radius: 5px; object-fit: cover; background: var(--input); color: var(--muted); }
+.mix-name-link { color: var(--text); font-weight: 700; }
 .media-card { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); text-decoration: none; }
 .watched-mix-header { display: grid; grid-template-columns: minmax(220px, 360px) 1fr; gap: 22px; align-items: center; margin-bottom: 18px; }
 .watched-mix-header img { width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; object-fit: cover; }
@@ -240,4 +246,8 @@ a { color: inherit; }
 @media (max-width: 1180px) {
   .quick-filters { grid-template-columns: repeat(4, minmax(100px, 1fr)); }
   .library-layout { grid-template-columns: minmax(0, 1fr) 260px; }
+}
+.metric-scale-cell {
+  background-clip: padding-box;
+  transition: background-color 120ms ease;
 }

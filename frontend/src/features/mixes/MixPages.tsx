@@ -1,23 +1,39 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../../api/client'
-import type { Job } from '../../api/types'
+import type { Job, MixSummary, YouTubeStatus } from '../../api/types'
 import { JobStatus } from '../../components/JobStatus'
 import { TrackBrowser } from '../track-browser/TrackBrowser'
 import { MixStopwatch } from '../track-browser/MixStopwatch'
 import { formatYouTubeFacts, watchedMixPresentation } from './mixPresentation'
+import { MixOverviewTable } from './MixOverviewTable'
 import { loadTemporaryState, saveTemporaryState } from './watchedMixState'
 
-type Mix = { folder_name: string; youtube_url: string; tidal_url: string; tidal_playlist_name: string; cover_url: string; youtube_title?: string; youtube_channel?: string; youtube_views?: number | null; youtube_upload_date?: string; youtube_metadata_error?: string }
+type Mix = MixSummary & { youtube_title?: string; youtube_channel?: string; youtube_views?: number | null; youtube_upload_date?: string; youtube_metadata_error?: string }
 type WatchedMix = { video_id: string; title: string; channel_name: string; upload_date: string; youtube_url: string; cover_url?: string; live_title?: string; live_channel_name?: string; live_view_count?: number | null; live_upload_date?: string; live_metadata_error?: string }
 type Candidate = Record<string, unknown> & { id: string; label: string; score: number }
 type Pending = { id: number; artist: string; title: string; mix_position: string; mix_title: string; channel_name: string; status: string; candidates: Candidate[] }
 type StagingRow = { row_id: number; raw_line: string; timestamp: string; artist: string; title: string; status: string; matches: Candidate[]; selected_id: string }
 
 export function MixesPage() {
-  const mixes = useQuery({ queryKey: ['mixes'], queryFn: () => api<Mix[]>('/mixes') })
-  return <section><h1>My mixes</h1><p>Local mixes discovered from your DJ folder.</p><div className="media-grid">{mixes.data?.map((mix) => <Link className="media-card" to={`/mixes/${encodeURIComponent(mix.folder_name)}`} key={mix.folder_name}>{mix.cover_url ? <img src={mix.cover_url} alt="" /> : <div className="cover-placeholder">♪</div>}<div><h2>{mix.folder_name}</h2><p>{mix.tidal_playlist_name || 'No TIDAL setlist imported'}</p></div></Link>)}</div></section>
+  const client = useQueryClient()
+  const mixes = useQuery({ queryKey: ['mixes'], queryFn: () => api<MixSummary[]>('/mixes') })
+  const youtube = useQuery({ queryKey: ['youtube-status'], queryFn: () => api<YouTubeStatus>('/youtube/status') })
+  const [analyticsJobId, setAnalyticsJobId] = useState<string | null>(null)
+  const [analyticsError, setAnalyticsError] = useState('')
+  const autoRefreshStarted = useRef(false)
+  const refreshAnalytics = useMutation({
+    mutationFn: () => api<Job>('/youtube/analytics/refresh', { method: 'POST' }),
+    onSuccess: (job) => { setAnalyticsError(''); setAnalyticsJobId(job.id) },
+    onError: (error) => setAnalyticsError(error.message),
+  })
+  useEffect(() => {
+    if (!youtube.data?.connected || autoRefreshStarted.current) return
+    autoRefreshStarted.current = true
+    refreshAnalytics.mutate()
+  }, [youtube.data?.connected])
+  return <section><header className="tool-heading"><div><h1>My mixes</h1><p>Overview of locally indexed mixes and cached owner analytics.</p></div><div className="button-row">{youtube.data?.connected ? <button type="button" className="primary" onClick={() => refreshAnalytics.mutate()} disabled={refreshAnalytics.isPending || Boolean(analyticsJobId)}>Refresh YouTube analytics</button> : <Link className="button-link" to="/settings">Connect YouTube in Settings</Link>}</div></header>{youtube.data && !youtube.data.configured ? <div className="warning">Configure Google OAuth credentials and restart the backend.</div> : null}<JobStatus jobId={analyticsJobId} onComplete={() => { setAnalyticsJobId(null); void client.invalidateQueries({ queryKey: ['mixes'] }) }} onFailed={(message) => { setAnalyticsError(message); setAnalyticsJobId(null) }} />{analyticsError ? <div className="error-banner">{analyticsError}</div> : null}{mixes.isError ? <div className="error-banner">{mixes.error.message}</div> : null}<MixOverviewTable mixes={mixes.data ?? []} /></section>
 }
 
 export function MixDetailPage() {

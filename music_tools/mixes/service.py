@@ -34,6 +34,16 @@ class Mix:
     tidal_url: str
     tidal_playlist_id: str
     tidal_playlist_name: str
+    updated_at: str = ""
+    track_count: int = 0
+    youtube_views: int | None = None
+    youtube_watch_minutes: float | None = None
+    youtube_average_view_duration: float | None = None
+    youtube_average_view_percentage: float | None = None
+    youtube_likes: int | None = None
+    youtube_comments: int | None = None
+    youtube_subscribers_gained: int | None = None
+    youtube_analytics_fetched_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -156,16 +166,31 @@ def discover_mixes() -> list[Mix]:
         except UnicodeDecodeError:
             positions = positions_path.read_text(encoding="cp1252", errors="replace")
         metadata = saved_metadata.get(folder.name, {})
+        saved_youtube_url = str(metadata.get("youtube_url", "") or "")
+        analytics_current = bool(
+            youtube_video_id(saved_youtube_url)
+            and youtube_video_id(saved_youtube_url) == metadata.get("youtube_video_id")
+        )
         mixes.append(
             Mix(
                 folder_name=folder.name,
                 positions=positions,
                 cover_path=cover_path.resolve() if cover_path.is_file() else None,
                 audio_path=audio_path.resolve() if audio_path.is_file() else None,
-                youtube_url=metadata.get("youtube_url", ""),
+                youtube_url=saved_youtube_url,
                 tidal_url=metadata.get("tidal_url", ""),
                 tidal_playlist_id=metadata.get("tidal_playlist_id", ""),
                 tidal_playlist_name=metadata.get("tidal_playlist_name", ""),
+                updated_at=str(metadata.get("updated_at", "") or ""),
+                track_count=int(metadata.get("track_count", 0) or 0),
+                youtube_views=metadata.get("youtube_views") if analytics_current else None,
+                youtube_watch_minutes=metadata.get("youtube_watch_minutes") if analytics_current else None,
+                youtube_average_view_duration=metadata.get("youtube_average_view_duration") if analytics_current else None,
+                youtube_average_view_percentage=metadata.get("youtube_average_view_percentage") if analytics_current else None,
+                youtube_likes=metadata.get("youtube_likes") if analytics_current else None,
+                youtube_comments=metadata.get("youtube_comments") if analytics_current else None,
+                youtube_subscribers_gained=metadata.get("youtube_subscribers_gained") if analytics_current else None,
+                youtube_analytics_fetched_at=str(metadata.get("youtube_analytics_fetched_at", "") or "") if analytics_current else "",
             )
         )
     return mixes
