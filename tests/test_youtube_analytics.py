@@ -63,7 +63,7 @@ def test_query_video_titles_batches_and_caches_titles(monkeypatch):
         service.requests,
         "get",
         lambda *_args, **_kwargs: Response({
-            "items": [{"id": "video-id", "snippet": {"title": "Dark Progressive Mix", "publishedAt": "2026-01-05T12:30:00Z"}}],
+            "items": [{"id": "video-id", "snippet": {"title": "Dark Progressive Mix", "publishedAt": "2026-01-05T12:30:00Z"}, "contentDetails": {"duration": "PT1H2M3S"}}],
         }),
     )
 
@@ -72,6 +72,7 @@ def test_query_video_titles_batches_and_caches_titles(monkeypatch):
     assert result == {"video-id": "Dark Progressive Mix"}
     assert service.cached_video_title("video-id") == "Dark Progressive Mix"
     assert service.cached_video_upload_date("video-id") == "2026-01-05"
+    assert service.cached_video_duration_seconds("video-id") == 3723
 
 
 def test_query_video_titles_falls_back_to_public_oembed(monkeypatch):

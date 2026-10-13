@@ -90,3 +90,39 @@ def test_mapping_save_rejects_invalid_direction_without_saving(monkeypatch):
         }]))
 
     assert raised.value.status_code == 422
+
+
+def test_search_spotify_playlists_filters_and_returns_urls(monkeypatch):
+    settings._PLAYLIST_CACHE.clear()
+
+    class Spotify:
+        def current_user_playlists(self, limit):
+            assert limit == 50
+            return {"items": [
+                {"id": "one", "name": "Deep House", "external_urls": {"spotify": "https://open.spotify.com/playlist/one"}},
+                {"id": "two", "name": "Techno", "external_urls": {}},
+            ], "next": None}
+
+    monkeypatch.setattr(settings.engine, "spotify_client", Spotify)
+
+    result = settings.search_sync_playlists("spotify", "deep")
+
+    assert result == [{"id": "one", "name": "Deep House", "url": "https://open.spotify.com/playlist/one"}]
+
+
+def test_search_tidal_playlists_uses_cached_user_playlist_list(monkeypatch):
+    settings._PLAYLIST_CACHE.clear()
+    calls = []
+    playlist = type("Playlist", (), {"id": "tidal-id", "name": "Melodic Techno"})()
+    user = type("User", (), {"playlists": lambda self: calls.append(True) or [playlist]})()
+    session = type("Session", (), {"user": user})()
+    monkeypatch.setattr(settings.engine, "tidal_client", lambda interactive=False: session)
+
+    first = settings.search_sync_playlists("tidal", "melodic")
+    second = settings.search_sync_playlists("tidal", "techno")
+
+    assert first == second == [{
+        "id": "tidal-id", "name": "Melodic Techno",
+        "url": "https://tidal.com/playlist/tidal-id",
+    }]
+    assert len(calls) == 1

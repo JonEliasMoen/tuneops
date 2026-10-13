@@ -233,6 +233,7 @@ CREATE TABLE IF NOT EXISTS watched_mixes (
     title TEXT NOT NULL DEFAULT '',
     channel_name TEXT NOT NULL DEFAULT '',
     upload_date TEXT NOT NULL DEFAULT '',
+    rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5),
     added_at TEXT NOT NULL
 );
 
@@ -441,6 +442,11 @@ def initialize(path: Path = DATABASE_PATH) -> None:
                     f"ALTER TABLE watched_mixes ADD COLUMN {column} "
                     "TEXT NOT NULL DEFAULT ''"
                 )
+        if "rating" not in watched_mix_columns:
+            connection.execute(
+                "ALTER TABLE watched_mixes ADD COLUMN rating "
+                "INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5)"
+            )
         missing_artist_rows = connection.execute(
             """
             SELECT t.provider_track_id, t.artist
@@ -1020,32 +1026,54 @@ def youtube_video_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, st
     return {str(row["video_id"]): dict(row) for row in rows}
 
 
-def watched_mixes(path: Path = DATABASE_PATH) -> list[dict[str, str]]:
+def watched_mixes(path: Path = DATABASE_PATH) -> list[dict[str, Any]]:
     """Return manually saved YouTube mixes, newest first."""
     initialize(path)
     with connect(path) as connection:
         rows = connection.execute(
             """
-            SELECT video_id, youtube_url, title, channel_name, upload_date, added_at
-            FROM watched_mixes
-            ORDER BY added_at DESC
+            SELECT wm.video_id, wm.youtube_url, wm.title, wm.channel_name,
+                   wm.upload_date, wm.added_at, wm.rating
+            FROM watched_mixes wm
+            ORDER BY wm.added_at DESC
             """
         ).fetchall()
     return [dict(row) for row in rows]
 
 
-def watched_mix(video_id: str, path: Path = DATABASE_PATH) -> dict[str, str] | None:
+def watched_mix(video_id: str, path: Path = DATABASE_PATH) -> dict[str, Any] | None:
     """Return one saved YouTube mix."""
     initialize(path)
     with connect(path) as connection:
         row = connection.execute(
             """
-            SELECT video_id, youtube_url, title, channel_name, upload_date, added_at
-            FROM watched_mixes WHERE video_id=?
+            SELECT wm.video_id, wm.youtube_url, wm.title, wm.channel_name,
+                   wm.upload_date, wm.added_at, wm.rating
+            FROM watched_mixes wm
+            WHERE wm.video_id=?
             """,
             (str(video_id),),
         ).fetchone()
     return dict(row) if row else None
+
+
+def set_watched_mix_rating(
+    video_id: str, rating: int, path: Path = DATABASE_PATH
+) -> dict[str, Any]:
+    """Set a 1-5 star rating, or clear it with zero, for a watched mix."""
+    normalized_id = str(video_id or "").strip()
+    normalized_rating = int(rating)
+    if normalized_rating < 0 or normalized_rating > 5:
+        raise ValueError("Rating must be between 0 and 5")
+    initialize(path)
+    with connect(path) as connection:
+        cursor = connection.execute(
+            "UPDATE watched_mixes SET rating=? WHERE video_id=?",
+            (normalized_rating, normalized_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("Watched mix was not found")
+    return watched_mix(normalized_id, path) or {}
 
 
 def save_watched_mix(
@@ -1055,7 +1083,7 @@ def save_watched_mix(
     channel_name: str = "",
     upload_date: str = "",
     path: Path = DATABASE_PATH,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Save a validated watched-mix URL without overwriting its first-added date."""
     normalized_id = str(video_id or "").strip()
     normalized_url = str(youtube_url or "").strip()

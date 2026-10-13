@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from backend.app.services import library
 from backend.app.api import library as library_api
 from backend.app.schemas import EventMediaUpdate
-from backend.app.schemas import MixUrlsUpdate, WatchedMixUpdate
+from backend.app.schemas import MixUrlsUpdate, WatchedMixRatingUpdate, WatchedMixUpdate
 
 
 def _row(track_id: str, title: str, timestamp: float | None, bpm: str = ""):
@@ -255,6 +255,7 @@ def test_mix_overview_exposes_cached_counts_and_local_availability(monkeypatch):
             tidal_playlist_name="DJ Set Darkprog",
             track_count=12,
             updated_at="2026-10-02T12:30:00",
+            positions="[00:00] Intro\n[58:30] Last track",
             audio_path=object(),
             cover_path=None,
         )],
@@ -277,6 +278,7 @@ def test_mix_overview_exposes_cached_counts_and_local_availability(monkeypatch):
         "updated_at": "2026-10-02T12:30:00",
         "youtube_title": "Dark Progressive Mix",
         "youtube_upload_date": "2026-01-05",
+        "youtube_duration_seconds": 3510,
         "youtube_views": None,
         "youtube_watch_minutes": None,
         "youtube_average_view_duration": None,
@@ -322,6 +324,32 @@ def test_watched_mix_edit_reuses_existing_record_and_delete_is_explicit(monkeypa
         "channel_name": "New channel",
         "upload_date": "2026-09-25",
     }
+
+
+def test_watched_mix_rating_updates_the_saved_mix(monkeypatch):
+    monkeypatch.setattr(
+        library_api,
+        "set_watched_mix_rating",
+        lambda video_id, rating: {"video_id": video_id, "rating": rating},
+    )
+
+    result = library_api.update_watched_mix_rating(
+        "video-id", WatchedMixRatingUpdate(rating=5)
+    )
+
+    assert result == {"video_id": "video-id", "rating": 5}
+
+
+def test_watched_mix_list_allows_numeric_ratings(monkeypatch):
+    monkeypatch.setattr(
+        library_api,
+        "watched_mixes",
+        lambda: [{"video_id": "video-id", "title": "Mix", "rating": 4}],
+    )
+
+    result = library_api.watched_mix_list()
+
+    assert result[0]["rating"] == 4
 
 
 def test_watched_mix_detail_uses_video_id_for_live_youtube_media(monkeypatch):

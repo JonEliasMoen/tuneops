@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { MixSummary } from '../../api/types'
-import { sortMixes } from './mixOverview'
+import { mixPerformance, sortMixes, viewsPerDay } from './mixOverview'
 
 function mix(folder_name: string, track_count: number, updated_at = ''): MixSummary {
   return {
-    folder_name, track_count, updated_at, youtube_url: '', youtube_analytics_url: '', youtube_title: '', youtube_upload_date: updated_at, tidal_url: '',
+    folder_name, track_count, updated_at, youtube_url: '', youtube_analytics_url: '', youtube_title: '', youtube_upload_date: updated_at, youtube_duration_seconds: null, tidal_url: '',
     tidal_playlist_id: '', tidal_playlist_name: '', cover_url: '',
     has_cover: false,
     youtube_views: null, youtube_watch_minutes: null,
@@ -32,5 +32,26 @@ describe('My Mixes overview sorting', () => {
     const high = { ...mix('High', 1), youtube_likes: 120, youtube_comments: 30 }
     expect(sortMixes([low, high], { field: 'youtube_likes', direction: 'desc' })[0].folder_name).toBe('High')
     expect(sortMixes([low, high], { field: 'youtube_comments', direction: 'desc' })[0].folder_name).toBe('High')
+  })
+
+  it('normalizes views by days since upload and sorts the derived rate', () => {
+    const newer = { ...mix('Newer', 1, '2026-10-06'), youtube_views: 20 }
+    const older = { ...mix('Older', 1, '2026-09-28'), youtube_views: 50 }
+    expect(viewsPerDay(newer, new Date('2026-10-07T12:00:00Z'))).toBe(10)
+    expect(viewsPerDay(older, new Date('2026-10-07T12:00:00Z'))).toBe(5)
+    expect(sortMixes([older, newer], { field: 'youtube_views_per_day', direction: 'desc' })[0].folder_name).toBe('Newer')
+  })
+
+  it('classifies relative reach and retention into actionable verdicts', () => {
+    const today = new Date('2026-10-07T12:00:00Z')
+    const winner = { ...mix('Winner', 1, '2026-10-06'), youtube_views: 40, youtube_average_view_percentage: 70 }
+    const undersold = { ...mix('Undersold', 1, '2026-10-06'), youtube_views: 2, youtube_average_view_percentage: 65 }
+    const weak = { ...mix('Weak', 1, '2026-10-06'), youtube_views: 30, youtube_average_view_percentage: 20 }
+    const needsWork = { ...mix('Needs work', 1, '2026-10-06'), youtube_views: 1, youtube_average_view_percentage: 15 }
+    const mixes = [winner, undersold, weak, needsWork]
+    expect(mixPerformance(winner, mixes, today)?.verdict).toBe('Winner')
+    expect(mixPerformance(undersold, mixes, today)?.verdict).toBe('Undersold')
+    expect(mixPerformance(weak, mixes, today)?.verdict).toBe('Weak hold')
+    expect(mixPerformance(needsWork, mixes, today)?.verdict).toBe('Needs work')
   })
 })

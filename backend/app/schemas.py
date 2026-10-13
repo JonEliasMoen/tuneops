@@ -148,6 +148,7 @@ class PublicSettings(BaseModel):
     history_top_tracks: int = Field(default=20, ge=1, le=100)
     spotify_search_delay_seconds: float = 0.75
     quick_views: list[dict[str, Any]] = Field(default_factory=list)
+    mix_quick_views: list[dict[str, Any]] = Field(default_factory=list)
     lastfm_api_key_configured: bool = False
 
 
@@ -160,6 +161,7 @@ class SettingsPatch(BaseModel):
     history_top_tracks: int | None = Field(default=None, ge=1, le=100)
     spotify_search_delay_seconds: float | None = Field(default=None, ge=0, le=30)
     quick_views: list[dict[str, Any]] | None = None
+    mix_quick_views: list[dict[str, Any]] | None = None
 
 
 class SyncMappings(BaseModel):
@@ -189,6 +191,10 @@ class WatchedMixUpdate(BaseModel):
     title: str = ""
     channel_name: str = ""
     upload_date: str = ""
+
+
+class WatchedMixRatingUpdate(BaseModel):
+    rating: int = Field(ge=0, le=5)
 
 
 class EventMediaUpdate(BaseModel):

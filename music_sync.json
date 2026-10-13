@@ -41,8 +41,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "a3887dbe53f475d7748a66d4b094d72c33a11a14a2334808be19175ee45e5856",
-      "last_sync": "2026-09-20T21:28:33.324150+00:00",
+      "source_version": "09e4059b0023ef1f5909436db9569bda3ab8a16998e777c94f0614336946d119",
+      "last_sync": "2026-10-04T20:12:41.882042+00:00",
       "collection_type": "playlist"
     },
     {
@@ -186,8 +186,8 @@
       "unmatched": {
         "tidal_to_spotify": []
       },
-      "source_version": "bf9d19ce5e0496a8f6c959ab13390f2760da20907a0989f6a3473821b93d633d",
-      "last_sync": "2026-10-01T15:01:39.791298+00:00",
+      "source_version": "64394047519820ec3ebfaad788881b400fb0ce02e0f50d79ee1d29bc48906b77",
+      "last_sync": "2026-10-13T15:01:19.847396+00:00",
       "collection_type": "playlist"
     },
     {
@@ -207,8 +207,8 @@
           }
         ]
       },
-      "source_version": "45a6818823a6a9d3ae4396d2a704eea0cdeb978ddaee2217acbddf8cd91c6a6a",
-      "last_sync": "2026-10-01T15:01:41.099808+00:00",
+      "source_version": "95e14262782e701b5c3835923f40889be26f3d5ad2c9ac29f6607191d50c34c1",
+      "last_sync": "2026-10-13T15:01:23.353666+00:00",
       "collection_type": "playlist"
     },
     {
@@ -359,8 +359,8 @@
           }
         ]
       },
-      "source_version": "AAAAixEFKQgK2JBeGTsDufkwH5q3HDSs",
-      "last_sync": "2026-09-29T16:40:16.628724+00:00",
+      "source_version": "AAAApFmIjzwAkXp07XLeLPTBz8mjTimQ",
+      "last_sync": "2026-10-05T17:46:00.443952+00:00",
       "collection_type": "source"
     },
     {
@@ -380,8 +380,8 @@
           }
         ]
       },
-      "source_version": "ba963ca3ce3f8901713863972e7d9a4844a12d7ccaf0abc482e2081913384204",
-      "last_sync": "2026-10-01T15:01:49.698151+00:00",
+      "source_version": "345c888c0a07f22ab92fff081b92bb6e029702f287843d725273b1375d1e0b26",
+      "last_sync": "2026-10-11T09:33:56.880286+00:00",
       "collection_type": "playlist"
     },
     {
@@ -391,8 +391,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/ec9db1ff-3135-4dc7-bd56-9d660919ed3a",
       "tidal_name": "",
-      "source_version": "2026-09-28 07:14:27.227000+00:00",
-      "last_sync": "2026-09-29T16:40:25.415546+00:00",
+      "source_version": "2026-10-11 16:00:01.460000+00:00",
+      "last_sync": "2026-10-12T15:41:09.145066+00:00",
       "collection_type": "playlist"
     },
     {
@@ -402,8 +402,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/67d8ba91-841e-4355-9dab-3d8824e154fb",
       "tidal_name": "",
-      "source_version": "2026-09-29 13:51:36.555000+00:00",
-      "last_sync": "2026-09-29T16:40:25.964595+00:00",
+      "source_version": "2026-10-12 06:30:55.888000+00:00",
+      "last_sync": "2026-10-12T15:41:09.699753+00:00",
       "collection_type": "playlist"
     },
     {
@@ -413,8 +413,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/81b04eb5-f92f-46db-ac51-3d8b9947351c",
       "tidal_name": "",
-      "source_version": "2026-09-29 19:02:09.077000+00:00",
-      "last_sync": "2026-10-01T15:01:51.044025+00:00",
+      "source_version": "2026-10-07 20:45:57.448000+00:00",
+      "last_sync": "2026-10-08T17:23:08.769392+00:00",
       "collection_type": "playlist"
     },
     {
@@ -424,8 +424,8 @@
       "spotify": "1b21mY2Y9lRY5OPu0FtYXv",
       "tidal": "https://tidal.com/playlist/409c9a77-9854-4036-8d07-0b9e96e04f0e",
       "tidal_name": "",
-      "source_version": "9a3b2c36a167f6bb358b1ea449be17f8ddf9fde808cadc478b652f4b84c0ebda",
-      "last_sync": "2026-09-29T16:40:29.201592+00:00",
+      "source_version": "498ef0f38cea92d38e6ca788ace21bbda0dcf44c1168a00c7d2de5f710fb4380",
+      "last_sync": "2026-10-13T15:01:29.353304+00:00",
       "collection_type": "playlist",
       "unmatched": {
         "tidal_to_spotify": []
@@ -438,8 +438,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/e873d913-f9b7-4425-bda4-186ba4b40957",
       "tidal_name": "",
-      "source_version": "2026-09-29 17:12:03.049000+00:00",
-      "last_sync": "2026-10-01T15:01:51.926872+00:00",
+      "source_version": "2026-10-10 10:25:50.750000+00:00",
+      "last_sync": "2026-10-11T09:33:59.228335+00:00",
       "collection_type": "playlist"
     },
     {
@@ -460,8 +460,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/a3579bcb-f369-4604-8f7f-493b73215397",
       "tidal_name": "",
-      "source_version": "2026-09-19 13:16:50.351000+00:00",
-      "last_sync": "2026-09-20T09:49:41.376384+00:00",
+      "source_version": "2026-10-03 09:16:55.666000+00:00",
+      "last_sync": "2026-10-04T20:13:03.869521+00:00",
       "collection_type": "event"
     },
     {
@@ -471,8 +471,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/d25c9103-7550-45bd-a96b-271e90221c8a",
       "tidal_name": "",
-      "source_version": "2026-09-27 18:54:33.881000+00:00",
-      "last_sync": "2026-09-27T21:47:15.818722+00:00",
+      "source_version": "2026-10-12 06:18:20.050000+00:00",
+      "last_sync": "2026-10-12T15:41:16.122968+00:00",
       "collection_type": "source"
     },
     {
@@ -483,8 +483,8 @@
       "spotify": "",
       "tidal": "https://tidal.com/playlist/ab3aa10e-25bf-4cd2-86c0-49feca0f1e1b",
       "tidal_name": "",
-      "source_version": "2026-09-27 21:41:58.946000+00:00",
-      "last_sync": "2026-09-27T21:47:16.316481+00:00"
+      "source_version": "2026-10-09 06:24:36.762000+00:00",
+      "last_sync": "2026-10-10T10:05:18.565465+00:00"
     },
     {
       "enabled": true,
@@ -520,6 +520,36 @@
       },
       "source_version": "AAAAAx2v3J4+wR1PP777oWEGBV7d6zee",
       "last_sync": "2026-09-25T20:17:24.495492+00:00"
+    },
+    {
+      "enabled": true,
+      "name": "københavn 2026",
+      "direction": "tidal_to_spotify",
+      "collection_type": "event",
+      "spotify": "1tG7q911M9wx0wy5SP8wAf",
+      "tidal": "https://tidal.com/playlist/0e02da18-8e82-4c50-8de1-966a31204a9d",
+      "tidal_name": "",
+      "unmatched": {
+        "tidal_to_spotify": [
+          {
+            "key": "isrc:USRC12400767",
+            "title": "Without You",
+            "artist": "Kygo, HAYLA",
+            "isrc": "USRC12400767"
+          }
+        ]
+      },
+      "source_version": "5ae92497591f18831d61253db3672fe65a7c368feeb18d22d69d81908cae838d",
+      "last_sync": "2026-10-07T14:51:04.661156+00:00"
+    },
+    {
+      "enabled": true,
+      "name": "selected 2026",
+      "direction": "spotify_to_tidal",
+      "collection_type": "source",
+      "spotify": "https://open.spotify.com/playlist/0o5SnEhsjgmUZ2wEN2xrsg?si=4f2043751fa24132",
+      "tidal": "",
+      "tidal_name": ""
     }
   ],
   "quick_views": [

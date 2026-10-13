@@ -82,6 +82,7 @@ export type PublicSettings = {
   history_top_tracks: number
   spotify_search_delay_seconds: number
   quick_views: Array<{ id: string; name: string; fields: string[]; default?: boolean }>
+  mix_quick_views: Array<{ id: string; name: string; fields: string[]; default?: boolean }>
   lastfm_api_key_configured: boolean
 }
 
@@ -110,7 +111,10 @@ export type MixSummary = {
   updated_at: string
   youtube_title: string
   youtube_upload_date: string
+  youtube_duration_seconds: number | null
   youtube_views: number | null
+  youtube_thumbnail_impressions: number | null
+  youtube_thumbnail_ctr: number | null
   youtube_watch_minutes: number | null
   youtube_average_view_duration: number | null
   youtube_average_view_percentage: number | null

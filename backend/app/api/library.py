@@ -27,6 +27,7 @@ from music_library.database import (
     tidal_dimensions_for_tracks,
     tidal_indexed_playlists,
     save_watched_mix,
+    set_watched_mix_rating,
     save_setlist_tidal_url,
     save_setlist_youtube_url,
     watched_mix,
@@ -43,6 +44,7 @@ from music_tools.mixes.service import (
     youtube_thumbnail_url,
     youtube_video_id,
 )
+from music_tools.youtube_analytics import service as youtube_service
 
 from ..schemas import (
     CollectionDescriptor,
@@ -62,6 +64,7 @@ from ..schemas import (
     WatchedMixAssociation,
     WatchedMixCreate,
     WatchedMixUpdate,
+    WatchedMixRatingUpdate,
     TracklistLikeRequest,
     TracklistParseRequest,
     TracklistWatchRequest,
@@ -74,6 +77,18 @@ from music_tools.watched_mixes.tracklist import parse_tracklist
 
 router = APIRouter(tags=["library"])
 WATCHED_MIX_COVER_ROOT = Path(__file__).resolve().parents[3] / ".watched_mix_covers"
+
+
+def _last_mix_cue_seconds(positions: str) -> int | None:
+    values: list[int] = []
+    for raw in str(positions or "").splitlines():
+        stamp = raw.strip().removeprefix("[").split("]", 1)[0].split(maxsplit=1)[0]
+        parts = stamp.split(":")
+        if len(parts) not in {2, 3} or not all(part.isdigit() for part in parts):
+            continue
+        numbers = [int(part) for part in parts]
+        values.append(numbers[0] * 60 + numbers[1] if len(numbers) == 2 else numbers[0] * 3600 + numbers[1] * 60 + numbers[2])
+    return max(values) if values else None
 
 
 def _path(prefix: str, value: str) -> str:
@@ -420,7 +435,7 @@ def associate_watched_mix(body: WatchedMixAssociation) -> dict[str, object]:
 
 
 @router.get("/watched-mixes")
-def watched_mix_list() -> list[dict[str, str]]:
+def watched_mix_list() -> list[dict[str, object]]:
     return [
         {**item, "cover_url": f"/api/v1/watched-mixes/{quote(str(item.get('video_id') or ''), safe='')}/cover"}
         for item in watched_mixes()
@@ -428,7 +443,7 @@ def watched_mix_list() -> list[dict[str, str]]:
 
 
 @router.post("/watched-mixes", status_code=201)
-def create_watched_mix(body: WatchedMixCreate) -> dict[str, str]:
+def create_watched_mix(body: WatchedMixCreate) -> dict[str, object]:
     video_id = youtube_video_id(body.youtube_url)
     if not video_id:
         raise HTTPException(status_code=422, detail="Enter a valid YouTube video URL")
@@ -478,7 +493,7 @@ def watched_mix_cover(video_id: str) -> FileResponse:
 
 
 @router.patch("/watched-mixes/{video_id}")
-def update_watched_mix(video_id: str, body: WatchedMixUpdate) -> dict[str, str]:
+def update_watched_mix(video_id: str, body: WatchedMixUpdate) -> dict[str, object]:
     record = watched_mix(video_id)
     if not record:
         raise HTTPException(status_code=404, detail="Watched mix was not found")
@@ -489,6 +504,16 @@ def update_watched_mix(video_id: str, body: WatchedMixUpdate) -> dict[str, str]:
         channel_name=body.channel_name,
         upload_date=body.upload_date,
     )
+
+
+@router.put("/watched-mixes/{video_id}/rating")
+def update_watched_mix_rating(
+    video_id: str, body: WatchedMixRatingUpdate
+) -> dict[str, object]:
+    try:
+        return set_watched_mix_rating(video_id, body.rating)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete("/watched-mixes/{video_id}", status_code=204)
@@ -608,6 +633,10 @@ def mixes() -> list[dict[str, object]]:
             "updated_at": mix.updated_at,
             "youtube_title": str(video_metadata.get(youtube_video_id(mix.youtube_url) or "", {}).get("title") or ""),
             "youtube_upload_date": str(video_metadata.get(youtube_video_id(mix.youtube_url) or "", {}).get("upload_date") or ""),
+            "youtube_duration_seconds": (
+                youtube_service.cached_video_duration_seconds(youtube_video_id(mix.youtube_url))
+                or _last_mix_cue_seconds(mix.positions)
+            ),
             "youtube_views": getattr(mix, "youtube_views", None),
             "youtube_watch_minutes": getattr(mix, "youtube_watch_minutes", None),
             "youtube_average_view_duration": getattr(mix, "youtube_average_view_duration", None),
@@ -632,6 +661,10 @@ def mix_detail(folder_name: str) -> dict[str, object]:
     return {
         "folder_name": mix.folder_name,
         "youtube_url": mix.youtube_url,
+        "youtube_analytics_url": (
+            f"https://studio.youtube.com/video/{youtube_video_id(mix.youtube_url)}/analytics/tab-overview/period-default"
+            if youtube_video_id(mix.youtube_url) else ""
+        ),
         "tidal_url": mix.tidal_url,
         "tidal_playlist_name": mix.tidal_playlist_name,
         "cover_url": _path("api/v1/mixes", mix.folder_name) + "/cover" if mix.cover_path else youtube_thumbnail_url(mix.youtube_url),

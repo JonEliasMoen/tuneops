@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import time
 from datetime import date
@@ -22,6 +23,7 @@ ANALYTICS_URL = "https://youtubeanalytics.googleapis.com/v2/reports"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 _VIDEO_TITLES: dict[str, str] = {}
 _VIDEO_UPLOAD_DATES: dict[str, str] = {}
+_VIDEO_DURATIONS: dict[str, int] = {}
 SCOPES = (
     "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/yt-analytics.readonly",
@@ -180,7 +182,7 @@ def query_video_titles(video_ids: list[str]) -> dict[str, str]:
             response = requests.get(
                 VIDEOS_URL,
                 headers=headers,
-                params={"part": "snippet", "id": ",".join(batch)},
+                params={"part": "snippet,contentDetails", "id": ",".join(batch)},
                 timeout=30,
             )
             response.raise_for_status()
@@ -215,6 +217,11 @@ def query_video_titles(video_ids: list[str]) -> dict[str, str]:
             published_at = str(snippet.get("publishedAt") or "").strip()
             if video_id and published_at:
                 _VIDEO_UPLOAD_DATES[video_id] = published_at[:10]
+            duration = str((item.get("contentDetails") or {}).get("duration") or "")
+            duration_match = re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", duration)
+            if video_id and duration_match:
+                hours, minutes, seconds = (int(value or 0) for value in duration_match.groups())
+                _VIDEO_DURATIONS[video_id] = hours * 3600 + minutes * 60 + seconds
     _VIDEO_TITLES.update(titles)
     return titles
 
@@ -225,3 +232,7 @@ def cached_video_title(video_id: str | None) -> str:
 
 def cached_video_upload_date(video_id: str | None) -> str:
     return _VIDEO_UPLOAD_DATES.get(str(video_id or ""), "")
+
+
+def cached_video_duration_seconds(video_id: str | None) -> int | None:
+    return _VIDEO_DURATIONS.get(str(video_id or ""))

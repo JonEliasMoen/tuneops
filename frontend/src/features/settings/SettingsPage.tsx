@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import type { Job, PublicSettings, YouTubeStatus } from '../../api/types'
 import { JobStatus } from '../../components/JobStatus'
 import { COLUMNS, DEFAULT_FIELDS } from '../track-browser/columns'
+import { DEFAULT_MIX_FIELDS, MIX_FIELD_OPTIONS } from '../mixes/mixOverview'
 
 export function SettingsPage() {
   const client = useQueryClient()
@@ -35,6 +36,19 @@ export function SettingsPage() {
   function makeDefault(id: string) {
     if (!draft) return
     setDraft({ ...draft, quick_views: draft.quick_views.map((view) => ({ ...view, default: view.id === id })) })
+  }
+  function addMixQuickView() {
+    if (!draft) return
+    const id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `mix-view-${Date.now()}`
+    setDraft({ ...draft, mix_quick_views: [...draft.mix_quick_views, { id, name: 'New view', fields: [...DEFAULT_MIX_FIELDS], default: draft.mix_quick_views.length === 0 }] })
+  }
+  function updateMixQuickView(id: string, change: Partial<PublicSettings['mix_quick_views'][number]>) {
+    if (!draft) return
+    setDraft({ ...draft, mix_quick_views: draft.mix_quick_views.map((view) => view.id === id ? { ...view, ...change } : view) })
+  }
+  function makeMixDefault(id: string) {
+    if (!draft) return
+    setDraft({ ...draft, mix_quick_views: draft.mix_quick_views.map((view) => ({ ...view, default: view.id === id })) })
   }
   if (!draft) return <p>Loading settings…</p>
   return <section className="settings-page">
@@ -71,6 +85,16 @@ export function SettingsPage() {
           </div>
           <div className="quick-view-fields">{COLUMNS.filter((column) => column.key !== 'mix_position').map((column) => <label key={column.key}><input type="checkbox" checked={view.fields.includes(column.key)} onChange={(event) => updateQuickView(view.id, { fields: event.target.checked ? [...view.fields, column.key] : view.fields.filter((field) => field !== column.key) })} />{column.label}</label>)}</div>
         </article>)}</div> : <p>No Quick Views configured yet.</p>}
+      </section>
+      <section className="settings-card quick-view-settings"><div className="settings-card-heading"><div><h2>My Mixes Quick Views</h2><p>Named field sets used only by the My Mixes overview table.</p></div><button type="button" onClick={addMixQuickView}>Add Quick View</button></div>
+        {draft.mix_quick_views.length ? <div className="quick-view-list">{draft.mix_quick_views.map((view) => <article className="quick-view-editor" key={view.id}>
+          <div className="quick-view-head">
+            <label>Name<input value={view.name} onChange={(event) => updateMixQuickView(view.id, { name: event.target.value })} /></label>
+            <label className="toggle-row"><input type="radio" name="default-mix-quick-view" checked={Boolean(view.default)} onChange={() => makeMixDefault(view.id)} />Default</label>
+            <button type="button" className="danger" onClick={() => setDraft({ ...draft, mix_quick_views: draft.mix_quick_views.filter((item) => item.id !== view.id) })}>Remove</button>
+          </div>
+          <div className="quick-view-fields">{MIX_FIELD_OPTIONS.map(([field, label]) => <label key={field}><input type="checkbox" checked={view.fields.includes(field)} onChange={(event) => updateMixQuickView(view.id, { fields: event.target.checked ? [...view.fields, field] : view.fields.filter((item) => item !== field) })} />{label}</label>)}</div>
+        </article>)}</div> : <p>No My Mixes Quick Views configured yet.</p>}
       </section>
     </div>
     {save.isError ? <div className="error-banner">{save.error.message}</div> : null}

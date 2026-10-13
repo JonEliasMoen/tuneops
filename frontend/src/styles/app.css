@@ -186,6 +186,9 @@ a { color: inherit; }
 .mapping-head { display: flex; align-items: end; gap: 12px; }
 .mapping-head label { flex: 1; max-width: 470px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.playlist-picker { display: grid; align-content: start; gap: 7px; }
+.playlist-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.playlist-picker > select { width: 100%; }
 .toggle-row { display: flex; align-items: center; gap: 8px; color: var(--text); }
 .toggle-row input { width: auto; min-height: 0; }
 .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
@@ -219,6 +222,11 @@ a { color: inherit; }
 .watched-mix-header { display: grid; grid-template-columns: minmax(220px, 360px) 1fr; gap: 22px; align-items: center; margin-bottom: 18px; }
 .watched-mix-header img { width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; object-fit: cover; }
 .watched-mix-header .cover-placeholder { border-radius: 10px; }
+.watched-mix-rating { display: flex; gap: 2px; margin: 7px 0 9px; }
+.watched-mix-rating button { min-width: 0; padding: 0 2px; border: 0; background: transparent; color: var(--muted); font-size: 25px; line-height: 1; cursor: pointer; }
+.watched-mix-rating button:hover, .watched-mix-rating button.selected { color: #f6c453; }
+.watched-mix-rating button:focus-visible { border-radius: 4px; outline: 2px solid var(--accent); outline-offset: 2px; }
+.watched-mix-rating button:disabled { cursor: wait; opacity: .65; }
 .tracklist-import { margin-bottom: 22px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .tracklist-import summary { cursor: pointer; font-size: 18px; font-weight: 700; }
 .tracklist-import textarea { width: 100%; margin: 12px 0; resize: vertical; }
@@ -251,3 +259,9 @@ a { color: inherit; }
   background-clip: padding-box;
   transition: background-color 120ms ease;
 }
+
+.performance-verdict { display: inline-flex; padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; white-space: nowrap; font-size: 12px; font-weight: 750; }
+.performance-verdict.winner { border-color: #36a96f; background: rgb(54 169 111 / 16%); color: #70dfa3; }
+.performance-verdict.undersold { border-color: #458bd1; background: rgb(69 139 209 / 16%); color: #7dbbfa; }
+.performance-verdict.weak-hold { border-color: #d49b38; background: rgb(212 155 56 / 16%); color: #f0bd63; }
+.performance-verdict.needs-work { border-color: #bd5963; background: rgb(189 89 99 / 16%); color: #ed8d96; }

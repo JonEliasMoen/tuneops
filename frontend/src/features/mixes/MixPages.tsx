@@ -11,10 +11,25 @@ import { MixOverviewTable } from './MixOverviewTable'
 import { loadTemporaryState, saveTemporaryState } from './watchedMixState'
 
 type Mix = MixSummary & { youtube_title?: string; youtube_channel?: string; youtube_views?: number | null; youtube_upload_date?: string; youtube_metadata_error?: string }
-type WatchedMix = { video_id: string; title: string; channel_name: string; upload_date: string; youtube_url: string; cover_url?: string; live_title?: string; live_channel_name?: string; live_view_count?: number | null; live_upload_date?: string; live_metadata_error?: string }
+type WatchedMix = { video_id: string; title: string; channel_name: string; upload_date: string; youtube_url: string; rating: number; cover_url?: string; live_title?: string; live_channel_name?: string; live_view_count?: number | null; live_upload_date?: string; live_metadata_error?: string }
 type Candidate = Record<string, unknown> & { id: string; label: string; score: number }
 type Pending = { id: number; artist: string; title: string; mix_position: string; mix_title: string; channel_name: string; status: string; candidates: Candidate[] }
 type StagingRow = { row_id: number; raw_line: string; timestamp: string; artist: string; title: string; status: string; matches: Candidate[]; selected_id: string }
+
+function WatchedMixRating({ rating, disabled, onChange }: { rating: number; disabled: boolean; onChange: (rating: number) => void }) {
+  return <div className="watched-mix-rating" aria-label={rating ? `${rating} out of 5 stars` : 'Not rated'}>
+    {[1, 2, 3, 4, 5].map((value) => <button
+      key={value}
+      type="button"
+      className={value <= rating ? 'selected' : ''}
+      disabled={disabled}
+      aria-label={`${value} star${value === 1 ? '' : 's'}`}
+      aria-pressed={value === rating}
+      title={value === rating ? 'Clear rating' : `Rate ${value} star${value === 1 ? '' : 's'}`}
+      onClick={() => onChange(value === rating ? 0 : value)}
+    >★</button>)}
+  </div>
+}
 
 export function MixesPage() {
   const client = useQueryClient()
@@ -55,7 +70,7 @@ export function MixDetailPage() {
   return <div>
     {mix.data ? <section className="watched-mix-header mix-detail-header">
       {mix.data.cover_url ? <img src={mix.data.cover_url} alt="" /> : null}
-      <div><p className="eyebrow">My mix</p><h1>{mix.data.folder_name}{mix.data.youtube_title ? <span className="mix-youtube-heading">{mix.data.youtube_title}</span> : null}</h1>{youtubeFacts ? <p className="mix-youtube-facts">{youtubeFacts}</p> : null}{mix.data.tidal_playlist_name ? <p className="good">TIDAL setlist: {mix.data.tidal_playlist_name}</p> : null}<div className="event-media-fields"><label>YouTube URL<input value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} /></label><label>TIDAL playlist URL<input value={tidalUrl} onChange={(event) => setTidalUrl(event.target.value)} /></label><div className="button-row"><button className="primary" type="button" onClick={() => saveUrls.mutate()} disabled={saveUrls.isPending}>Save URLs</button><button type="button" onClick={() => importTidal.mutate()} disabled={!tidalUrl.trim() || importTidal.isPending}>Sync playlist</button>{saveUrls.isError || importTidal.isError ? <span className="warning">{saveUrls.error?.message || importTidal.error?.message}</span> : null}</div><JobStatus jobId={importJobId} onComplete={() => { setImportJobId(null); void client.invalidateQueries({ queryKey: ['mix', folderName] }); void client.invalidateQueries({ queryKey: ['tracks', 'setlist', folderName] }) }} onFailed={(message) => { setImportJobId(null); setImportError(message) }} />{importError ? <p className="warning">{importError}</p> : null}</div></div>
+      <div><p className="eyebrow">My mix</p><h1>{mix.data.folder_name}{mix.data.youtube_title ? <span className="mix-youtube-heading">{mix.data.youtube_title}</span> : null}</h1>{youtubeFacts ? <p className="mix-youtube-facts">{youtubeFacts}</p> : null}<div className="button-row">{mix.data.youtube_analytics_url ? <a className="button-link" href={mix.data.youtube_analytics_url} target="_blank" rel="noreferrer">Open in Analytics</a> : null}</div>{mix.data.tidal_playlist_name ? <p className="good">TIDAL setlist: {mix.data.tidal_playlist_name}</p> : null}<div className="event-media-fields"><label>YouTube URL<input value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} /></label><label>TIDAL playlist URL<input value={tidalUrl} onChange={(event) => setTidalUrl(event.target.value)} /></label><div className="button-row"><button className="primary" type="button" onClick={() => saveUrls.mutate()} disabled={saveUrls.isPending}>Save URLs</button><button type="button" onClick={() => importTidal.mutate()} disabled={!tidalUrl.trim() || importTidal.isPending}>Sync playlist</button>{saveUrls.isError || importTidal.isError ? <span className="warning">{saveUrls.error?.message || importTidal.error?.message}</span> : null}</div><JobStatus jobId={importJobId} onComplete={() => { setImportJobId(null); void client.invalidateQueries({ queryKey: ['mix', folderName] }); void client.invalidateQueries({ queryKey: ['tracks', 'setlist', folderName] }) }} onFailed={(message) => { setImportJobId(null); setImportError(message) }} />{importError ? <p className="warning">{importError}</p> : null}</div></div>
     </section> : null}
     <TrackBrowser collectionType="setlist" collectionId={folderName} />
   </div>
@@ -155,6 +170,13 @@ export function WatchedMixDetailPage() {
     mutationFn: () => api<void>(`/watched-mixes/${encodeURIComponent(videoId)}`, { method: 'DELETE' }),
     onSuccess: () => { void client.invalidateQueries({ queryKey: ['watched-mixes'] }); void client.invalidateQueries({ queryKey: ['navigation'] }); navigate('/watched-mixes') },
   })
+  const rateMix = useMutation({
+    mutationFn: (rating: number) => api<WatchedMix>(`/watched-mixes/${encodeURIComponent(videoId)}/rating`, { method: 'PUT', body: JSON.stringify({ rating }) }),
+    onSuccess: (saved) => {
+      client.setQueryData(['watched-mix', videoId], (current: (WatchedMix & { thumbnail_url: string }) | undefined) => current ? { ...current, rating: saved.rating } : current)
+      void client.invalidateQueries({ queryKey: ['watched-mixes'] })
+    },
+  })
   const parse = useMutation({
     mutationFn: () => api<{ rows: StagingRow[]; searchable: number }>(`/watched-mixes/${encodeURIComponent(videoId)}/tracklist/parse`, { method: 'POST', body: JSON.stringify({ text, order }) }),
     onSuccess: (result) => { setRows(result.rows); setMessage(`Parsed ${result.rows.length} lines; ${result.searchable} ready to search.`) },
@@ -207,7 +229,7 @@ export function WatchedMixDetailPage() {
   return <div className="watched-mix-detail">
     <section className="watched-mix-header">
       {mix.data?.thumbnail_url && !thumbnailFailed ? <img src={mix.data.thumbnail_url} alt="" onError={() => setThumbnailFailed(true)} /> : <div className="cover-placeholder" aria-label="YouTube thumbnail unavailable">♪</div>}
-      <div><p className="eyebrow">Watched mix</p><h1>{presentation.title}</h1>{presentation.facts ? <p>{presentation.facts}</p> : null}{mix.data?.youtube_url ? <a className="button-link quiet-link" href={mix.data.youtube_url} target="_blank" rel="noreferrer">Open on YouTube</a> : null}{mix.data?.live_metadata_error ? <p className="warning">{mix.data.live_metadata_error}</p> : null}</div>
+      <div><p className="eyebrow">Watched mix</p><h1>{presentation.title}</h1><WatchedMixRating rating={mix.data?.rating ?? 0} disabled={rateMix.isPending} onChange={(rating) => rateMix.mutate(rating)} />{rateMix.isError ? <p className="warning">{rateMix.error.message}</p> : null}{presentation.facts ? <p>{presentation.facts}</p> : null}{mix.data?.youtube_url ? <a className="button-link quiet-link" href={mix.data.youtube_url} target="_blank" rel="noreferrer">Open on YouTube</a> : null}{mix.data?.live_metadata_error ? <p className="warning">{mix.data.live_metadata_error}</p> : null}</div>
     </section>
     <details className="tracklist-import"><summary>Edit watched mix</summary><div className="event-media-fields"><label>Stored title<input value={storedTitle} onChange={(event) => setStoredTitle(event.target.value)} /></label><label>Stored channel<input value={storedChannel} onChange={(event) => setStoredChannel(event.target.value)} /></label><label>Upload date<input value={storedUploadDate} onChange={(event) => setStoredUploadDate(event.target.value)} placeholder="YYYY-MM-DD" /></label><div className="button-row"><button type="button" className="primary" onClick={() => updateMix.mutate()} disabled={updateMix.isPending}>Save details</button><button type="button" className="danger" onClick={() => { if (window.confirm('Delete this watched mix and its local track associations?')) deleteMix.mutate() }} disabled={deleteMix.isPending}>Delete watched mix</button></div>{updateMix.isError || deleteMix.isError ? <div className="error-banner">{updateMix.error?.message || deleteMix.error?.message}</div> : null}</div></details>
     <details className="tracklist-import" open>

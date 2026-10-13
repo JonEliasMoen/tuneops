@@ -159,6 +159,24 @@ def default_config() -> dict[str, Any]:
                 "default": True,
             }
         ],
+        "mix_quick_views": [
+            {
+                "id": "mix-default",
+                "name": "Default",
+                "fields": [
+                    "cover", "folder_name", "youtube_title",
+                    "tidal_playlist_name", "track_count",
+                    "youtube_upload_date", "youtube_duration_seconds",
+                    "youtube_views", "youtube_views_per_day",
+                    "youtube_thumbnail_ctr",
+                    "youtube_average_view_percentage", "youtube_likes",
+                    "youtube_comments", "youtube_performance",
+                    "youtube_verdict", "youtube_url",
+                    "youtube_analytics_url",
+                ],
+                "default": True,
+            }
+        ],
         "playlists": [
             {
                 "enabled": True,
@@ -181,6 +199,7 @@ def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
         raise ValueError("The config must contain a 'playlists' list")
     data.setdefault("settings", {})
     data.setdefault("quick_views", default_config()["quick_views"])
+    data.setdefault("mix_quick_views", default_config()["mix_quick_views"])
     return data
 
 
