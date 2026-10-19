@@ -99,7 +99,7 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar" ref={sidebarRef} onKeyDown={handleKeys} aria-label="Music tools navigation">
-      <div className="brand"><span className="brand-mark">♪</span><span>Music tools</span><em>React</em></div>
+      <div className="brand"><span className="brand-mark">♪</span><span>TuneOps</span></div>
       {navigation.isError ? <p className="sidebar-error">Backend unavailable</p> : null}
       <nav className="side-nav">
         {(navigation.data?.tools ?? []).map((item) => (
