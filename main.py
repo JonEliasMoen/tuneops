@@ -1,7 +1,8 @@
-"""Dash app and sync engine for copying Spotify playlists to TIDAL.
+"""Provider clients and sync engine shared by FastAPI and startup jobs.
 
-Run the UI with ``python musicsync.py``.  The same ``run_all_syncs`` function is
-used by startup_sync.py, so scheduled and manual syncs behave identically.
+Run the React/FastAPI UI with ``python react_app.py`` or ``python main.py``.
+The same ``run_all_syncs`` function is used by ``startup_sync.py``, so scheduled
+and manual syncs behave identically.
 """
 
 from __future__ import annotations
@@ -75,15 +76,18 @@ def configure_logging() -> None:
             "%(asctime)s %(levelname)-8s %(name)s %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
-        file_handler = RotatingFileHandler(
-            LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
-        )
-        file_handler.setFormatter(formatter)
-        file_handler.setLevel(level)
+        # Vercel's deployed application bundle is read-only. Its log collector
+        # captures stdout/stderr, while local runs retain the rotating file.
+        if not os.getenv("VERCEL"):
+            file_handler = RotatingFileHandler(
+                LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+            )
+            file_handler.setFormatter(formatter)
+            file_handler.setLevel(level)
+            LOGGER.addHandler(file_handler)
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
         console_handler.setLevel(level)
-        LOGGER.addHandler(file_handler)
         LOGGER.addHandler(console_handler)
     LOGGER.propagate = False
 
@@ -1116,325 +1120,11 @@ def run_all_syncs(path: Path = CONFIG_PATH, progress: Callable[[str], None] | No
     return results
 
 
-def _legacy_create_app():
-    try:
-        from dash import ALL, Dash, Input, Output, State, callback, ctx, dcc, html, no_update
-        from flask import redirect, request
-    except ImportError as exc:
-        raise RuntimeError("Install dependencies first: pip install -r requirements.txt") from exc
-
-    app = Dash(__name__, title="Spotify → TIDAL Sync")
-
-    @app.server.get("/spotify/login")
-    def spotify_login_route():
-        try:
-            url = spotify_auth_manager().get_authorize_url()
-            LOGGER.info("spotify.auth redirect_to_authorize")
-            return redirect(url)
-        except Exception:
-            LOGGER.exception("spotify.auth could_not_start")
-            return redirect("/?spotify_error=start")
-
-    @app.server.get("/callback")
-    def spotify_callback_route():
-        error = request.args.get("error")
-        code = request.args.get("code")
-        if error or not code:
-            LOGGER.error("spotify.auth callback_rejected error=%s code_present=%s", error, bool(code))
-            return redirect("/?spotify_error=denied")
-        try:
-            auth = spotify_auth_manager()
-            _call("spotify", "exchange_authorization_code", lambda: auth.get_access_token(code, check_cache=False))
-            user = _call("spotify", "current_user", spotify_client().current_user)
-            label = str(user.get("display_name") or user.get("id"))
-            _remember_connection("spotify", label)
-            LOGGER.info("spotify.auth callback_complete user_id=%s", user.get("id"))
-            return redirect("/?spotify=connected")
-        except Exception:
-            LOGGER.exception("spotify.auth callback_failed")
-            return redirect("/?spotify_error=callback")
-    initial = load_config()
-    for row in initial["playlists"]:
-        row.setdefault("name", "")
-        row.setdefault("direction", "spotify_to_tidal")
-    spotify_badge = _connection_badge("spotify", SPOTIFY_CACHE)
-    tidal_badge = _connection_badge("tidal", TIDAL_CACHE)
-    def mapping_card(row: dict[str, Any], index: int):
-        return html.Div(
-            [
-                html.Div(
-                    [
-                        html.Div(
-                            [
-                                html.Label("Mapping name"),
-                                dcc.Input(
-                                    value=row.get("name", ""),
-                                    placeholder=f"Playlist sync {index + 1}",
-                                    type="text",
-                                    id={"type": "mapping-label", "index": index},
-                                    className="mapping-name",
-                                ),
-                            ],
-                            className="mapping-title",
-                        ),
-                        html.Button("Remove", id={"type": "mapping-delete", "index": index}, className="danger"),
-                    ],
-                    className="mapping-head",
-                ),
-                dcc.Checklist(
-                    options=[{"label": " Enabled", "value": "enabled"}],
-                    value=["enabled"] if row.get("enabled", True) else [],
-                    id={"type": "mapping-enabled", "index": index},
-                ),
-                html.Label("Sync direction"),
-                dcc.Dropdown(
-                    options=[
-                        {"label": "Spotify → TIDAL", "value": "spotify_to_tidal"},
-                        {"label": "TIDAL → Spotify", "value": "tidal_to_spotify"},
-                    ],
-                    value=row.get("direction", "spotify_to_tidal"),
-                    clearable=False,
-                    id={"type": "mapping-direction", "index": index},
-                    className="direction-select",
-                ),
-                html.Div(
-                    [
-                        html.Div([html.Label("Spotify playlist URL or ID"), dcc.Input(value=row.get("spotify", ""), type="text", id={"type": "mapping-spotify", "index": index})], className="field"),
-                        html.Div([html.Label("TIDAL playlist URL or ID"), dcc.Input(value=row.get("tidal", ""), type="text", id={"type": "mapping-tidal", "index": index})], className="field"),
-                    ],
-                    className="field-grid",
-                ),
-                html.Div(
-                    [
-                        html.Label("Target name override (optional — defaults to the source playlist name)"),
-                        dcc.Input(value=row.get("tidal_name", ""), placeholder="Use source playlist name", type="text", id={"type": "mapping-name", "index": index}),
-                    ],
-                    className="field",
-                ),
-            ],
-            className="mapping-card",
-        )
-
-    def rows_from_form(labels, enabled, directions, spotify_values, tidal_values, names, stored_rows=None) -> list[dict[str, Any]]:
-        stored_rows = stored_rows or []
-        rows = []
-        for index in range(len(directions)):
-            # Start with the stored object so hidden state such as unmatched
-            # track records survives edits to the visible form fields.
-            row = dict(stored_rows[index]) if index < len(stored_rows) else {}
-            row.update(
-                {
-                    "enabled": "enabled" in (enabled[index] or []),
-                    "name": labels[index] or "",
-                    "direction": directions[index] or "spotify_to_tidal",
-                    "spotify": spotify_values[index] or "",
-                    "tidal": tidal_values[index] or "",
-                    "tidal_name": names[index] or "",
-                }
-            )
-            rows.append(row)
-        return rows
-    app.layout = html.Div(
-        [
-            html.Aside(
-                [
-                    html.Div(
-                        [html.Span("♪", className="brand-mark"), html.Span("Music tools")],
-                        className="brand",
-                    ),
-                    html.Nav(
-                        [
-                            html.A(
-                                [html.Span("⇄", className="nav-icon"), html.Span("Playlist sync")],
-                                href="/",
-                                className="nav-item active",
-                            ),
-                        ],
-                        className="side-nav",
-                        **{"aria-label": "Main navigation"},
-                    ),
-                ],
-                className="sidebar",
-            ),
-            html.Main(
-                [
-            html.H1("Spotify → TIDAL"),
-            html.P("Configure playlist pairs, connect both accounts once, then sync on demand."),
-            html.Div(
-                [
-                    html.Span(spotify_badge[0], id="spotify-state", className=spotify_badge[1]),
-                    html.Span(tidal_badge[0], id="tidal-state", className=tidal_badge[1]),
-                ],
-                className="connections",
-            ),
-            html.Div(
-                [
-                    html.Button("Connect Spotify", id="spotify-login"),
-                    html.Button("Connect TIDAL", id="tidal-login"),
-                    html.Button("Sync now", id="sync", className="primary"),
-                ],
-                className="actions",
-            ),
-            dcc.Loading(html.Pre("Ready", id="status"), type="circle"),
-            # One delayed check updates badges after an OAuth redirect without
-            # continuously POSTing to Dash while the table is being edited.
-            dcc.Interval(id="connection-refresh", interval=500, max_intervals=1, n_intervals=0),
-            dcc.Store(id="mapping-store", data=initial["playlists"]),
-            html.H2("Playlist mappings"),
-            html.Div(id="mapping-list"),
-            html.Div(
-                [html.Button("Add row", id="add"), html.Button("Save configuration", id="save")],
-                className="actions",
-            ),
-                    html.P(f"Configuration: {CONFIG_PATH}", className="hint"),
-                ],
-                className="page-content",
-            ),
-        ],
-        className="app-shell",
-    )
-
-    @callback(Output("mapping-list", "children"), Input("mapping-store", "data"))
-    def render_mappings(rows: list[dict[str, Any]]):
-        return [mapping_card(row, index) for index, row in enumerate(rows)]
-
-    @callback(
-        Output("mapping-store", "data"),
-        Input("add", "n_clicks"),
-        Input({"type": "mapping-delete", "index": ALL}, "n_clicks"),
-        State({"type": "mapping-label", "index": ALL}, "value"),
-        State({"type": "mapping-enabled", "index": ALL}, "value"),
-        State({"type": "mapping-direction", "index": ALL}, "value"),
-        State({"type": "mapping-spotify", "index": ALL}, "value"),
-        State({"type": "mapping-tidal", "index": ALL}, "value"),
-        State({"type": "mapping-name", "index": ALL}, "value"),
-        State("mapping-store", "data"),
-        prevent_initial_call=True,
-    )
-    def change_rows(_, delete_clicks, labels, enabled, directions, spotify_values, tidal_values, names, stored_rows):
-        rows = rows_from_form(labels, enabled, directions, spotify_values, tidal_values, names, stored_rows)
-        trigger = ctx.triggered_id
-        if trigger == "add":
-            rows.append({"enabled": True, "name": "", "direction": "spotify_to_tidal", "spotify": "", "tidal": "", "tidal_name": ""})
-        elif isinstance(trigger, dict) and trigger.get("type") == "mapping-delete":
-            index = int(trigger["index"])
-            if index >= len(delete_clicks) or not delete_clicks[index]:
-                return no_update
-            if 0 <= index < len(rows):
-                rows.pop(index)
-        return rows
-
-    @callback(
-        Output("status", "children", allow_duplicate=True),
-        Input("save", "n_clicks"),
-        State({"type": "mapping-label", "index": ALL}, "value"),
-        State({"type": "mapping-enabled", "index": ALL}, "value"),
-        State({"type": "mapping-direction", "index": ALL}, "value"),
-        State({"type": "mapping-spotify", "index": ALL}, "value"),
-        State({"type": "mapping-tidal", "index": ALL}, "value"),
-        State({"type": "mapping-name", "index": ALL}, "value"),
-        State("mapping-store", "data"),
-        prevent_initial_call=True,
-    )
-    def save_rows(_, labels, enabled, directions, spotify_values, tidal_values, names, stored_rows):
-        rows = rows_from_form(labels, enabled, directions, spotify_values, tidal_values, names, stored_rows)
-        config = load_config()
-        config["playlists"] = rows
-        save_config(config)
-        return f"Saved {len(rows)} mapping(s)."
-
-    app.clientside_callback(
-        "function(n) { if (n) { window.location.assign('/spotify/login'); } return window.dash_clientside.no_update; }",
-        Output("spotify-login", "title"),
-        Input("spotify-login", "n_clicks"),
-        prevent_initial_call=True,
-    )
-
-    @callback(
-        Output("spotify-state", "children"),
-        Output("spotify-state", "className"),
-        Output("tidal-state", "children"),
-        Output("tidal-state", "className"),
-        Input("connection-refresh", "n_intervals"),
-        prevent_initial_call=True,
-    )
-    def refresh_connections(_: int):
-        spotify = _connection_badge("spotify", SPOTIFY_CACHE)
-        tidal = _connection_badge("tidal", TIDAL_CACHE)
-        return spotify[0], spotify[1], tidal[0], tidal[1]
-
-    @callback(
-        Output("status", "children", allow_duplicate=True),
-        Output("tidal-state", "children", allow_duplicate=True),
-        Output("tidal-state", "className", allow_duplicate=True),
-        Input("tidal-login", "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def connect_tidal(_: int):
-        messages: list[str] = []
-        try:
-            LOGGER.info("ui.tidal_connect clicked")
-            session = tidal_client(interactive=True, message=messages.append)
-            label = str(getattr(session.user, "name", "") or session.user.id)
-            _remember_connection("tidal", label)
-            return f"TIDAL connected as {label}.", f"● TIDAL connected: {label}", "connection connected"
-        except Exception as exc:
-            LOGGER.exception("ui.tidal_connect failed")
-            badge = _connection_badge("tidal", TIDAL_CACHE)
-            return f"TIDAL connection failed: {exc}. " + " ".join(messages), badge[0], badge[1]
-
-    @callback(
-        Output("status", "children", allow_duplicate=True),
-        Output("mapping-store", "data", allow_duplicate=True),
-        Input("sync", "n_clicks"),
-        State({"type": "mapping-label", "index": ALL}, "value"),
-        State({"type": "mapping-enabled", "index": ALL}, "value"),
-        State({"type": "mapping-direction", "index": ALL}, "value"),
-        State({"type": "mapping-spotify", "index": ALL}, "value"),
-        State({"type": "mapping-tidal", "index": ALL}, "value"),
-        State({"type": "mapping-name", "index": ALL}, "value"),
-        State("mapping-store", "data"),
-        prevent_initial_call=True,
-        running=[(Output("sync", "disabled"), True, False)],
-    )
-    def sync_now(_, labels, enabled, directions, spotify_values, tidal_values, names, stored_rows):
-        rows = rows_from_form(labels, enabled, directions, spotify_values, tidal_values, names, stored_rows)
-        config = load_config()
-        config["playlists"] = rows
-        save_config(config)
-        try:
-            LOGGER.info("ui.sync clicked mappings=%d", len(rows))
-            results = run_all_syncs()
-            lines = []
-            for result in results:
-                prefix = f"{result.label}: " if result.label else ""
-                if result.skipped:
-                    lines.append(f"{prefix}skipped — source playlist has not changed since the last sync")
-                elif result.error:
-                    lines.append(f"{prefix}FAILED {result.source}: {result.error}")
-                else:
-                    lines.append(
-                        f"{prefix}{result.target}: added {result.added}, already present "
-                        f"{result.already_present}, unmatched {result.unmatched}"
-                    )
-            return "\n".join(lines) or "No enabled playlists.", load_config()["playlists"]
-        except Exception as exc:
-            LOGGER.exception("ui.sync failed")
-            return f"Sync failed: {exc}", no_update
-
-    app.index_string = """<!DOCTYPE html><html><head>{%metas%}<title>{%title%}</title>{%favicon%}{%css%}
-<style>body{margin:0;background:#0c1117;color:#e8edf2;font:16px system-ui}.app-shell{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}.sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;padding:26px 18px;background:#0a0f15;border-right:1px solid #26313d}.brand{display:flex;align-items:center;gap:10px;padding:0 10px 24px;font-size:19px;font-weight:700}.brand-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:#35e0a1;color:#07110d}.side-nav{display:flex;flex-direction:column;gap:6px}.nav-item{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:9px;color:#aebbc7;text-decoration:none;font-weight:600}.nav-item:hover{background:#141e28;color:#fff}.nav-item.active{background:#17372c;color:#6be8ae}.nav-icon{font-size:20px}.page-content{box-sizing:border-box;width:calc(100% - 48px);max-width:1100px;margin:40px auto;padding:28px;background:#121a23;border-radius:18px}h1{color:#35e0a1}button{padding:10px 16px;margin:5px;border:0;border-radius:8px;cursor:pointer}.primary{background:#35e0a1}.danger{background:#48232a;color:#ffbdc5}.mapping-card{background:#18222d;border:1px solid #344252;border-radius:12px;padding:18px;margin:14px 0}.mapping-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:12px}.mapping-title{display:flex;flex-direction:column;gap:5px;flex:1}.mapping-name{box-sizing:border-box;width:min(430px,100%);padding:10px 12px;border:1px solid #46586b;border-radius:7px;background:#101923;color:#fff;font-size:18px;font-weight:600}.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.field{display:flex;flex-direction:column;gap:6px;margin-top:14px}.field input{box-sizing:border-box;width:100%;padding:11px 12px;border:1px solid #46586b;border-radius:7px;background:#0d151e;color:#e8edf2;font:inherit}.field input:focus,.mapping-name:focus{outline:2px solid #35e0a1;border-color:transparent}label{color:#bdc8d2;font-size:14px}.direction-select{max-width:320px;color:#111}pre{background:#091016;padding:14px;border-radius:8px;white-space:pre-wrap}.actions,.connections{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.connection{padding:8px 12px;border-radius:999px;font-size:14px}.connected{color:#69e6a3;background:#123525}.disconnected{color:#aab5c0;background:#26313d}.hint{color:#91a0af;font-size:13px}@media(max-width:800px){.app-shell{display:block}.sidebar{position:static;width:100%;height:auto;padding:12px 16px;border-right:0;border-bottom:1px solid #26313d}.brand{padding:0 4px 10px}.side-nav{flex-direction:row}.nav-item{padding:8px 11px}.page-content{width:100%;margin:0;border-radius:0;padding:18px}.field-grid{grid-template-columns:1fr}}</style>
-</head><body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
-    return app
-
-
 def create_app():
-    """Build the web UI from the playlist-sync feature package."""
-    import sys
+    """Build the active FastAPI application."""
+    from backend.app.main import create_app as create_fastapi_app
 
-    from music_tools.playlist_sync import create_app as create_playlist_sync_app
-
-    return create_playlist_sync_app(sys.modules[__name__])
+    return create_fastapi_app()
 
 
 def main() -> None:
@@ -1442,19 +1132,16 @@ def main() -> None:
     LOGGER.info("application.start root=%s", ROOT)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sync", action="store_true", help="sync without starting the web UI")
-    parser.add_argument("--ui", choices=("dash", "react"), default="dash", help="web UI to run (default: dash)")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--port", type=int, default=8081)
+    parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
     if args.sync:
         for result in run_all_syncs(progress=print):
             print(json.dumps(asdict(result), ensure_ascii=False))
         return
-    if args.ui == "react":
-        import uvicorn
-        uvicorn.run("backend.app.main:app", host=args.host, port=args.port, reload=False)
-        return
-    create_app().run(host=args.host, port=args.port, debug=False)
+    import uvicorn
+    uvicorn.run("backend.app.main:app", host=args.host, port=args.port, reload=args.reload)
 
 
 if __name__ == "__main__":

@@ -1,21 +1,20 @@
 # MusicSync agent guide
 
-This directory contains a local music-library application in an incremental
-Dash-to-React/FastAPI migration. Dash remains the compatibility application;
-the React application is the new implementation under active development.
+This directory contains a local React/FastAPI music-library application. The
+retired Dash presentation layer is archived under `backups/dash_app/` for source
+reference only and must not be imported by active code.
 Preserve existing user configuration, OAuth caches, logs, and SQLite data. Never
 commit or print secrets from `.env`, `.spotify_cache`, `.tidal_session.json`, or
 `.connection_state.json`.
 
 ## Commands
 
-- Web application: `python musicsync.py` (defaults to `127.0.0.1:8080`)
-- React/FastAPI preview: build in `frontend` with `npm run build`, then run
-  `python react_app.py` (defaults to `127.0.0.1:8081`)
+- Web application: build in `frontend` with `npm run build`, then run
+  `python react_app.py` or `python main.py` (defaults to `127.0.0.1:8081`)
 - FastAPI documentation: `http://127.0.0.1:8081/api/docs`
 - Headless configured sync: `python startup_sync.py`
 - Full TIDAL liked-track cache: `python cache_liked_tracks.py`
-- Direct headless sync: `python musicsync.py --sync`
+- Direct headless sync: `python main.py --sync`
 - Dependencies are declared in the repository-level `../requirements.txt`.
 
 On this machine, the Microsoft Store Python aliases may return "access denied".
@@ -31,37 +30,30 @@ The working interpreter is:
   sanitized errors, and adapters over the existing Python services.
 - `frontend/src/`: React/TypeScript shell and feature UI. All provider and
   filesystem access goes through `/api/v1`; never expose credentials here.
-- `react_app.py`: preview launcher that serves the built React application and
-  API together. It does not replace the Dash launcher until parity is verified.
-- `musicsync.py`: reusable playlist-sync engine, provider authentication, and
-  backward-compatible CLI/application entry point.
+- `react_app.py`: launcher that serves the built React application and API.
+- `main.py`: reusable playlist-sync engine, provider authentication, and an
+  alternate FastAPI/headless-sync entry point.
 - `startup_sync.py`: delayed, headless startup runner using `run_all_syncs`.
-- `music_tools/ui.py`: shared full-width application shell, responsive sidebar,
-  navigation, and global CSS.
-- `music_tools/playlist_sync/page.py`: Dash app factory, URL routing, Spotify
-  OAuth routes, playlist-sync layout, and callbacks.
-- `music_tools/track_browser/`: stable, tool-neutral public API for the shared
-  interactive track browser.
-- `music_tools/global_search/`: SQLite-only search across liked tracks, indexed
-  Playlists/Events/Sources, and My Mixes through the shared track browser.
+- `frontend/src/app/` and `frontend/src/components/`: application shell,
+  responsive sidebar, routing, and shared React UI.
+- `frontend/src/features/`: active feature pages and shared track browser.
+- `backups/dash_app/`: retired Dash source only; never add active imports from
+  this directory.
 - `music_tools/lastfm/`: provider-neutral listening-history import and
-  conservative Last.fm identity matching through `pylast`; it must not depend
-  on Dash. Translate provider errors without logging request URLs or API keys.
-- `music_tools/liked_tracks/`: current track-browser implementation plus TIDAL
-  liked/indexed-playlist retrieval; consumers outside this feature import the
-  neutral `music_tools.track_browser` API.
+  conservative Last.fm identity matching through `pylast`; keep it independent
+  of the presentation layer. Translate provider errors without logging request
+  URLs or API keys.
+- `music_tools/liked_tracks/`: provider-neutral TIDAL liked/indexed-playlist
+  retrieval used by backend jobs and services.
 - `music_tools/mixes/`: read-only local mix-folder discovery, cover serving,
   timestamp parsing, and locally persisted mix metadata.
 - `music_library/database.py`: shared SQLite schema, TIDAL playlist cache,
   liked-track cache, reverse playlist membership lookup, and future user
   metadata storage.
 
-New sidebar tools should live in `music_tools/<tool_name>/`. Keep provider and
-database work outside presentation callbacks when practical. Shared layout and
-styles belong in `music_tools/ui.py`.
-
-During migration, new HTTP routes belong in `backend/app/api`, use cases in
-`backend/app/services`, and new browser UI in `frontend/src/features`. Reuse
+New HTTP routes belong in `backend/app/api`, use cases in
+`backend/app/services`, and browser UI in `frontend/src/features`. Keep provider
+and database work out of React components. Reuse
 existing provider/session functions and SQLite functions instead of duplicating
 authentication or storage logic. Browsing, sorting, filtering, and paging are
 SQLite-only. TIDAL refreshes run as explicit background jobs.
@@ -74,8 +66,8 @@ reloads/navigation, cycle sort ascending → descending → off, support mouse r
 selection, and support Up/Down selection plus Enter or Right Arrow activation.
 Build reusable table-state/navigation helpers instead of one-off key handlers.
 
-- Reuse the browser through `music_tools.track_browser`; do not import its
-  current `liked_tracks` implementation from another tool.
+- Reuse the React browser under `frontend/src/features/track-browser`; do not
+  build collection-specific copies of the table or inspector.
 - Browser keyboard activation is based on the mounted
   `data-track-browser-root` marker, never route-name checks. A new route that
   embeds the browser must work without editing JavaScript route allowlists.
@@ -145,10 +137,10 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
 - Keep collection descriptors JSON-serializable. The common keys are `type`,
   `id`, and `name`. Setlist timestamps come from SQLite membership rows rather
   than being carried in the collection descriptor.
-- Register shared track-browser callbacks once in the application factory.
-  Tools embed browser layouts but must not register duplicate callbacks.
+- Keep shared track-browser behavior in its React feature components and hooks;
+  collection routes should supply descriptors rather than duplicate handlers.
 - Timestamped staging/setlist tables use the shared browser-side stopwatch.
-  Start/Pause must not invoke Dash callbacks; Stop resets it. Rows carrying a
+  Start/Pause remains client-side; Stop resets it. Rows carrying a
   valid Time/Position data attribute are highlighted from their start time
   until the next timestamp. Mounting a different stopwatch page resets state.
 
@@ -477,7 +469,10 @@ mock objects and temporary SQLite databases. At minimum:
 
 ```powershell
 & 'C:\Users\jon39\AppData\Local\Python\bin\python.exe' -m compileall -q .
-& 'C:\Users\jon39\AppData\Local\Python\bin\python.exe' -c "import musicsync; app=musicsync.create_app(); client=app.server.test_client(); assert client.get('/_dash-layout').status_code == 200; assert client.get('/_dash-dependencies').status_code == 200; print('OK')"
+& 'C:\Users\jon39\AppData\Local\Python\bin\python.exe' -m pytest -q
+Set-Location frontend
+npm test -- --run
+npm run build
 ```
 
 When changing SQLite behavior, test against a database inside a newly-created

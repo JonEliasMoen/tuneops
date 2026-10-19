@@ -1,5 +1,6 @@
-"""FastAPI application package."""
+"""FastAPI application package.
 
-from .main import create_app
-
-__all__ = ["create_app"]
+Keep package initialization side-effect free. Deployment runtimes may load
+``backend/app/main.py`` directly; importing that module again from here while
+it is still initializing creates a circular import.
+"""

@@ -1,30 +1,33 @@
 # Spotify → TIDAL music sync
 
-This is a local Dash app that copies missing tracks in either direction between
-Spotify and TIDAL playlists. It is deliberately non-destructive: existing
-tracks are kept and tracks are never removed.
+This is a local React/FastAPI music-library app that copies missing tracks in
+either direction between Spotify and TIDAL playlists. It is deliberately
+non-destructive: existing tracks are kept and tracks are never removed.
 
 The **TIDAL cache** mapping direction only indexes the specified TIDAL playlist
 in SQLite. It performs no Spotify reads or writes, participates in normal
 manual and startup runs, and uses TIDAL's `last_updated` value to avoid fetching
 unchanged playlist contents.
 
-## Choosing the web UI during migration
+## Running the web application
 
-Dash remains the default and compatibility UI:
+Build the React frontend and start FastAPI:
+
+```powershell
+cd frontend
+npm run build
+cd ..
+python react_app.py
+```
+
+`main.py` is an equivalent launcher and also owns the headless sync engine:
 
 ```powershell
 python main.py
+python main.py --sync
 ```
 
-To trial the React/FastAPI UI on the same local port choice, run:
-
-```powershell
-python main.py --ui react
-```
-
-`react_app.py` remains a convenience launcher for the React preview on port
-8081. `startup_sync.py` is unaffected by either UI choice.
+Both web launchers default to `http://127.0.0.1:8081`.
 
 To measure the read-only SQLite preparation path for a large React collection,
 without calling a provider or changing the library, run:
@@ -38,20 +41,19 @@ probe helps decide when browser-side virtualization would become worthwhile.
 
 ## Project structure
 
-- `musicsync.py` contains the reusable sync engine and remains the command-line
-  entry point.
+- `main.py` contains the reusable sync engine and provider authentication.
+- `react_app.py` launches the FastAPI API and built React SPA.
 - `startup_sync.py` runs that engine without loading the web interface.
-- `music_tools/ui.py` owns the shared application shell, sidebar, and styling.
-- `music_tools/playlist_sync/page.py` owns the playlist-sync page, its Dash
-  layout, authentication routes, and callbacks.
-- `music_tools/liked_tracks/` owns the TIDAL liked-tracks browser and its
-  provider-to-table data mapping.
+- `frontend/src/` owns the application shell, sidebar and feature UI.
+- `backend/app/` owns the FastAPI routes and background jobs.
+- `music_tools/liked_tracks/` owns provider-neutral TIDAL retrieval services.
 - `music_library/database.py` owns the local SQLite catalogue, playlist
   membership index, and user-owned metadata schema.
+- `backups/dash_app/` contains the retired Dash frontend for source reference;
+  active code must not import it.
 
-New sidebar tools should live in their own `music_tools/<tool_name>/` package.
-Shared navigation and presentation belong in `music_tools/ui.py`; reusable
-service logic should remain independent of Dash so startup jobs can import it.
+New browser tools live in `frontend/src/features`; reusable provider/service
+logic remains in Python outside the presentation layer.
 
 ## Local music library
 
@@ -90,11 +92,11 @@ current count. Importing history reads Last.fm only and does not modify TIDAL.
 1. Install Python 3.10 or newer and run `pip install -r requirements.txt`.
 2. Register a Spotify Web API app. Add
    `http://127.0.0.1:8888/callback` as a redirect URI. Port 8888 is reserved
-   for the short-lived OAuth callback while Dash runs on port 8050.
+   for the short-lived OAuth callback while the app runs on port 8081.
 3. Set `SPOTIPY_CLIENT_ID`, `SPOTIPY_CLIENT_SECRET`, and
    `SPOTIPY_REDIRECT_URI` in your user environment. `.env.example` shows the
    names; the program intentionally does not load or store secrets in JSON.
-4. Run `python musicsync.py`, open `http://127.0.0.1:8050`, and connect both
+4. Run `python react_app.py`, open `http://127.0.0.1:8081`, and connect both
    accounts. TIDAL uses a device-link login and saves refreshable credentials
    locally in `.tidal_session.json`.
 5. Add playlist mappings, choose **Spotify → TIDAL** or **TIDAL → Spotify**,
@@ -136,7 +138,7 @@ Use that command in Windows Task Scheduler with the script directory as the
 working directory. Select “Run only when user is logged on” for the simplest
 access to the same environment variables and token files. Output is written to
 `music_sync.log`. The script runs every enabled mapping from SQLite,
-does not start Dash, and exits with code 1 if authentication or any mapping
+does not start the web application, and exits with code 1 if authentication or any mapping
 fails.
 
 The TIDAL integration currently uses the unofficial `tidalapi` Python package.
