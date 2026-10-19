@@ -7,7 +7,9 @@ from fastapi import APIRouter, Cookie, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
 from music_library.database import (
+    imported_youtube_reach_report_ids,
     store_youtube_mix_analytics,
+    store_youtube_reach_reports,
     store_youtube_video_metadata,
     youtube_video_metadata,
 )
@@ -116,7 +118,35 @@ def refresh_youtube_analytics() -> JobResponse:
         ]
         stored = store_youtube_mix_analytics(records)
         progress(f"Cached analytics for {stored} owned mix videos")
-        return {"requested": len(mix_by_video), "matched": len(records), "stored": stored}
+        reach_stored = 0
+        reach_job_created = False
+        reach_error = ""
+        try:
+            reach = service.sync_video_reach_reports(
+                list(mix_by_video), imported_youtube_reach_report_ids(),
+            )
+            reach_job_created = bool(reach["job_created"])
+            reach_stored = store_youtube_reach_reports(
+                reach["report_ids"], reach["records"],
+            )
+            if reach_job_created:
+                progress("Created the YouTube cover-reach report; Google will populate it later")
+            else:
+                progress(f"Cached {reach_stored} cover-reach rows")
+        except RuntimeError as exc:
+            # Reach reports are asynchronous and require the separate Reporting
+            # API. A reach failure must not discard the normal analytics refresh.
+            LOGGER.warning("youtube.reach refresh_failed error=%s", exc)
+            reach_error = str(exc)
+            progress("Core analytics cached; cover CTR is temporarily unavailable")
+        return {
+            "requested": len(mix_by_video),
+            "matched": len(records),
+            "stored": stored,
+            "reach_stored": reach_stored,
+            "reach_job_created": reach_job_created,
+            "reach_error": reach_error,
+        }
 
     return JobResponse.model_validate(
         JOBS.snapshot(JOBS.submit("youtube-analytics-refresh", execute))

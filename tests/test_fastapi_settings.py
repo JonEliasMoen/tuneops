@@ -15,6 +15,7 @@ def test_public_settings_never_exposes_private_config_values(monkeypatch):
             "internal_token": "must-not-leak",
         },
         "quick_views": [{"id": "dj", "name": "DJ", "fields": ["title"]}],
+        "mix_quick_views": [{"id": "performance", "name": "Performance", "fields": ["youtube_views"]}],
     })
 
     result = settings.settings()
@@ -23,6 +24,7 @@ def test_public_settings_never_exposes_private_config_values(monkeypatch):
     assert result.ollama_model == "qwen3:4b"
     assert "internal_token" not in result.model_dump()
     assert result.quick_views[0]["id"] == "dj"
+    assert result.mix_quick_views[0]["id"] == "performance"
 
 
 def test_settings_patch_persists_only_submitted_public_values(monkeypatch):
@@ -48,6 +50,20 @@ def test_settings_rejects_multiple_default_quick_views_without_saving(monkeypatc
         settings.patch_settings(SettingsPatch(quick_views=[
             {"id": "one", "name": "One", "fields": ["title"], "default": True},
             {"id": "two", "name": "Two", "fields": ["artist"], "default": True},
+        ]))
+
+    assert raised.value.status_code == 422
+
+
+def test_settings_rejects_multiple_default_mix_quick_views_without_saving(monkeypatch):
+    config = {"settings": {}, "quick_views": [], "mix_quick_views": []}
+    monkeypatch.setattr(settings.engine, "load_config", lambda: config)
+    monkeypatch.setattr(settings.engine, "save_config", lambda _value: pytest.fail("invalid configuration must not save"))
+
+    with pytest.raises(HTTPException) as raised:
+        settings.patch_settings(SettingsPatch(mix_quick_views=[
+            {"id": "one", "name": "One", "fields": ["folder_name"], "default": True},
+            {"id": "two", "name": "Two", "fields": ["youtube_views"], "default": True},
         ]))
 
     assert raised.value.status_code == 422
@@ -90,6 +106,42 @@ def test_mapping_save_rejects_invalid_direction_without_saving(monkeypatch):
         }]))
 
     assert raised.value.status_code == 422
+
+
+def test_mapping_removal_deletes_only_unreferenced_local_tidal_cache(monkeypatch):
+    config = {"playlists": [
+        {"_mapping_id": "one", "name": "First", "direction": "tidal_cache", "collection_type": "playlist", "tidal": "https://tidal.com/playlist/shared"},
+        {"_mapping_id": "two", "name": "Second", "direction": "tidal_cache", "collection_type": "event", "tidal": "https://tidal.com/playlist/shared"},
+        {"_mapping_id": "three", "name": "Gone", "direction": "tidal_cache", "collection_type": "source", "tidal": "https://tidal.com/playlist/remove-me"},
+    ]}
+    deleted: list[str] = []
+    monkeypatch.setattr(settings.engine, "load_config", lambda: config)
+    monkeypatch.setattr(settings.engine, "save_config", lambda _value: None)
+    monkeypatch.setattr(settings, "delete_tidal_playlist_cache", deleted.append)
+
+    settings.save_sync_mappings(SyncMappings(playlists=[
+        {"_mapping_id": "two", "name": "Second", "direction": "tidal_cache", "collection_type": "event", "tidal": "https://tidal.com/playlist/shared"},
+    ]))
+
+    assert deleted == ["remove-me"]
+
+
+def test_orphaned_settings_endpoints_delegate_to_local_database(monkeypatch):
+    page = {"items": [], "total": 0, "offset": 0, "limit": 25, "has_more": False}
+    monkeypatch.setattr(settings, "orphaned_tidal_tracks", lambda limit, offset: page)
+    monkeypatch.setattr(settings, "clear_orphaned_tidal_tracks", lambda: {"deleted_tracks": 2, "cleared_lastfm_matches": 1})
+
+    assert settings.get_orphaned_tracks(limit=25, offset=0) == page
+    assert settings.delete_orphaned_tracks() == {"deleted_tracks": 2, "cleared_lastfm_matches": 1}
+
+
+def test_delete_one_orphan_returns_conflict_when_membership_changed(monkeypatch):
+    monkeypatch.setattr(settings, "delete_orphaned_tidal_track", lambda _track_id: {"deleted_tracks": 0, "cleared_lastfm_matches": 0})
+
+    with pytest.raises(HTTPException) as raised:
+        settings.delete_orphaned_track("now-liked")
+
+    assert raised.value.status_code == 409
 
 
 def test_search_spotify_playlists_filters_and_returns_urls(monkeypatch):

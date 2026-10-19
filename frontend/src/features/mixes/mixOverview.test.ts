@@ -7,7 +7,8 @@ function mix(folder_name: string, track_count: number, updated_at = ''): MixSumm
     folder_name, track_count, updated_at, youtube_url: '', youtube_analytics_url: '', youtube_title: '', youtube_upload_date: updated_at, youtube_duration_seconds: null, tidal_url: '',
     tidal_playlist_id: '', tidal_playlist_name: '', cover_url: '',
     has_cover: false,
-    youtube_views: null, youtube_watch_minutes: null,
+    youtube_views: null, youtube_thumbnail_impressions: null, youtube_thumbnail_ctr: null,
+    youtube_watch_minutes: null,
     youtube_average_view_duration: null, youtube_average_view_percentage: null,
     youtube_likes: null, youtube_comments: null,
     youtube_subscribers_gained: null, youtube_analytics_fetched_at: '',
@@ -34,10 +35,16 @@ describe('My Mixes overview sorting', () => {
     expect(sortMixes([low, high], { field: 'youtube_comments', direction: 'desc' })[0].folder_name).toBe('High')
   })
 
+  it('sorts cover click-through rate numerically', () => {
+    const low = { ...mix('Low', 1), youtube_thumbnail_ctr: 2.4 }
+    const high = { ...mix('High', 1), youtube_thumbnail_ctr: 7.1 }
+    expect(sortMixes([low, high], { field: 'youtube_thumbnail_ctr', direction: 'desc' })[0].folder_name).toBe('High')
+  })
+
   it('normalizes views by days since upload and sorts the derived rate', () => {
-    const newer = { ...mix('Newer', 1, '2026-10-06'), youtube_views: 20 }
+    const newer = { ...mix('Newer', 1, '2026-10-06'), youtube_views: 100 }
     const older = { ...mix('Older', 1, '2026-09-28'), youtube_views: 50 }
-    expect(viewsPerDay(newer, new Date('2026-10-07T12:00:00Z'))).toBe(10)
+    expect(viewsPerDay(newer, new Date('2026-10-07T12:00:00Z'))).toBe(50)
     expect(viewsPerDay(older, new Date('2026-10-07T12:00:00Z'))).toBe(5)
     expect(sortMixes([older, newer], { field: 'youtube_views_per_day', direction: 'desc' })[0].folder_name).toBe('Newer')
   })

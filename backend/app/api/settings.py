@@ -9,6 +9,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 import main as engine
+from music_library.database import (
+    clear_orphaned_tidal_tracks,
+    delete_orphaned_tidal_track,
+    delete_tidal_playlist_cache,
+    orphaned_tidal_tracks,
+)
 
 from ..schemas import PublicSettings, SettingsPatch, SyncMappings
 
@@ -72,6 +78,30 @@ def sync_mappings() -> SyncMappings:
     return SyncMappings(playlists=engine.load_config().get("playlists", []))
 
 
+@router.get("/settings/orphaned-tracks")
+def get_orphaned_tracks(
+    limit: int = Query(default=250, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return orphaned_tidal_tracks(limit=limit, offset=offset)
+
+
+@router.delete("/settings/orphaned-tracks")
+def delete_orphaned_tracks() -> dict[str, int]:
+    return clear_orphaned_tidal_tracks()
+
+
+@router.delete("/settings/orphaned-tracks/{track_id}")
+def delete_orphaned_track(track_id: str) -> dict[str, int]:
+    result = delete_orphaned_tidal_track(track_id)
+    if not result["deleted_tracks"]:
+        raise HTTPException(
+            status_code=409,
+            detail="The track no longer exists or is no longer orphaned.",
+        )
+    return result
+
+
 def _provider_playlists(provider: str) -> list[dict[str, str]]:
     with _PLAYLIST_CACHE_LOCK:
         cached = _PLAYLIST_CACHE.get(provider)
@@ -129,9 +159,18 @@ def search_sync_playlists(
 def save_sync_mappings(body: SyncMappings) -> SyncMappings:
     config = engine.load_config()
     existing = list(config.get("playlists") or [])
+    existing_by_id = {
+        str(row.get("_mapping_id")): row
+        for row in existing if row.get("_mapping_id")
+    }
     merged: list[dict[str, Any]] = []
     for index, incoming in enumerate(body.playlists):
-        row = dict(existing[index]) if index < len(existing) else {}
+        mapping_id = str(incoming.get("_mapping_id") or "")
+        if mapping_id:
+            row = dict(existing_by_id.get(mapping_id) or {})
+        else:
+            # Compatibility for older callers that do not know stable mapping IDs.
+            row = dict(existing[index]) if index < len(existing) else {}
         row.update(incoming)
         direction = str(row.get("direction") or "spotify_to_tidal")
         section = str(row.get("collection_type") or "playlist")
@@ -140,6 +179,25 @@ def save_sync_mappings(body: SyncMappings) -> SyncMappings:
         if section not in {"playlist", "event", "source"}:
             raise HTTPException(status_code=422, detail=f"Invalid library section at row {index + 1}")
         merged.append(row)
+    retained_ids = {
+        str(row.get("_mapping_id")) for row in merged if row.get("_mapping_id")
+    }
+    removed = [
+        row for row in existing
+        if row.get("_mapping_id") and str(row.get("_mapping_id")) not in retained_ids
+    ]
     config["playlists"] = merged
     engine.save_config(config)
+    retained_tidal_ids = {
+        engine._id(str(row.get("tidal") or ""))
+        for row in merged if row.get("tidal")
+    }
+    for row in removed:
+        playlist_id = engine._id(str(row.get("tidal") or ""))
+        if playlist_id and playlist_id not in retained_tidal_ids:
+            delete_tidal_playlist_cache(playlist_id)
+            LOGGER.info(
+                "sync.mapping_removed local_playlist_cache_deleted playlist_id=%s",
+                playlist_id,
+            )
     return SyncMappings(playlists=merged)

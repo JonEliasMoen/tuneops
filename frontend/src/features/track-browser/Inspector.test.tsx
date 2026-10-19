@@ -36,6 +36,7 @@ function renderInspector() {
 
 describe('track inspector playlist actions', () => {
   beforeEach(() => {
+    sessionStorage.clear()
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/dimensions')) return Promise.resolve({ ok: true, json: async () => ({ values: {}, labels: {}, max_values: {} }) })
@@ -66,6 +67,20 @@ describe('track inspector playlist actions', () => {
     expect(screen.getByRole('button', { name: 'Normal playlist' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Festival set' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Shazam source' })).toBeTruthy()
+  })
+
+  it('shows the last Add destination first on the next use', async () => {
+    sessionStorage.setItem('musicsync.react.recent-add-playlist', 'event-1')
+    const user = userEvent.setup()
+    renderInspector()
+
+    await user.click(screen.getByRole('button', { name: 'Add to playlist' }))
+
+    const recent = await screen.findByText('Recent')
+    expect(recent.closest('.action-group')?.textContent).toContain('Festival set')
+    const entries = Array.from(document.querySelectorAll<HTMLButtonElement>('#track-actions button[data-action-entry]:not(.action-back)'))
+    expect(entries[0].textContent).toBe('Festival set')
+    expect(screen.getAllByRole('button', { name: 'Festival set' })).toHaveLength(1)
   })
 
   it('likes the selected tracks in TIDAL', async () => {

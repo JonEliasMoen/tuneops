@@ -7,7 +7,7 @@ export const MIX_FIELD_OPTIONS = [
   ['tidal_playlist_name', 'TIDAL setlist'], ['track_count', 'Tracks'],
   ['youtube_upload_date', 'Uploaded'], ['youtube_duration_seconds', 'Length'],
   ['youtube_views', 'Views'], ['youtube_views_per_day', 'Views/day'],
-  ['youtube_thumbnail_impressions', 'Cover impressions'], ['youtube_thumbnail_ctr', 'Cover CTR'],
+  ['youtube_thumbnail_impressions', 'Reported cover impressions'], ['youtube_thumbnail_ctr', 'Recent cover CTR'],
   ['youtube_watch_minutes', 'Watch time'], ['youtube_average_view_duration', 'Avg view'],
   ['youtube_average_view_percentage', 'Avg %'], ['youtube_likes', 'Likes'],
   ['youtube_comments', 'Comments'], ['youtube_subscribers_gained', 'Subs'],

@@ -15,6 +15,15 @@ type Catalog = {
 type PlaylistOption = { id: string; name: string; collection_type: 'playlist' | 'event' | 'source' }
 type WatchedMix = { video_id: string; title: string; channel_name?: string }
 type ActionMode = 'add' | 'remove' | 'move' | 'associate' | null
+const RECENT_ADD_PLAYLIST_KEY = 'musicsync.react.recent-add-playlist'
+
+function storedRecentAddPlaylist(): string {
+  try { return sessionStorage.getItem(RECENT_ADD_PLAYLIST_KEY) ?? '' } catch { return '' }
+}
+
+function storeRecentAddPlaylist(playlistId: string) {
+  try { sessionStorage.setItem(RECENT_ADD_PLAYLIST_KEY, playlistId) } catch { /* Storage can be unavailable in private contexts. */ }
+}
 
 const memberRoutes: Array<[keyof Pick<Track, 'playlists' | 'events' | 'sources' | 'mixes' | 'djmi'>, string]> = [
   ['playlists', 'playlists'], ['events', 'events'], ['sources', 'sources'], ['mixes', 'mixes'], ['djmi', 'watched-mixes'],
@@ -39,6 +48,7 @@ export function Inspector({
   const actionsRef = useRef<HTMLElement>(null)
   const [tagsOpen, setTagsOpen] = useTagsPanel(collapsedDefault)
   const [mode, setMode] = useState<ActionMode>(null)
+  const [recentAddPlaylistId, setRecentAddPlaylistId] = useState(storedRecentAddPlaylist)
   const [feedback, setFeedback] = useState('')
   const [tagFeedback, setTagFeedback] = useState('')
   const [autoTagJob, setAutoTagJob] = useState<string | null>(null)
@@ -112,7 +122,11 @@ export function Inspector({
         }),
       })
     },
-    onSuccess: async (result) => {
+    onSuccess: async (result, variables) => {
+      if (mode === 'add' && variables.playlistId) {
+        storeRecentAddPlaylist(variables.playlistId)
+        setRecentAddPlaylistId(variables.playlistId)
+      }
       setFeedback(result.message)
       setMode(null)
       await Promise.all([
@@ -156,6 +170,9 @@ export function Inspector({
     }
     return []
   }, [collectionId, collectionType, mode, playlists.data, selectedTracks])
+  const recentAddOption = mode === 'add'
+    ? destinationOptions.find((item) => item.id === recentAddPlaylistId) ?? null
+    : null
 
   useEffect(() => {
     if (mode === null) return
@@ -244,10 +261,13 @@ export function Inspector({
         <p className="action-prompt">{mode === 'associate' ? `Choose a watched mix for ${count} track${count === 1 ? '' : 's'}` : `${mode === 'add' ? 'Add to' : mode === 'remove' ? 'Remove from' : 'Move to'}…`}</p>
         {mode === 'associate'
           ? (watchedMixes.data ?? []).map((item) => <button data-action-entry type="button" key={item.video_id} disabled={action.isPending} onClick={() => action.mutate({ watchedId: item.video_id })}>{item.title || item.video_id}</button>)
-          : (['playlist', 'event', 'source'] as const).map((kind) => {
-              const group = destinationOptions.filter((item) => item.collection_type === kind)
+          : <>
+            {recentAddOption ? <div className="action-group recent-action-group"><strong>Recent</strong><button data-action-entry type="button" disabled={action.isPending} onClick={() => action.mutate({ playlistId: recentAddOption.id })}>{recentAddOption.name}</button></div> : null}
+            {(['playlist', 'event', 'source'] as const).map((kind) => {
+              const group = destinationOptions.filter((item) => item.collection_type === kind && item.id !== recentAddOption?.id)
               return group.length ? <div className="action-group" key={kind}><strong>{kind === 'playlist' ? 'Playlists' : kind === 'event' ? 'Events' : 'Sources'}</strong>{group.map((item) => <button data-action-entry type="button" key={item.id} disabled={action.isPending} onClick={() => action.mutate({ playlistId: item.id })}>{item.name}</button>)}</div> : null
             })}
+          </>}
         {!action.isPending && (mode === 'associate' ? !(watchedMixes.data ?? []).length : !destinationOptions.length) ? <p className="detail-empty">No available destinations.</p> : null}
         {action.isPending ? <p className="action-prompt">Updating TIDAL and SQLite…</p> : null}
       </div>}

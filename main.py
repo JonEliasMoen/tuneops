@@ -52,6 +52,7 @@ from music_library.database import (  # noqa: E402 - local .env configures its p
     tidal_liked_track_ids,
     tidal_track_record,
 )
+from music_library import config_store  # noqa: E402
 
 CONFIG_PATH = Path(os.getenv("MUSICSYNC_CONFIG", ROOT / "music_sync.json"))
 SPOTIFY_CACHE = ROOT / ".spotify_cache"
@@ -191,7 +192,7 @@ def default_config() -> dict[str, Any]:
     }
 
 
-def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
+def _load_json_config(path: Path) -> dict[str, Any]:
     if not path.exists():
         return default_config()
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -203,7 +204,27 @@ def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
     return data
 
 
+def _uses_sqlite_config(path: Path) -> bool:
+    return path.resolve() == CONFIG_PATH.resolve()
+
+
+def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
+    if not _uses_sqlite_config(path):
+        return _load_json_config(path)
+    stored = config_store.load()
+    if stored is not None:
+        return stored
+    # First-run/import bridge. Once imported, SQLite remains authoritative even
+    # if the JSON file is later edited or removed.
+    data = _load_json_config(path)
+    config_store.replace(data)
+    return config_store.load() or data
+
+
 def save_config(data: dict[str, Any], path: Path = CONFIG_PATH) -> None:
+    if _uses_sqlite_config(path):
+        config_store.replace(data)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

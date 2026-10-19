@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import csv
+import io
 import os
 import re
 import secrets
@@ -21,6 +23,8 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 ANALYTICS_URL = "https://youtubeanalytics.googleapis.com/v2/reports"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
+REPORTING_URL = "https://youtubereporting.googleapis.com/v1"
+REACH_REPORT_TYPE = "channel_reach_basic_a1"
 _VIDEO_TITLES: dict[str, str] = {}
 _VIDEO_UPLOAD_DATES: dict[str, str] = {}
 _VIDEO_DURATIONS: dict[str, int] = {}
@@ -167,6 +171,78 @@ def query_video_analytics(video_ids: list[str]) -> dict[str, dict[str, Any]]:
             if video_id:
                 results[video_id] = record
     return results
+
+
+def _reporting_collection(path: str, key: str, headers: dict[str, str]) -> list[dict[str, Any]]:
+    """Read every page from one YouTube Reporting API collection."""
+    items: list[dict[str, Any]] = []
+    page_token = ""
+    while True:
+        params: dict[str, Any] = {"pageSize": 100}
+        if page_token:
+            params["pageToken"] = page_token
+        response = requests.get(f"{REPORTING_URL}/{path}", headers=headers, params=params, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+        items.extend(item for item in payload.get(key) or [] if isinstance(item, dict))
+        page_token = str(payload.get("nextPageToken") or "")
+        if not page_token:
+            return items
+
+
+def sync_video_reach_reports(
+    video_ids: list[str], imported_report_ids: set[str],
+) -> dict[str, Any]:
+    """Create/import asynchronous thumbnail reach reports for selected videos."""
+    selected = {str(item).strip() for item in video_ids if str(item).strip()}
+    if not selected:
+        return {"records": [], "report_ids": [], "job_created": False}
+    headers = {"Authorization": f"Bearer {access_token()}"}
+    try:
+        jobs = _reporting_collection("jobs", "jobs", headers)
+        job = next(
+            (item for item in jobs if item.get("reportTypeId") == REACH_REPORT_TYPE),
+            None,
+        )
+        if job is None:
+            response = requests.post(
+                f"{REPORTING_URL}/jobs",
+                headers={**headers, "Content-Type": "application/json"},
+                json={"reportTypeId": REACH_REPORT_TYPE, "name": "MusicSync cover reach"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            return {"records": [], "report_ids": [], "job_created": True}
+        job_id = str(job.get("id") or "")
+        reports = _reporting_collection(f"jobs/{job_id}/reports", "reports", headers)
+        pending = [
+            item for item in reports
+            if str(item.get("id") or "") not in imported_report_ids
+            and str(item.get("downloadUrl") or "")
+        ]
+        records: list[dict[str, Any]] = []
+        imported: list[str] = []
+        for report in pending:
+            response = requests.get(str(report["downloadUrl"]), headers=headers, timeout=60)
+            response.raise_for_status()
+            reader = csv.DictReader(io.StringIO(response.text.lstrip("\ufeff")))
+            for row in reader:
+                # Cache the whole owner report. Otherwise marking this report
+                # imported would prevent a My Mix added later from receiving
+                # its historical reach rows.
+                if str(row.get("video_id") or ""):
+                    records.append(dict(row))
+            imported.append(str(report["id"]))
+        return {"records": records, "report_ids": imported, "job_created": False}
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 403:
+            raise RuntimeError(
+                "YouTube Reporting API returned 403. Enable YouTube Reporting API "
+                "in the Google Cloud project that owns this OAuth client, then retry."
+            ) from exc
+        raise RuntimeError("YouTube cover reach reports could not be retrieved.") from exc
+    except (requests.RequestException, ValueError, csv.Error) as exc:
+        raise RuntimeError("YouTube cover reach reports could not be retrieved.") from exc
 
 
 def query_video_titles(video_ids: list[str]) -> dict[str, str]:

@@ -1,0 +1,284 @@
+"""Transactional SQLite storage for MusicSync configuration.
+
+The public shape intentionally remains compatible with the historical
+``music_sync.json`` document while callers are moved to narrower repository
+operations. Provider credentials and OAuth sessions never belong here.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from music_library.database import DATABASE_PATH, connect, initialize
+
+
+PROFILE_ID = "local"
+SCHEMA_VERSION = 1
+_MAPPING_FIELDS = {
+    "name", "enabled", "direction", "collection_type", "spotify", "tidal",
+    "tidal_name", "last_sync", "source_version", "unmatched", "_mapping_id",
+}
+_VIEW_FIELDS = {"id", "name", "fields", "default"}
+_TOP_LEVEL_FIELDS = {"settings", "playlists", "quick_views", "mix_quick_views"}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _object(value: str, fallback: Any) -> Any:
+    try:
+        result = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return fallback
+    return result
+
+
+def exists(path: Path = DATABASE_PATH) -> bool:
+    initialize(path)
+    with connect(path) as connection:
+        return connection.execute(
+            "SELECT 1 FROM config_store_meta WHERE profile_id=?", (PROFILE_ID,)
+        ).fetchone() is not None
+
+
+def _mapping_id(mapping: dict[str, Any], position: int) -> str:
+    supplied = str(mapping.get("_mapping_id") or "").strip()
+    if supplied:
+        return supplied
+    identity = "\x1f".join((
+        str(mapping.get("name") or ""),
+        str(mapping.get("direction") or "spotify_to_tidal"),
+        str(mapping.get("spotify") or ""),
+        str(mapping.get("tidal") or ""),
+        str(position),
+    ))
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"musicsync:mapping:{identity}"))
+
+
+def _unmatched_key(record: dict[str, Any], position: int) -> str:
+    key = str(record.get("key") or "").strip()
+    if key:
+        return key
+    digest = hashlib.sha256(_json(record).encode("utf-8")).hexdigest()[:24]
+    return f"legacy:{position}:{digest}"
+
+
+def replace(config: dict[str, Any], path: Path = DATABASE_PATH) -> None:
+    """Atomically replace the compatible configuration document in SQLite."""
+    mappings = config.get("playlists")
+    if not isinstance(mappings, list):
+        raise ValueError("The config must contain a 'playlists' list")
+    settings = config.get("settings") or {}
+    if not isinstance(settings, dict):
+        raise ValueError("The config 'settings' value must be an object")
+    now = _now()
+    initialize(path)
+    with connect(path) as connection:
+        connection.execute("DELETE FROM sync_mappings")
+        for position, raw_mapping in enumerate(mappings):
+            if not isinstance(raw_mapping, dict):
+                raise ValueError(f"Playlist mapping {position + 1} must be an object")
+            mapping = dict(raw_mapping)
+            direction = str(mapping.get("direction") or "spotify_to_tidal")
+            collection_type = str(mapping.get("collection_type") or "playlist")
+            if direction not in {"spotify_to_tidal", "tidal_to_spotify", "tidal_cache"}:
+                raise ValueError(f"Invalid sync direction at mapping {position + 1}")
+            if collection_type not in {"playlist", "event", "source"}:
+                raise ValueError(f"Invalid collection type at mapping {position + 1}")
+            mapping_id = _mapping_id(mapping, position)
+            extra = {key: value for key, value in mapping.items() if key not in _MAPPING_FIELDS}
+            # Presence is meaningful for a lossless JSON round-trip even when
+            # the historical unmatched object is currently empty.
+            extra["_config_unmatched_present"] = "unmatched" in mapping
+            raw_unmatched = mapping.get("unmatched")
+            extra["_config_empty_unmatched_directions"] = [
+                str(key) for key, value in raw_unmatched.items()
+                if isinstance(raw_unmatched, dict) and isinstance(value, list) and not value
+            ] if isinstance(raw_unmatched, dict) else []
+            connection.execute(
+                """
+                INSERT INTO sync_mappings(
+                    id, name, enabled, direction, collection_type,
+                    spotify_reference, tidal_reference, tidal_name,
+                    last_sync, source_version, position, extra_json,
+                    created_at, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    mapping_id, str(mapping.get("name") or ""),
+                    int(bool(mapping.get("enabled", True))), direction, collection_type,
+                    str(mapping.get("spotify") or ""), str(mapping.get("tidal") or ""),
+                    str(mapping.get("tidal_name") or ""),
+                    mapping.get("last_sync") or None, mapping.get("source_version") or None,
+                    position, _json(extra), now, now,
+                ),
+            )
+            unmatched = mapping.get("unmatched") or {}
+            if not isinstance(unmatched, dict):
+                unmatched = {}
+            for sync_direction, records in unmatched.items():
+                if not isinstance(records, list):
+                    continue
+                for item_position, raw_record in enumerate(records):
+                    if not isinstance(raw_record, dict):
+                        continue
+                    record = dict(raw_record)
+                    connection.execute(
+                        """
+                        INSERT INTO sync_unmatched_tracks(
+                            mapping_id, sync_direction, source_track_key, position,
+                            metadata_json, first_seen_at, last_attempted_at
+                        ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            mapping_id, str(sync_direction),
+                            _unmatched_key(record, item_position), item_position,
+                            _json(record), record.get("first_seen_at"),
+                            record.get("last_attempted_at"),
+                        ),
+                    )
+
+        connection.execute("DELETE FROM quick_views")
+        for view_type, config_key in (("track", "quick_views"), ("mix", "mix_quick_views")):
+            views = config.get(config_key) or []
+            if not isinstance(views, list):
+                raise ValueError(f"The config '{config_key}' value must be a list")
+            defaults = sum(bool(item.get("default")) for item in views if isinstance(item, dict))
+            if defaults > 1:
+                raise ValueError(f"Only one {view_type} Quick View can be the default")
+            for position, raw_view in enumerate(views):
+                if not isinstance(raw_view, dict):
+                    raise ValueError(f"{config_key} item {position + 1} must be an object")
+                view = dict(raw_view)
+                view_id = str(view.get("id") or uuid.uuid4())
+                fields = view.get("fields") or []
+                if not isinstance(fields, list):
+                    raise ValueError(f"Quick View '{view_id}' fields must be a list")
+                extra = {key: value for key, value in view.items() if key not in _VIEW_FIELDS}
+                connection.execute(
+                    """
+                    INSERT INTO quick_views(
+                        view_type, id, name, is_default, position,
+                        fields_json, extra_json, created_at, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        view_type, view_id, str(view.get("name") or ""),
+                        int(bool(view.get("default"))), position,
+                        _json([str(field) for field in fields]), _json(extra), now, now,
+                    ),
+                )
+
+        connection.execute(
+            """
+            INSERT INTO app_settings(profile_id, settings_json, schema_version, updated_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(profile_id) DO UPDATE SET
+                settings_json=excluded.settings_json,
+                schema_version=excluded.schema_version,
+                updated_at=excluded.updated_at
+            """,
+            (PROFILE_ID, _json(settings), SCHEMA_VERSION, now),
+        )
+        top_level_extra = {
+            key: value for key, value in config.items() if key not in _TOP_LEVEL_FIELDS
+        }
+        connection.execute(
+            """
+            INSERT INTO config_store_meta(profile_id, extra_json, imported_at, updated_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(profile_id) DO UPDATE SET
+                extra_json=excluded.extra_json,
+                updated_at=excluded.updated_at
+            """,
+            (PROFILE_ID, _json(top_level_extra), now, now),
+        )
+
+
+def load(path: Path = DATABASE_PATH, *, include_internal: bool = True) -> dict[str, Any] | None:
+    initialize(path)
+    with connect(path) as connection:
+        meta = connection.execute(
+            "SELECT extra_json FROM config_store_meta WHERE profile_id=?", (PROFILE_ID,)
+        ).fetchone()
+        if meta is None:
+            return None
+        settings_row = connection.execute(
+            "SELECT settings_json FROM app_settings WHERE profile_id=?", (PROFILE_ID,)
+        ).fetchone()
+        result = _object(meta["extra_json"], {})
+        if not isinstance(result, dict):
+            result = {}
+        settings = _object(settings_row["settings_json"], {}) if settings_row else {}
+        result["settings"] = settings if isinstance(settings, dict) else {}
+        mappings: list[dict[str, Any]] = []
+        for row in connection.execute("SELECT * FROM sync_mappings ORDER BY position, id"):
+            mapping = _object(row["extra_json"], {})
+            if not isinstance(mapping, dict):
+                mapping = {}
+            unmatched_present = bool(mapping.pop("_config_unmatched_present", False))
+            empty_unmatched_directions = mapping.pop(
+                "_config_empty_unmatched_directions", []
+            )
+            mapping.update({
+                "enabled": bool(row["enabled"]), "name": row["name"],
+                "direction": row["direction"], "collection_type": row["collection_type"],
+                "spotify": row["spotify_reference"], "tidal": row["tidal_reference"],
+                "tidal_name": row["tidal_name"],
+            })
+            if row["last_sync"] is not None:
+                mapping["last_sync"] = row["last_sync"]
+            if row["source_version"] is not None:
+                mapping["source_version"] = row["source_version"]
+            if include_internal:
+                mapping["_mapping_id"] = row["id"]
+            unmatched: dict[str, list[dict[str, Any]]] = {}
+            if isinstance(empty_unmatched_directions, list):
+                unmatched.update({str(direction): [] for direction in empty_unmatched_directions})
+            records = connection.execute(
+                """
+                SELECT sync_direction, metadata_json FROM sync_unmatched_tracks
+                WHERE mapping_id=? ORDER BY sync_direction, position
+                """,
+                (row["id"],),
+            )
+            for record in records:
+                payload = _object(record["metadata_json"], {})
+                if isinstance(payload, dict):
+                    unmatched.setdefault(record["sync_direction"], []).append(payload)
+            if unmatched or unmatched_present:
+                mapping["unmatched"] = unmatched
+            mappings.append(mapping)
+        result["playlists"] = mappings
+        for view_type, config_key in (("track", "quick_views"), ("mix", "mix_quick_views")):
+            views: list[dict[str, Any]] = []
+            for row in connection.execute(
+                "SELECT * FROM quick_views WHERE view_type=? ORDER BY position, id", (view_type,)
+            ):
+                view = _object(row["extra_json"], {})
+                if not isinstance(view, dict):
+                    view = {}
+                fields = _object(row["fields_json"], [])
+                view.update({
+                    "id": row["id"], "name": row["name"],
+                    "fields": fields if isinstance(fields, list) else [],
+                    "default": bool(row["is_default"]),
+                })
+                views.append(view)
+            result[config_key] = views
+        return result
+
+
+def export(path: Path = DATABASE_PATH) -> dict[str, Any] | None:
+    """Return a portable document without internal SQLite-only identifiers."""
+    return load(path, include_internal=False)

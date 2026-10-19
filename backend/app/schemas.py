@@ -68,6 +68,21 @@ class ArtistCount(BaseModel):
     count: int
 
 
+class ArtistOverviewRow(BaseModel):
+    id: str
+    name: str
+    indexed_tracks: int
+    lastfm_plays: int
+
+
+class ArtistOverviewPage(BaseModel):
+    items: list[ArtistOverviewRow]
+    total: int
+    offset: int
+    limit: int
+    has_more: bool
+
+
 class CollectionStats(BaseModel):
     top_artists: list[ArtistCount] = Field(default_factory=list)
     artist_options: list[dict[str, str]] = Field(default_factory=list)

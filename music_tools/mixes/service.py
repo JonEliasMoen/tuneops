@@ -37,6 +37,8 @@ class Mix:
     updated_at: str = ""
     track_count: int = 0
     youtube_views: int | None = None
+    youtube_thumbnail_impressions: int | None = None
+    youtube_thumbnail_ctr: float | None = None
     youtube_watch_minutes: float | None = None
     youtube_average_view_duration: float | None = None
     youtube_average_view_percentage: float | None = None
@@ -184,6 +186,8 @@ def discover_mixes() -> list[Mix]:
                 updated_at=str(metadata.get("updated_at", "") or ""),
                 track_count=int(metadata.get("track_count", 0) or 0),
                 youtube_views=metadata.get("youtube_views") if analytics_current else None,
+                youtube_thumbnail_impressions=metadata.get("youtube_thumbnail_impressions") if analytics_current else None,
+                youtube_thumbnail_ctr=metadata.get("youtube_thumbnail_ctr") if analytics_current else None,
                 youtube_watch_minutes=metadata.get("youtube_watch_minutes") if analytics_current else None,
                 youtube_average_view_duration=metadata.get("youtube_average_view_duration") if analytics_current else None,
                 youtube_average_view_percentage=metadata.get("youtube_average_view_percentage") if analytics_current else None,

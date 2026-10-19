@@ -96,18 +96,22 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
   optional Fields column backed by `row["dimensions"]`. Keep dimensions hidden
   by default, sortable when enabled, and synchronized with inspector edits.
 - Quick Views are named sets of visible table fields configured under
-  `/settings` and persisted in the top-level `quick_views` list in
-  `music_sync.json`; never store them in browser-local storage. Render their
+  `/settings` and persisted in SQLite through `music_library.config_store`;
+  never store them in browser-local storage. Render their
   buttons beside Fields in every shared track browser, and apply the one marked
   default in the server-rendered initial layout whenever a track browser opens;
   do not rely on a delayed callback or the Fields checklist's browser persistence.
-- The Settings appearance toggle persists `settings.dark_mode` in
-  `music_sync.json` and applies the theme immediately across the entire app.
+- The Settings appearance toggle persists `settings.dark_mode` in the SQLite
+  configuration store and applies the theme immediately across the entire app.
+- The React Settings page autosaves the complete settings/Quick View draft
+  after a short debounce. Do not restore a normal Save Settings button. Do not
+  let an older save response overwrite newer local edits; show an explicit
+  retry only after autosave ultimately fails.
 - The selected-track **Tags & ratings** section is a native collapsible panel.
   Its current open/closed state lives in the root in-memory `ui-preferences`
   store so it survives navigation between track collections without browser
   persistence. Settings persists only the startup default as
-  `settings.tags_collapsed_by_default` in `music_sync.json`.
+  `settings.tags_collapsed_by_default` in the SQLite configuration store.
 - **Auto tag with Qwen3** is a shared track action backed only by the local
   Ollama endpoint configured by `settings.ollama_url` and
   `settings.ollama_model`. Send cached metadata only, require catalog-constrained
@@ -131,6 +135,13 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
 - Artist cells and top-artist summaries link to `/artists/<normalized-key>`,
   which shows every locally indexed track credited to that artist without a
   provider call.
+- `/artists` is the SQLite-only Artists overview. Its indexed-track count must
+  use the exact membership scope of artist detail pages: the deduplicated union
+  of Liked tracks, Playlists/Events/Sources, and My Mixes setlists. Last.fm
+  streams count matched scrobbles through canonical `track_artists`, so a
+  collaborative track credits each artist. Keep its search, persistent
+  three-state sorting, paging, mouse selection, and keyboard activation aligned
+  with the shared table interaction contract.
 - Keep collection descriptors JSON-serializable. The common keys are `type`,
   `id`, and `name`. Setlist timestamps come from SQLite membership rows rather
   than being carried in the collection descriptor.
@@ -143,8 +154,15 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
 
 ## Playlist sync behavior
 
+- The React mapping editor autosaves changes after a short debounce. Do not
+  restore a normal Save Mappings button. Keep Sync Now disabled while changes
+  are dirty or saving, and expose an explicit retry only after autosave fails.
+- Removing a sync mapping removes its local indexed TIDAL playlist only when no
+  remaining mapping references the same playlist. It must never delete the
+  remote TIDAL or Spotify playlist. Tracks that lose their final membership are
+  intentionally retained until the user reviews **Orphaned tracks** in Settings.
 - Supports `spotify_to_tidal`, `tidal_to_spotify`, and `tidal_cache` mappings
-  from `music_sync.json`. `tidal_cache` indexes the configured TIDAL playlist
+  from the SQLite configuration store. `tidal_cache` indexes the configured TIDAL playlist
   without modifying Spotify and does not require a Spotify connection when all
   enabled mappings are cache-only.
 - New destination playlists default to the source playlist name.
@@ -171,6 +189,15 @@ do not require this coordination.
 
 Core tables:
 
+- `app_settings`: versioned, semi-structured non-secret settings for the local
+  profile.
+- `sync_mappings`: ordered playlist-sync definitions and runtime state with a
+  stable UUID per mapping.
+- `sync_unmatched_tracks`: mapping/direction-specific unmatched-track state.
+- `quick_views`: both track and My Mix field presets, distinguished by
+  `view_type`, with at most one default per type.
+- `config_store_meta`: marks an initialized SQLite configuration store and
+  preserves unknown portable top-level configuration fields.
 - `tracks`: provider metadata keyed by provider and provider track ID.
 - `artists` and `track_artists`: normalized artist identities and ordered
   many-to-many track credits. Existing flattened artist strings are backfilled;
@@ -200,6 +227,16 @@ Core tables:
   mix's saved YouTube URL; entering My Mixes Overview triggers one refresh.
 - `youtube_video_metadata`: independent cached YouTube title and upload date
   keyed by video ID so overview metadata survives backend restarts.
+- `youtube_video_reach_daily` and `youtube_reach_report_imports`: independent
+  daily thumbnail-impression/CTR cache and imported-report ledger for the
+  asynchronous YouTube Reporting API.
+
+The Settings **Orphaned tracks** view lists TIDAL track rows that have no
+membership in Liked tracks, indexed playlists/events/sources, My Mixes
+setlists, or watched mixes. Clearing this view is an explicit, confirmed,
+local-only destructive action: delete the orphan track rows and their cascading
+local metadata, reset matching Last.fm scrobbles to unmatched, and never call a
+music provider or delete remote data.
 
 ## Mix explorer
 
@@ -222,6 +259,21 @@ Core tables:
   ignored `.youtube_oauth.json` file, request read-only YouTube scopes, validate
   the callback state cookie, and expose connection controls in Settings. Entering
   My Mixes Overview refreshes cached analytics once; manual refresh remains a retry.
+- My Mixes Overview has its own Quick Views, configured under Settings and
+  persisted with `view_type='mix'`. Keep them separate from track-table
+  `quick_views`; the overview's active fields and sort survive navigation in
+  session state. Thumbnail impressions and cover CTR come from asynchronous
+  YouTube Reporting API reach reports, so the first refresh may only create the
+  reporting job and later refreshes import generated reports.
+- YouTube Reporting API thumbnail CTR is stored as the provider's raw 0..1
+  ratio and converted to percentage points when read. Label it as recent/report
+  data, not lifetime Studio data: bulk reports only cover files generated after
+  the MusicSync reporting job exists, so always show the reported impression
+  sample alongside a detail CTR.
+- My Mix detail headers reuse the cached owner-analytics row for that mix and
+  expose both **Open on YouTube** and **Open in Analytics** links when the saved
+  video URL is valid. Do not make a second owner-analytics request on detail
+  page load; refresh remains an Overview job.
 - Each mix can store a TIDAL playlist URL plus its resolved playlist ID/name.
   TIDAL playlist import is manual through the mix's **Sync playlist** button;
   do not add mix setlists to startup sync implicitly. A TIDAL playlist is only
@@ -310,7 +362,8 @@ revalidation on the following run.
 
 - Route: `/liked-tracks`.
 - Last.fm history is imported explicitly from Settings using `LASTFM_API_KEY`
-  from `.env` and `settings.lastfm_username` from `music_sync.json`. The first
+  from `.env` and `settings.lastfm_username` from the SQLite configuration
+  store. The first
   import walks oldest-to-newest so an interrupted run can resume safely;
   subsequent imports use the newest cached timestamp. Track tables expose
   optional Play count and Last played fields, and the inspector shows the
@@ -343,7 +396,7 @@ revalidation on the following run.
   Event, or Source. Each class has its own collapsible sidebar group and its own
   reverse-membership table/inspector field; do not leak Events or Sources into
   the Playlists field. Setlist membership is shown separately as Mixes.
-- `music_sync.json` is authoritative for configured playlist classifications.
+- The SQLite configuration store is authoritative for configured playlist classifications.
   Reconcile those values into SQLite when Playlist Sync opens, and refresh the
   mounted sidebar after Save/Sync so a changed classification moves immediately.
 - Sorted by TIDAL favorite date, newest first.
@@ -400,10 +453,18 @@ revalidation on the following run.
 
 ## Configuration and generated files
 
-- `music_sync.json`: live configuration and sync state; preserve hidden fields
-  such as unmatched records, `last_sync`, and `source_version` when editing UI
-  rows.
-- `music_sync.example.json`: example configuration.
+- `music_library.sqlite3`: live configuration and sync state as well as the
+  music library. Preserve mapping IDs, unmatched records, `last_sync`, and
+  `source_version` when editing UI rows.
+- `music_library/config_store.py`: transactional compatibility repository for
+  settings, sync mappings/state, and both Quick View types. Existing callers
+  currently use the document-shaped `main.load_config()` / `save_config()` API,
+  but those functions read and write SQLite.
+- `music_sync.json`: preserved legacy migration/rollback snapshot. It is used
+  only to seed an absent SQLite configuration store and is ignored once
+  `config_store_meta` exists. Never overwrite a populated store by silently
+  re-importing this file.
+- `music_sync.example.json`: example import/export configuration.
 - `.env`: local environment values; never expose or overwrite casually.
 - `music_sync.log`: rotating application log.
 - `.spotify_cache`, `.tidal_session.json`, `.connection_state.json`: local auth

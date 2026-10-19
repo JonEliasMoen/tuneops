@@ -21,6 +21,7 @@ from music_library.database import (
     event_links,
     lastfm_history_months,
     lastfm_history_years,
+    tidal_artist_overview_page,
     save_event_links,
     resolve_pending_track,
     replace_tidal_track_dimensions,
@@ -47,6 +48,7 @@ from music_tools.mixes.service import (
 from music_tools.youtube_analytics import service as youtube_service
 
 from ..schemas import (
+    ArtistOverviewPage,
     CollectionDescriptor,
     DimensionUpdate,
     DimensionUpdateResponse,
@@ -135,6 +137,7 @@ def navigation() -> NavigationResponse:
         NavigationItem(id="playlist-sync", label="Playlist sync", path="/", kind="tool", icon="⇄"),
         NavigationItem(id="liked", label="Liked tracks", path="/liked-tracks", kind="tool", icon="♥"),
         NavigationItem(id="search", label="Global search", path="/search", kind="tool", icon="⌕"),
+        NavigationItem(id="artists", label="Artists", path="/artists", kind="tool", icon="♬"),
         NavigationItem(id="settings", label="Settings", path="/settings", kind="tool", icon="⚙"),
     ]
     indexed = tidal_indexed_playlists()
@@ -258,6 +261,32 @@ def navigation() -> NavigationResponse:
     )
     groups.append(NavigationGroup(id="watched-mixes", label="Watched mixes", items=watched_items))
     return NavigationResponse(tools=tools, groups=groups)
+
+
+@router.get("/artists", response_model=ArtistOverviewPage)
+def artist_overview(
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=500),
+    q: str = Query(default=""),
+    sort_field: str = Query(default="name"),
+    sort_direction: str = Query(default="asc"),
+) -> ArtistOverviewPage:
+    username = str(engine.load_config().get("settings", {}).get("lastfm_username", "") or "")
+    rows, total = tidal_artist_overview_page(
+        username,
+        limit=limit,
+        offset=offset,
+        query=q,
+        sort_field=sort_field,
+        sort_direction=sort_direction,
+    )
+    return ArtistOverviewPage(
+        items=rows,
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=offset + len(rows) < total,
+    )
 
 
 @router.get("/collections/{kind}/{collection_id}", response_model=CollectionDescriptor)
@@ -638,6 +667,8 @@ def mixes() -> list[dict[str, object]]:
                 or _last_mix_cue_seconds(mix.positions)
             ),
             "youtube_views": getattr(mix, "youtube_views", None),
+            "youtube_thumbnail_impressions": getattr(mix, "youtube_thumbnail_impressions", None),
+            "youtube_thumbnail_ctr": getattr(mix, "youtube_thumbnail_ctr", None),
             "youtube_watch_minutes": getattr(mix, "youtube_watch_minutes", None),
             "youtube_average_view_duration": getattr(mix, "youtube_average_view_duration", None),
             "youtube_average_view_percentage": getattr(mix, "youtube_average_view_percentage", None),
@@ -658,6 +689,7 @@ def mix_detail(folder_name: str) -> dict[str, object]:
     if mix is None:
         raise HTTPException(status_code=404, detail="Mix was not found")
     metadata = fetch_youtube_metadata(mix.youtube_url) if mix.youtube_url else None
+    video_id = youtube_video_id(mix.youtube_url)
     return {
         "folder_name": mix.folder_name,
         "youtube_url": mix.youtube_url,
@@ -670,9 +702,26 @@ def mix_detail(folder_name: str) -> dict[str, object]:
         "cover_url": _path("api/v1/mixes", mix.folder_name) + "/cover" if mix.cover_path else youtube_thumbnail_url(mix.youtube_url),
         "youtube_title": metadata.title if metadata else "",
         "youtube_channel": metadata.channel_name if metadata else "",
-        "youtube_views": metadata.view_count if metadata and metadata.view_count is not None else None,
+        "youtube_views": (
+            mix.youtube_views
+            if mix.youtube_views is not None
+            else metadata.view_count if metadata and metadata.view_count is not None else None
+        ),
         "youtube_upload_date": metadata.upload_date if metadata else "",
         "youtube_metadata_error": metadata.error if metadata else "",
+        "youtube_duration_seconds": (
+            youtube_service.cached_video_duration_seconds(video_id)
+            or _last_mix_cue_seconds(mix.positions)
+        ),
+        "youtube_thumbnail_impressions": mix.youtube_thumbnail_impressions,
+        "youtube_thumbnail_ctr": mix.youtube_thumbnail_ctr,
+        "youtube_watch_minutes": mix.youtube_watch_minutes,
+        "youtube_average_view_duration": mix.youtube_average_view_duration,
+        "youtube_average_view_percentage": mix.youtube_average_view_percentage,
+        "youtube_likes": mix.youtube_likes,
+        "youtube_comments": mix.youtube_comments,
+        "youtube_subscribers_gained": mix.youtube_subscribers_gained,
+        "youtube_analytics_fetched_at": mix.youtube_analytics_fetched_at,
     }
 
 

@@ -8,6 +8,7 @@ import { TrackBrowser } from '../features/track-browser/TrackBrowser'
 import { PlaylistSyncPage } from '../features/playlist-sync/PlaylistSyncPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { MixDetailPage, MixesPage, PendingPage, WatchedMixDetailPage, WatchedMixesPage } from '../features/mixes/MixPages'
+import { ArtistsPage } from '../features/artists/ArtistsPage'
 
 function TrackRoute({ type }: { type: 'liked' | 'playlist' | 'event' | 'source' | 'setlist' | 'watched_mix' | 'artist' | 'search' | 'history' }) {
   const { id = '' } = useParams()
@@ -29,6 +30,7 @@ export function App() {
         <Route path="/" element={<PlaylistSyncPage />} />
         <Route path="/liked-tracks" element={<TrackRoute type="liked" />} />
         <Route path="/search" element={<TrackRoute type="search" />} />
+        <Route path="/artists" element={<ArtistsPage />} />
         <Route path="/history/:id" element={<TrackRoute type="history" />} />
         <Route path="/artists/:id" element={<TrackRoute type="artist" />} />
         <Route path="/playlists/:id" element={<TrackRoute type="playlist" />} />

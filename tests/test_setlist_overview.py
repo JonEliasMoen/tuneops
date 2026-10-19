@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from music_library.database import connect, initialize, setlist_metadata, store_youtube_mix_analytics
+from music_library.database import (
+    connect,
+    initialize,
+    setlist_metadata,
+    store_youtube_mix_analytics,
+    store_youtube_reach_reports,
+)
 
 
 def test_setlist_metadata_includes_track_count_and_updated_timestamp(tmp_path):
@@ -55,3 +61,25 @@ def test_setlist_metadata_includes_independent_cached_youtube_analytics(tmp_path
     assert result["youtube_average_view_duration"] == 320
     assert result["youtube_average_view_percentage"] == 48.5
     assert result["youtube_subscribers_gained"] == 7
+
+
+def test_setlist_metadata_weights_cover_ctr_by_daily_impressions(tmp_path):
+    database = tmp_path / "library.sqlite3"
+    initialize(database)
+    with connect(database) as connection:
+        connection.execute(
+            "INSERT INTO setlists(folder_name, updated_at) VALUES ('darkprog', 'now')"
+        )
+    store_youtube_mix_analytics([{
+        "folder_name": "darkprog", "video_id": "video-id", "views": 10,
+    }], database)
+    stored = store_youtube_reach_reports(["report-1"], [
+        {"video_id": "video-id", "date": "2026-10-01", "video_thumbnail_impressions": 100, "video_thumbnail_impressions_ctr": 0.02},
+        {"video_id": "video-id", "date": "2026-10-02", "video_thumbnail_impressions": 300, "video_thumbnail_impressions_ctr": 0.06},
+    ], database)
+
+    result = setlist_metadata(database)["darkprog"]
+
+    assert stored == 2
+    assert result["youtube_thumbnail_impressions"] == 400
+    assert result["youtube_thumbnail_ctr"] == 5

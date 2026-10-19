@@ -163,7 +163,7 @@ def content(
             [
                 html.H1("Settings"),
                 html.P(
-                    "Create reusable field sets for every track table. Settings are saved in music_sync.json."
+                    "Create reusable field sets for every track table. Settings are saved in SQLite."
                 ),
             ],
             className="tool-heading",

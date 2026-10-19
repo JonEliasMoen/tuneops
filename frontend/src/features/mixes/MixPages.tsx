@@ -8,6 +8,7 @@ import { TrackBrowser } from '../track-browser/TrackBrowser'
 import { MixStopwatch } from '../track-browser/MixStopwatch'
 import { formatYouTubeFacts, watchedMixPresentation } from './mixPresentation'
 import { MixOverviewTable } from './MixOverviewTable'
+import { viewsPerDay } from './mixOverview'
 import { loadTemporaryState, saveTemporaryState } from './watchedMixState'
 
 type Mix = MixSummary & { youtube_title?: string; youtube_channel?: string; youtube_views?: number | null; youtube_upload_date?: string; youtube_metadata_error?: string }
@@ -15,6 +16,15 @@ type WatchedMix = { video_id: string; title: string; channel_name: string; uploa
 type Candidate = Record<string, unknown> & { id: string; label: string; score: number }
 type Pending = { id: number; artist: string; title: string; mix_position: string; mix_title: string; channel_name: string; status: string; candidates: Candidate[] }
 type StagingRow = { row_id: number; raw_line: string; timestamp: string; artist: string; title: string; status: string; matches: Candidate[]; selected_id: string }
+
+function analyticsDuration(seconds?: number | null) {
+  if (seconds === null || seconds === undefined) return '—'
+  const value = Math.round(seconds)
+  const hours = Math.floor(value / 3600)
+  const minutes = Math.floor((value % 3600) / 60)
+  const remainder = value % 60
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}` : `${minutes}:${String(remainder).padStart(2, '0')}`
+}
 
 function WatchedMixRating({ rating, disabled, onChange }: { rating: number; disabled: boolean; onChange: (rating: number) => void }) {
   return <div className="watched-mix-rating" aria-label={rating ? `${rating} out of 5 stars` : 'Not rated'}>
@@ -55,6 +65,7 @@ export function MixDetailPage() {
   const { id = '' } = useParams()
   const folderName = decodeURIComponent(id)
   const mix = useQuery({ queryKey: ['mix', folderName], queryFn: () => api<Mix>(`/mixes/${encodeURIComponent(folderName)}`) })
+  const youtube = useQuery({ queryKey: ['youtube-status'], queryFn: () => api<YouTubeStatus>('/youtube/status') })
   const client = useQueryClient()
   const [youtubeUrl, setYoutubeUrl] = useState('')
   const [tidalUrl, setTidalUrl] = useState('')
@@ -67,10 +78,12 @@ export function MixDetailPage() {
     onSuccess: (job) => { setImportError(''); setImportJobId(job.id) },
   })
   const youtubeFacts = formatYouTubeFacts({ channel: mix.data?.youtube_channel, views: mix.data?.youtube_views, uploadDate: mix.data?.youtube_upload_date })
+  const dailyViews = mix.data ? viewsPerDay(mix.data) : null
+  const analyticsAvailable = Boolean(mix.data?.youtube_analytics_fetched_at)
   return <div>
     {mix.data ? <section className="watched-mix-header mix-detail-header">
       {mix.data.cover_url ? <img src={mix.data.cover_url} alt="" /> : null}
-      <div><p className="eyebrow">My mix</p><h1>{mix.data.folder_name}{mix.data.youtube_title ? <span className="mix-youtube-heading">{mix.data.youtube_title}</span> : null}</h1>{youtubeFacts ? <p className="mix-youtube-facts">{youtubeFacts}</p> : null}<div className="button-row">{mix.data.youtube_analytics_url ? <a className="button-link" href={mix.data.youtube_analytics_url} target="_blank" rel="noreferrer">Open in Analytics</a> : null}</div>{mix.data.tidal_playlist_name ? <p className="good">TIDAL setlist: {mix.data.tidal_playlist_name}</p> : null}<div className="event-media-fields"><label>YouTube URL<input value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} /></label><label>TIDAL playlist URL<input value={tidalUrl} onChange={(event) => setTidalUrl(event.target.value)} /></label><div className="button-row"><button className="primary" type="button" onClick={() => saveUrls.mutate()} disabled={saveUrls.isPending}>Save URLs</button><button type="button" onClick={() => importTidal.mutate()} disabled={!tidalUrl.trim() || importTidal.isPending}>Sync playlist</button>{saveUrls.isError || importTidal.isError ? <span className="warning">{saveUrls.error?.message || importTidal.error?.message}</span> : null}</div><JobStatus jobId={importJobId} onComplete={() => { setImportJobId(null); void client.invalidateQueries({ queryKey: ['mix', folderName] }); void client.invalidateQueries({ queryKey: ['tracks', 'setlist', folderName] }) }} onFailed={(message) => { setImportJobId(null); setImportError(message) }} />{importError ? <p className="warning">{importError}</p> : null}</div></div>
+      <div><p className="eyebrow">My mix</p><h1>{mix.data.folder_name}{mix.data.youtube_title ? <span className="mix-youtube-heading">{mix.data.youtube_title}</span> : null}</h1>{youtubeFacts ? <p className="mix-youtube-facts">{youtubeFacts}</p> : null}<div className="button-row">{mix.data.youtube_url ? <a className="button-link" href={mix.data.youtube_url} target="_blank" rel="noreferrer">Open on YouTube</a> : null}{mix.data.youtube_analytics_url ? <a className="button-link quiet-link" href={mix.data.youtube_analytics_url} target="_blank" rel="noreferrer">Open in Analytics</a> : null}</div>{analyticsAvailable ? <><dl className="mix-detail-analytics"><div><dt>Views</dt><dd>{mix.data.youtube_views?.toLocaleString() ?? '—'}</dd></div><div><dt>Views/day</dt><dd>{dailyViews === null ? '—' : dailyViews.toFixed(dailyViews < 10 ? 2 : 1)}</dd></div><div><dt>Average viewed</dt><dd>{mix.data.youtube_average_view_percentage === null ? '—' : `${mix.data.youtube_average_view_percentage.toFixed(1)}%`}</dd></div><div><dt>Average view</dt><dd>{analyticsDuration(mix.data.youtube_average_view_duration)}</dd></div><div><dt>Watch time</dt><dd>{mix.data.youtube_watch_minutes === null ? '—' : `${Math.round(mix.data.youtube_watch_minutes / 60).toLocaleString()} h`}</dd></div><div><dt>Likes</dt><dd>{mix.data.youtube_likes?.toLocaleString() ?? '—'}</dd></div><div><dt>Comments</dt><dd>{mix.data.youtube_comments?.toLocaleString() ?? '—'}</dd></div><div><dt>Subscribers</dt><dd>{mix.data.youtube_subscribers_gained === null ? '—' : `+${mix.data.youtube_subscribers_gained.toLocaleString()}`}</dd></div>{mix.data.youtube_thumbnail_ctr !== null ? <div><dt>Recent cover CTR</dt><dd>{mix.data.youtube_thumbnail_ctr.toFixed(2)}%<small>{mix.data.youtube_thumbnail_impressions?.toLocaleString() ?? 0} reported impressions</small></dd></div> : null}</dl>{mix.data.youtube_thumbnail_ctr !== null ? <p className="mix-analytics-note">Cover metrics only include reports generated since MusicSync connected the YouTube Reporting job; YouTube Studio may show a much larger lifetime total.</p> : null}</> : youtube.data?.connected ? <p className="mix-analytics-empty">No cached analytics for this mix yet. Refresh analytics from My Mixes Overview.</p> : null}{mix.data.tidal_playlist_name ? <p className="good">TIDAL setlist: {mix.data.tidal_playlist_name}</p> : null}<div className="event-media-fields"><label>YouTube URL<input value={youtubeUrl} onChange={(event) => setYoutubeUrl(event.target.value)} /></label><label>TIDAL playlist URL<input value={tidalUrl} onChange={(event) => setTidalUrl(event.target.value)} /></label><div className="button-row"><button className="primary" type="button" onClick={() => saveUrls.mutate()} disabled={saveUrls.isPending}>Save URLs</button><button type="button" onClick={() => importTidal.mutate()} disabled={!tidalUrl.trim() || importTidal.isPending}>Sync playlist</button>{saveUrls.isError || importTidal.isError ? <span className="warning">{saveUrls.error?.message || importTidal.error?.message}</span> : null}</div><JobStatus jobId={importJobId} onComplete={() => { setImportJobId(null); void client.invalidateQueries({ queryKey: ['mix', folderName] }); void client.invalidateQueries({ queryKey: ['tracks', 'setlist', folderName] }) }} onFailed={(message) => { setImportJobId(null); setImportError(message) }} />{importError ? <p className="warning">{importError}</p> : null}</div></div>
     </section> : null}
     <TrackBrowser collectionType="setlist" collectionId={folderName} />
   </div>

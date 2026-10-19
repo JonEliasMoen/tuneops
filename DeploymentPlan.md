@@ -64,6 +64,9 @@ more services only when actual load or reliability data justifies doing so.
 
 ## Phase 2 — per-user provider credentials
 
+The concrete local file-to-database transition, encryption boundary, provider
+adapters and cutover checks are specified in `AuthMigrationPlan.md`.
+
 - [ ] Replace process-wide Spotify, TIDAL, YouTube, Last.fm, and future provider
   sessions with connections owned by `user_id` and provider name.
 - [ ] Store only encrypted provider tokens/credentials. Use envelope encryption:

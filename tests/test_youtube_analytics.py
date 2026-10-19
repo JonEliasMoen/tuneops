@@ -7,8 +7,9 @@ from music_tools.youtube_analytics import service
 
 
 class Response:
-    def __init__(self, payload):
+    def __init__(self, payload, text=""):
         self.payload = payload
+        self.text = text
 
     def raise_for_status(self):
         return None
@@ -21,6 +22,14 @@ class FailedResponse(Response):
     def raise_for_status(self):
         import requests
         raise requests.HTTPError("403 Forbidden")
+
+
+class ForbiddenReportingResponse(Response):
+    status_code = 403
+
+    def raise_for_status(self):
+        import requests
+        raise requests.HTTPError("403 Forbidden", response=self)
 
 
 def test_authorization_url_requests_read_only_scopes(monkeypatch):
@@ -90,6 +99,70 @@ def test_query_video_titles_falls_back_to_public_oembed(monkeypatch):
     }
 
 
+def test_reach_sync_creates_report_job_when_missing(monkeypatch):
+    monkeypatch.setattr(service, "access_token", lambda: "access-token")
+    monkeypatch.setattr(service, "_reporting_collection", lambda *_args: [])
+    created = []
+    monkeypatch.setattr(
+        service.requests,
+        "post",
+        lambda url, **kwargs: created.append((url, kwargs["json"])) or Response({}),
+    )
+
+    result = service.sync_video_reach_reports(["video-id"], set())
+
+    assert result == {"records": [], "report_ids": [], "job_created": True}
+    assert created[0][1]["reportTypeId"] == "channel_reach_basic_a1"
+
+
+def test_reach_sync_explains_reporting_api_403(monkeypatch):
+    monkeypatch.setattr(service, "access_token", lambda: "access-token")
+    monkeypatch.setattr(
+        service.requests,
+        "get",
+        lambda *_args, **_kwargs: ForbiddenReportingResponse({}),
+    )
+
+    try:
+        service.sync_video_reach_reports(["video-id"], set())
+    except RuntimeError as exc:
+        assert "Enable YouTube Reporting API" in str(exc)
+    else:
+        raise AssertionError("403 should produce an actionable error")
+
+
+def test_reach_sync_imports_all_videos_from_new_reports_for_future_mixes(monkeypatch):
+    monkeypatch.setattr(service, "access_token", lambda: "access-token")
+
+    def collection(path, key, _headers):
+        if path == "jobs":
+            return [{"id": "job-id", "reportTypeId": "channel_reach_basic_a1"}]
+        assert path == "jobs/job-id/reports"
+        assert key == "reports"
+        return [
+            {"id": "old", "downloadUrl": "https://reports/old"},
+            {"id": "new", "downloadUrl": "https://reports/new"},
+        ]
+
+    monkeypatch.setattr(service, "_reporting_collection", collection)
+    monkeypatch.setattr(
+        service.requests,
+        "get",
+        lambda url, **_kwargs: Response({}, text=(
+            "date,video_id,video_thumbnail_impressions,video_thumbnail_impressions_ctr\n"
+            "2026-10-01,video-id,100,0.045\n"
+            "2026-10-01,another-video,200,0.07\n"
+        )),
+    )
+
+    result = service.sync_video_reach_reports(["video-id"], {"old"})
+
+    assert result["report_ids"] == ["new"]
+    assert [row["video_id"] for row in result["records"]] == [
+        "video-id", "another-video",
+    ]
+
+
 def test_analytics_refresh_matches_owned_video_results_to_mix_folders(monkeypatch):
     registry = SimpleNamespace()
     captured = {}
@@ -133,6 +206,17 @@ def test_analytics_refresh_matches_owned_video_results_to_mix_folders(monkeypatc
         lambda records: captured.update(metadata=records) or len(records),
     )
     monkeypatch.setattr(youtube_api, "youtube_video_metadata", lambda: {})
+    monkeypatch.setattr(youtube_api, "imported_youtube_reach_report_ids", lambda: set())
+    monkeypatch.setattr(
+        youtube_api.service,
+        "sync_video_reach_reports",
+        lambda ids, imported: {"records": [], "report_ids": [], "job_created": False},
+    )
+    monkeypatch.setattr(
+        youtube_api,
+        "store_youtube_reach_reports",
+        lambda report_ids, records: captured.update(reach=(report_ids, records)) or 0,
+    )
     monkeypatch.setattr(
         youtube_api,
         "fetch_youtube_metadata",
@@ -142,7 +226,10 @@ def test_analytics_refresh_matches_owned_video_results_to_mix_folders(monkeypatc
     response = youtube_api.refresh_youtube_analytics()
 
     assert response.state == "succeeded"
-    assert response.result == {"requested": 1, "matched": 1, "stored": 1}
+    assert response.result == {
+        "requested": 1, "matched": 1, "stored": 1,
+        "reach_stored": 0, "reach_job_created": False, "reach_error": "",
+    }
     assert captured["records"][0]["folder_name"] == "darkprog"
     assert captured["metadata"][0]["title"] == "Darkprog"
     assert captured["metadata"][0]["upload_date"] == "2026-01-05"

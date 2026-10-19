@@ -125,6 +125,29 @@ def test_navigation_builds_history_from_configured_lastfm_cache(monkeypatch):
     assert history.items[1].label == "2026"
     assert history.items[1].children[0]["path"] == "/history/2026-overall"
     assert history.items[1].children[1]["path"] == "/history/2026-09"
+    assert next(item for item in result.tools if item.id == "artists").path == "/artists"
+
+
+def test_artist_overview_uses_configured_lastfm_user(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(library_api.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu"}})
+    monkeypatch.setattr(
+        library_api,
+        "tidal_artist_overview_page",
+        lambda username, **kwargs: captured.update(username=username, **kwargs) or ([{
+            "id": "artist", "name": "Artist", "indexed_tracks": 4, "lastfm_plays": 12,
+        }], 1),
+    )
+
+    result = library_api.artist_overview(
+        offset=0, limit=200, q="art",
+        sort_field="lastfm_plays", sort_direction="desc",
+    )
+
+    assert result.total == 1
+    assert result.items[0].lastfm_plays == 12
+    assert captured["username"] == "Aruzhu"
+    assert captured["query"] == "art"
 
 
 def test_navigation_puts_overview_first_in_my_mixes(monkeypatch):
@@ -280,6 +303,8 @@ def test_mix_overview_exposes_cached_counts_and_local_availability(monkeypatch):
         "youtube_upload_date": "2026-01-05",
         "youtube_duration_seconds": 3510,
         "youtube_views": None,
+        "youtube_thumbnail_impressions": None,
+        "youtube_thumbnail_ctr": None,
         "youtube_watch_minutes": None,
         "youtube_average_view_duration": None,
         "youtube_average_view_percentage": None,
@@ -290,6 +315,42 @@ def test_mix_overview_exposes_cached_counts_and_local_availability(monkeypatch):
         "has_cover": False,
         "cover_url": "thumbnail",
     }
+
+
+def test_mix_detail_exposes_cached_owner_analytics(monkeypatch):
+    monkeypatch.setattr(
+        library_api,
+        "mix_for",
+        lambda _name: SimpleNamespace(
+            folder_name="darkprog", youtube_url="https://youtu.be/abc123",
+            tidal_url="", tidal_playlist_name="", cover_path=None,
+            positions="[00:00] Intro\n[59:00] Last",
+            youtube_views=123, youtube_thumbnail_impressions=1000,
+            youtube_thumbnail_ctr=4.25, youtube_watch_minutes=600,
+            youtube_average_view_duration=240,
+            youtube_average_view_percentage=42.5, youtube_likes=8,
+            youtube_comments=2, youtube_subscribers_gained=3,
+            youtube_analytics_fetched_at="2026-10-13T12:00:00+00:00",
+        ),
+    )
+    monkeypatch.setattr(
+        library_api,
+        "fetch_youtube_metadata",
+        lambda _url: SimpleNamespace(
+            title="Dark Progressive", channel_name="Sonic165",
+            view_count=120, upload_date="2026-01-05", error="",
+        ),
+    )
+    monkeypatch.setattr(library_api, "youtube_thumbnail_url", lambda _url: "thumbnail")
+    monkeypatch.setattr(library_api.youtube_service, "cached_video_duration_seconds", lambda _id: 3600)
+
+    result = library_api.mix_detail("darkprog")
+
+    assert result["youtube_views"] == 123
+    assert result["youtube_duration_seconds"] == 3600
+    assert result["youtube_average_view_percentage"] == 42.5
+    assert result["youtube_thumbnail_ctr"] == 4.25
+    assert result["youtube_analytics_fetched_at"] == "2026-10-13T12:00:00+00:00"
 
 
 def test_watched_mix_edit_reuses_existing_record_and_delete_is_explicit(monkeypatch):

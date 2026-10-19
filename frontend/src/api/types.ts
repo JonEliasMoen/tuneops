@@ -7,6 +7,21 @@ export type Membership = {
 
 export type Artist = { id: string; name: string; provider_artist_id?: string }
 
+export type ArtistOverviewRow = {
+  id: string
+  name: string
+  indexed_tracks: number
+  lastfm_plays: number
+}
+
+export type ArtistOverviewPage = {
+  items: ArtistOverviewRow[]
+  total: number
+  offset: number
+  limit: number
+  has_more: boolean
+}
+
 export type Track = {
   id: string
   title: string
@@ -128,4 +143,28 @@ export type YouTubeStatus = {
   configured: boolean
   connected: boolean
   expires_at: number | null
+}
+
+export type OrphanedTrack = {
+  id: string
+  title: string
+  artist: string
+  album: string
+  rating: number
+  tag_count: number
+  dimension_count: number
+  lastfm_plays: number
+}
+
+export type OrphanedTracksPage = {
+  items: OrphanedTrack[]
+  total: number
+  offset: number
+  limit: number
+  has_more: boolean
+}
+
+export type OrphanedTracksClearResult = {
+  deleted_tracks: number
+  cleared_lastfm_matches: number
 }
