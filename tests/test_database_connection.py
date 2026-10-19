@@ -33,6 +33,8 @@ def test_turso_configuration_accepts_vercel_integration_names(monkeypatch):
 def test_remote_row_is_sqlite_row_compatible():
     row = connection.RemoteRow(("id", "name"), (7, "TuneOps"))
     assert row["id"] == 7
+    assert row[0] == 7
+    assert row[-1] == "TuneOps"
     assert dict(row) == {"id": 7, "name": "TuneOps"}
 
 

@@ -122,9 +122,13 @@ def _statement(sql: str, parameters: Sequence[Any] | Mapping[str, Any] = ()) -> 
 
 class RemoteRow(Mapping[str, Any]):
     def __init__(self, columns: Sequence[str], values: Sequence[Any]):
-        self._values = dict(zip(columns, values, strict=False))
+        self._columns = tuple(columns)
+        self._sequence = tuple(values)
+        self._values = dict(zip(self._columns, self._sequence, strict=False))
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str | int | slice) -> Any:
+        if isinstance(key, (int, slice)):
+            return self._sequence[key]
         return self._values[key]
 
     def __iter__(self) -> Iterator[str]:
