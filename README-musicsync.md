@@ -145,6 +145,34 @@ The TIDAL integration currently uses the unofficial `tidalapi` Python package.
 Keep the dependency updated, and expect that TIDAL service changes can
 occasionally require a package update.
 
+## Hosted Google sign-in
+
+Vercel deployments require a Google login before serving the application or
+private API routes. Add the production callback to the Google Cloud Web OAuth
+client's **Authorized redirect URIs**:
+
+```text
+https://YOUR-VERCEL-DOMAIN/api/v1/auth/google/callback
+```
+
+Configure these Vercel environment variables (Production and Preview as
+appropriate):
+
+```dotenv
+GOOGLE_SIGNIN_CLIENT_ID=...
+GOOGLE_SIGNIN_CLIENT_SECRET=...
+GOOGLE_SIGNIN_REDIRECT_URI=https://YOUR-VERCEL-DOMAIN/api/v1/auth/google/callback
+TUNEOPS_SESSION_SECRET=at-least-32-random-characters
+TUNEOPS_ALLOWED_EMAILS=your-google-account@example.com
+```
+
+The existing `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are accepted as a
+temporary fallback, but a separate sign-in client is clearer once YouTube
+authorization and user login diverge. Google sign-in requests only
+`openid email profile`; YouTube Analytics remains a separate connection.
+Authentication turns on automatically on Vercel. Set
+`TUNEOPS_AUTH_REQUIRED=true` only when testing the same behavior locally.
+
 ## YouTube Analytics for My Mixes
 
 Enable the YouTube Data API v3 and YouTube Analytics API in Google Cloud, then

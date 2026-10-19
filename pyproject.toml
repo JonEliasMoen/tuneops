@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "fastapi>=0.135,<1",
+    "google-auth>=2.41,<3",
     "musicbrainzngs>=0.7.1,<1",
     "Pillow>=10,<13",
     "pylast>=7.1,<8",

@@ -11,12 +11,13 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import main as engine
 
 from .api.router import api_router
+from . import auth
 from .jobs import JOBS
 
 
@@ -82,6 +83,27 @@ def create_app() -> FastAPI:
             )
         return response
 
+    @app.middleware("http")
+    async def require_google_login(request: Request, call_next):
+        if not auth.required():
+            return await call_next(request)
+        path = request.url.path
+        public = (
+            path.startswith("/api/v1/auth/")
+            or path.startswith("/assets/")
+            or path == "/favicon.ico"
+            or path == "/login"
+        )
+        if public:
+            return await call_next(request)
+        user = auth.session_user(request)
+        if user:
+            request.state.user = user
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return _error(request, 401, "authentication_required", "Sign in with Google first.")
+        return RedirectResponse(f"/login?return_to={path}", status_code=303)
+
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
         detail = exc.detail if isinstance(exc.detail, str) else "The request could not be completed."
@@ -102,6 +124,15 @@ def create_app() -> FastAPI:
         return _error(request, 500, "internal_error", "MusicSync could not complete the request.")
 
     app.include_router(api_router)
+
+    @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+    async def login_page(error: str = "", return_to: str = "/"):
+        if auth.required() and not auth.configured():
+            return HTMLResponse(
+                auth.login_html(auth.configuration_error(), return_to), status_code=503
+            )
+        message = "Google sign-in failed. Please try again." if error else ""
+        return HTMLResponse(auth.login_html(message, return_to))
 
     assets = FRONTEND_DIST / "assets"
     if assets.is_dir():

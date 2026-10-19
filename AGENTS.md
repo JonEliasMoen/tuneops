@@ -51,6 +51,27 @@ The working interpreter is:
   liked-track cache, reverse playlist membership lookup, and future user
   metadata storage.
 
+## Hosted authentication
+
+- Vercel deployments require Google OIDC login by default; local development
+  remains open unless `TUNEOPS_AUTH_REQUIRED=true` is set.
+- Login uses a separate callback and only the `openid email profile` scopes.
+  `GOOGLE_SIGNIN_CLIENT_ID` / `GOOGLE_SIGNIN_CLIENT_SECRET` may temporarily
+  fall back to the existing Google client, but never add YouTube scopes to the
+  sign-in request.
+- `TUNEOPS_ALLOWED_EMAILS` is a comma-separated, fail-closed allowlist for the
+  initial private deployment. Identify authenticated users by Google's stable
+  `sub` claim, never by email.
+- Browser sessions are signed, `HttpOnly`, `SameSite=Lax`, and `Secure` on
+  Vercel. OAuth uses signed state, nonce, and PKCE. Keep
+  `TUNEOPS_SESSION_SECRET` outside source control and at least 32 characters.
+- Only `/login`, `/api/v1/auth/*`, and static assets are public. All other UI
+  and API routes require a valid session; do not expose provider health labels
+  through a public health endpoint.
+- Google login authenticates TuneOps only. YouTube Analytics authorization is
+  a separate provider connection and must retain its narrower provider-token
+  lifecycle.
+
 New HTTP routes belong in `backend/app/api`, use cases in
 `backend/app/services`, and browser UI in `frontend/src/features`. Keep provider
 and database work out of React components. Reuse
