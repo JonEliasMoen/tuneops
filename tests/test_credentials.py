@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 
 import pytest
+from spotipy.cache_handler import CacheHandler
 
 from music_library.credentials import (
     CredentialCipher,
@@ -108,6 +109,7 @@ def test_spotify_cache_handler_preserves_refresh_token(tmp_path, monkeypatch):
     monkeypatch.setenv("TUNEOPS_CREDENTIAL_KEY", SECRET)
     monkeypatch.setenv("MUSICSYNC_DATABASE", str(path))
     handler = SpotifyDatabaseCacheHandler(source, user_id=USER_ID, path=path)
+    assert isinstance(handler, CacheHandler)
     assert handler.get_cached_token()["refresh_token"] == "keep-me"
     handler.save_token_to_cache({"access_token": "new", "expires_at": 123})
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from spotipy.cache_handler import CacheHandler
 
 from music_library.database import DATABASE_PATH, connect, initialize
 
@@ -305,7 +306,7 @@ def load_or_import_file_credentials(
     return load_credentials(provider, user_id=user_id, path=path)
 
 
-class SpotifyDatabaseCacheHandler:
+class SpotifyDatabaseCacheHandler(CacheHandler):
     """Spotipy cache handler preserving the complete provider token object."""
 
     def __init__(

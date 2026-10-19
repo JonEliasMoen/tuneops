@@ -425,6 +425,25 @@ CREATE TABLE IF NOT EXISTS credential_audit_events (
 
 CREATE INDEX IF NOT EXISTS credential_audit_by_user
     ON credential_audit_events(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS app_jobs (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    state TEXT NOT NULL,
+    phase TEXT NOT NULL DEFAULT '',
+    current INTEGER NOT NULL DEFAULT 0,
+    total INTEGER,
+    message TEXT NOT NULL DEFAULT '',
+    result_json TEXT,
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS app_jobs_by_updated_at
+    ON app_jobs(updated_at);
 """
 
 

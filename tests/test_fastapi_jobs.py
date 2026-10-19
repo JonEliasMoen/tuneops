@@ -282,3 +282,24 @@ def test_failed_background_job_is_terminal_and_sanitizes_provider_details():
     assert result["finished_at"]
     assert "private-token" not in result["error"]
     assert "?[redacted]" in result["error"]
+
+
+def test_persisted_job_can_be_polled_from_another_registry(tmp_path):
+    path = tmp_path / "jobs.sqlite3"
+    first = job_registry.JobRegistry(workers=1, persist=True, database_path=path)
+    second = job_registry.JobRegistry(workers=1, persist=True, database_path=path)
+    try:
+        submitted = first.submit("shared-job", lambda progress: {"ok": True})
+        result = None
+        for _ in range(100):
+            result = second.get(submitted.id)
+            if result and result["state"] == "succeeded":
+                break
+            time.sleep(0.01)
+    finally:
+        first.shutdown()
+        second.shutdown()
+
+    assert result is not None
+    assert result["state"] == "succeeded"
+    assert result["result"] == {"ok": True}
