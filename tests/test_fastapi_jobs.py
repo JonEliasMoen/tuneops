@@ -303,3 +303,19 @@ def test_persisted_job_can_be_polled_from_another_registry(tmp_path):
     assert result is not None
     assert result["state"] == "succeeded"
     assert result["result"] == {"ok": True}
+
+
+def test_synchronous_registry_returns_only_after_job_is_terminal(tmp_path):
+    registry = job_registry.JobRegistry(
+        persist=True, synchronous=True, database_path=tmp_path / "jobs.sqlite3"
+    )
+    try:
+        submitted = registry.submit("hosted-job", lambda progress: {"done": True})
+        result = registry.get(submitted.id)
+    finally:
+        registry.shutdown()
+
+    assert submitted.state == "succeeded"
+    assert result is not None
+    assert result["state"] == "succeeded"
+    assert result["result"] == {"done": True}

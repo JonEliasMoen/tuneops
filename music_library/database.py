@@ -2572,6 +2572,25 @@ def merge_tidal_liked_tracks_prefix(
             for row in existing_rows
         ]
         existing_ids = {track_id for track_id, _date_added in existing}
+        candidate_ids = [
+            str(record.get("id") or "") for record, _track in records
+            if str(record.get("id") or "")
+        ]
+        known_track_ids: set[str] = set()
+        for start in range(0, len(candidate_ids), 500):
+            chunk = candidate_ids[start : start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            known_track_ids.update(
+                str(row["provider_track_id"])
+                for row in connection.execute(
+                    f"""
+                    SELECT provider_track_id FROM tracks
+                    WHERE provider='tidal'
+                      AND provider_track_id IN ({placeholders})
+                    """,
+                    chunk,
+                )
+            )
         boundary_index = next(
             (
                 index
@@ -2591,44 +2610,72 @@ def merge_tidal_liked_tracks_prefix(
             live_ids.append(track_id)
             added = getattr(track, "user_date_added", None) or getattr(track, "date_added", None)
             live_dates[track_id] = _timestamp(added)
-            connection.execute(
-                """
-                INSERT INTO tracks(
-                    provider, provider_track_id, title, artist, remix, album, album_art_url,
-                    duration_seconds, bpm, musical_key, key_scale, release_year,
-                    isrc, refreshed_at
-                ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(provider, provider_track_id) DO UPDATE SET
-                    title=excluded.title, artist=excluded.artist, remix=excluded.remix,
-                    album=excluded.album, album_art_url=excluded.album_art_url,
-                    duration_seconds=excluded.duration_seconds,
-                    bpm=excluded.bpm, musical_key=excluded.musical_key,
-                    key_scale=excluded.key_scale, release_year=excluded.release_year,
-                    isrc=excluded.isrc, refreshed_at=excluded.refreshed_at
-                """,
-                (
-                    track_id, record["title"], record["artist"], record["remix"],
-                    record["album"], record["album_art_url"],
-                    record["duration_seconds"], record["bpm"],
-                    record["musical_key"], record["key_scale"], record["year"],
-                    record["isrc"], now,
-                ),
-            )
-            _store_track_artists(connection, track_id, record)
+            if track_id not in known_track_ids:
+                connection.execute(
+                    """
+                    INSERT INTO tracks(
+                        provider, provider_track_id, title, artist, remix, album,
+                        album_art_url, duration_seconds, bpm, musical_key,
+                        key_scale, release_year, isrc, refreshed_at
+                    ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        track_id, record["title"], record["artist"], record["remix"],
+                        record["album"], record["album_art_url"],
+                        record["duration_seconds"], record["bpm"],
+                        record["musical_key"], record["key_scale"], record["year"],
+                        record["isrc"], now,
+                    ),
+                )
+                _store_track_artists(connection, track_id, record)
 
-        tail = (
-            existing[boundary_index + 1 :] if boundary_track_id else existing
-        ) if preserve_unscanned_tail else []
-        merged = [(track_id, live_dates[track_id]) for track_id in live_ids]
-        merged.extend(
-            (track_id, date_added)
-            for track_id, date_added in tail
-            if track_id not in seen
-        )
+        # Move existing positions out of the positive range, discard only the
+        # provider-checked prefix, then shift the untouched tail with one SQL
+        # update. This avoids retransmitting thousands of cached memberships
+        # to Turso whenever the newest provider page is checked.
         connection.execute(
-            "DELETE FROM liked_tracks WHERE provider='tidal' AND provider_user_id=?",
+            """
+            UPDATE liked_tracks SET position=-(position + 1)
+            WHERE provider='tidal' AND provider_user_id=?
+            """,
             (str(user_id),),
         )
+        if preserve_unscanned_tail:
+            old_prefix_size = boundary_index + 1 if boundary_track_id else 0
+            if old_prefix_size:
+                connection.execute(
+                    """
+                    DELETE FROM liked_tracks
+                    WHERE provider='tidal' AND provider_user_id=?
+                      AND position BETWEEN ? AND -1
+                    """,
+                    (str(user_id), -old_prefix_size),
+                )
+            for start in range(0, len(live_ids), 500):
+                chunk = live_ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                connection.execute(
+                    f"""
+                    DELETE FROM liked_tracks
+                    WHERE provider='tidal' AND provider_user_id=?
+                      AND provider_track_id IN ({placeholders})
+                    """,
+                    (str(user_id), *chunk),
+                )
+            position_delta = len(live_ids) - old_prefix_size
+            connection.execute(
+                """
+                UPDATE liked_tracks
+                SET position=(-position - 1) + ?
+                WHERE provider='tidal' AND provider_user_id=?
+                """,
+                (position_delta, str(user_id)),
+            )
+        else:
+            connection.execute(
+                "DELETE FROM liked_tracks WHERE provider='tidal' AND provider_user_id=?",
+                (str(user_id),),
+            )
         connection.executemany(
             """
             INSERT INTO liked_tracks(
@@ -2636,8 +2683,8 @@ def merge_tidal_liked_tracks_prefix(
             ) VALUES('tidal', ?, ?, ?, ?)
             """,
             [
-                (str(user_id), position, track_id, date_added)
-                for position, (track_id, date_added) in enumerate(merged)
+                (str(user_id), position, track_id, live_dates[track_id])
+                for position, track_id in enumerate(live_ids)
             ],
         )
         connection.execute(
@@ -2648,10 +2695,19 @@ def merge_tidal_liked_tracks_prefix(
             """,
             (str(user_id), now),
         )
+        cached = int(
+            connection.execute(
+                """
+                SELECT COUNT(1) AS count FROM liked_tracks
+                WHERE provider='tidal' AND provider_user_id=?
+                """,
+                (str(user_id),),
+            ).fetchone()["count"]
+        )
     return {
         "fetched": len(live_ids),
         "added": sum(track_id not in existing_ids for track_id in live_ids),
-        "cached": len(merged),
+        "cached": cached,
     }
 
 

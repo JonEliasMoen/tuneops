@@ -61,9 +61,15 @@ class JobRegistry:
         workers: int = 2,
         *,
         persist: bool | None = None,
+        synchronous: bool | None = None,
         database_path=DATABASE_PATH,
     ) -> None:
-        self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="musicsync-job")
+        self._synchronous = bool(os.getenv("VERCEL")) if synchronous is None else synchronous
+        self._executor = (
+            None
+            if self._synchronous
+            else ThreadPoolExecutor(max_workers=workers, thread_name_prefix="musicsync-job")
+        )
         self._jobs: dict[str, Job] = {}
         self._active_kinds: dict[str, str] = {}
         self._lock = threading.RLock()
@@ -149,7 +155,14 @@ class JobRegistry:
             self._jobs[job.id] = job
             self._active_kinds[kind] = job.id
             self._persist(job)
-        self._executor.submit(self._run, job.id, function)
+        if self._synchronous:
+            # A normal Python thread is not durable after a Vercel function
+            # returns. Keep the request alive until the persisted job reaches
+            # a terminal state; local development retains background workers.
+            self._run(job.id, function)
+        else:
+            assert self._executor is not None
+            self._executor.submit(self._run, job.id, function)
         return job
 
     def _run(self, job_id: str, function: Callable[[Callable[[str], None]], Any]) -> None:
@@ -199,7 +212,8 @@ class JobRegistry:
             return asdict(job)
 
     def shutdown(self) -> None:
-        self._executor.shutdown(wait=False, cancel_futures=False)
+        if self._executor is not None:
+            self._executor.shutdown(wait=False, cancel_futures=False)
 
 
 JOBS = JobRegistry()

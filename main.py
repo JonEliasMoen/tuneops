@@ -1059,8 +1059,8 @@ def maintain_tidal_liked_tracks(
         ]
         boundary_track_id = known_page_ids[-1] if known_page_ids else None
         progress(
-            f"Maintaining liked tracks: scanned "
-            f"{min(offset + page_size, provider_total):,}/{provider_total:,}"
+            f"Checked {min(offset + len(page), provider_total):,} newest liked tracks "
+            f"(TIDAL library: {provider_total:,})"
         )
         if boundary_track_id:
             break
