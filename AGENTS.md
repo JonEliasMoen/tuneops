@@ -39,6 +39,10 @@ The working interpreter is:
 - `frontend/src/features/`: active feature pages and shared track browser.
 - `backups/dash_app/`: retired Dash source only; never add active imports from
   this directory.
+- The FastAPI app registers `frontend/dist` with `app.frontend()` after every
+  API/login route. This is the Vercel-aware static frontend boundary: keep SPA
+  fallback there rather than restoring a manual catch-all or conditional
+  `StaticFiles` mount, which can omit hashed Vite assets from the deployment.
 - `music_tools/lastfm/`: provider-neutral listening-history import and
   conservative Last.fm identity matching through `pylast`; keep it independent
   of the presentation layer. Translate provider errors without logging request

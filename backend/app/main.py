@@ -11,8 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import main as engine
 
@@ -134,31 +133,25 @@ def create_app() -> FastAPI:
         message = "Google sign-in failed. Please try again." if error else ""
         return HTMLResponse(auth.login_html(message, return_to))
 
-    assets = FRONTEND_DIST / "assets"
-    if assets.is_dir():
-        app.mount("/assets", StaticFiles(directory=assets), name="frontend-assets")
+    @app.api_route(
+        "/api/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+    )
+    async def unknown_api(path: str, request: Request):
+        return _error(request, 404, "not_found", "API route was not found.")
 
-    @app.get("/{path:path}", include_in_schema=False)
-    async def react_app(path: str, request: Request):
-        if path.startswith("api/"):
-            return _error(request, 404, "not_found", "API route was not found.")
-        requested = FRONTEND_DIST / path
-        if path and requested.is_file() and FRONTEND_DIST in requested.resolve().parents:
-            return FileResponse(requested)
-        index = FRONTEND_DIST / "index.html"
-        if index.is_file():
-            return FileResponse(index)
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": {
-                    "code": "frontend_not_built",
-                    "message": "Run npm install and npm run build in musicsync/frontend.",
-                    "details": None,
-                    "request_id": None,
-                }
-            },
-        )
+    # FastAPI's frontend registration is understood by Vercel's Python build
+    # system, which bundles/promotes the complete hashed Vite asset directory.
+    # API and login routes above retain precedence; SPA navigation falls back
+    # to index.html. check_dir=False keeps API-only test environments importable
+    # before the frontend build has run.
+    app.frontend(
+        "/",
+        directory=FRONTEND_DIST,
+        fallback="index.html",
+        check_dir=False,
+    )
 
     return app
 

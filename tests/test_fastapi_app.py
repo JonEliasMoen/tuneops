@@ -1,8 +1,28 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.main import create_app
+
+
+def test_built_frontend_serves_hashed_assets_and_spa_routes(monkeypatch):
+    dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+    assets = list((dist / "assets").glob("index-*.js"))
+    if not assets:
+        pytest.skip("frontend has not been built")
+    monkeypatch.setenv("TUNEOPS_AUTH_REQUIRED", "false")
+    client = TestClient(create_app())
+
+    asset = client.get(f"/assets/{assets[0].name}")
+    route = client.get("/liked-tracks", headers={"Accept": "text/html"})
+
+    assert asset.status_code == 200
+    assert "javascript" in asset.headers["content-type"]
+    assert route.status_code == 200
+    assert "<div id=\"root\"></div>" in route.text
 
 
 def test_info_and_unknown_api_route_use_the_json_api_boundary():
