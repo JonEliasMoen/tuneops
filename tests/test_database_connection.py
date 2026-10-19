@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from music_library import connection
+from music_library import connection, database
 
 
 def test_database_backend_is_explicit(monkeypatch):
@@ -8,6 +8,15 @@ def test_database_backend_is_explicit(monkeypatch):
     assert connection.database_backend() == "sqlite"
     monkeypatch.setenv("TUNEOPS_DATABASE_BACKEND", "turso")
     assert connection.database_backend() == "turso"
+
+
+def test_remote_database_does_not_require_a_local_sqlite_file(tmp_path, monkeypatch):
+    remote_placeholder = tmp_path / "does-not-exist.sqlite3"
+    monkeypatch.setattr(database, "DATABASE_PATH", remote_placeholder)
+    monkeypatch.setattr(database, "database_backend", lambda: "turso")
+
+    assert database._database_available(remote_placeholder)
+    assert not database._database_available(tmp_path / "different.sqlite3")
 
 
 def test_turso_configuration_accepts_vercel_integration_names(monkeypatch):

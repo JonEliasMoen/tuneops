@@ -1,0 +1,33 @@
+# Local secrets and provider sessions
+.env
+.env.*
+.spotify_cache
+.tidal_session.json
+.youtube_oauth.json
+.connection_state.json
+
+# Local database, generated media, and logs
+*.sqlite3
+*.sqlite3-*
+*.sqlite3.*
+*.log
+*.log.*
+.watched_mix_covers/
+
+# Development and archived sources
+.git/
+.vercel/
+.pytest_cache/
+**/__pycache__/
+**/*.py[cod]
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+tests/
+backups/
+
+# Local planning and infrastructure files are not runtime dependencies
+infra/
+AuthMigrationPlan.md
+DeploymentPlan.md
+Tasks.md

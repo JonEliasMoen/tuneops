@@ -529,6 +529,13 @@ def connect(path: Path = DATABASE_PATH) -> Iterator[Any]:
         connection.close()
 
 
+def _database_available(path: Path) -> bool:
+    """Treat the configured remote primary as available without a local file."""
+    return (
+        database_backend() == "turso" and Path(path) == DATABASE_PATH
+    ) or Path(path).exists()
+
+
 def initialize(path: Path = DATABASE_PATH) -> None:
     remote = database_backend() == "turso" and Path(path) == DATABASE_PATH
     remote_key = os.getenv("TURSO_DATABASE_URL") or os.getenv(
@@ -1645,7 +1652,7 @@ def _pending_record(row: sqlite3.Row) -> dict[str, Any]:
 
 def pending_track(pending_id: int, path: Path = DATABASE_PATH) -> dict[str, Any] | None:
     """Return one queued track together with its watched-mix metadata."""
-    if not path.exists():
+    if not _database_available(path):
         return None
     initialize(path)
     with connect(path) as connection:
@@ -1663,7 +1670,7 @@ def pending_track(pending_id: int, path: Path = DATABASE_PATH) -> dict[str, Any]
 
 def pending_tracks(path: Path = DATABASE_PATH) -> list[dict[str, Any]]:
     """Return the active pending queue, oldest discoveries first."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -1719,7 +1726,7 @@ def resolve_pending_track(pending_id: int, path: Path = DATABASE_PATH) -> None:
 
 def delete_pending_track(pending_id: int, path: Path = DATABASE_PATH) -> None:
     """Remove one unwanted item from the pending queue."""
-    if not path.exists():
+    if not _database_available(path):
         return
     initialize(path)
     with connect(path) as connection:
@@ -1733,7 +1740,7 @@ def tidal_watched_mix_tracks_page(
     path: Path = DATABASE_PATH,
 ) -> list[dict[str, Any]]:
     """Read an ordered page of tracks associated with one watched mix."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -1761,7 +1768,7 @@ def tidal_watched_mixes_for_tracks(
     """Return watched mixes associated with each requested TIDAL track."""
     unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
     result: dict[str, list[dict[str, str]]] = {track_id: [] for track_id in unique_ids}
-    if not unique_ids or not path.exists():
+    if not unique_ids or not _database_available(path):
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
@@ -1911,7 +1918,7 @@ def cached_tidal_playlist(
 ) -> list[dict[str, Any]] | None:
     """Return cached tracks only when the provider version matches exactly."""
     version = _timestamp(source_last_updated)
-    if version is None or not path.exists():
+    if version is None or not _database_available(path):
         return None
     initialize(path)
     with connect(path) as connection:
@@ -2090,7 +2097,7 @@ def tidal_setlists_for_track(
     track_id: str, path: Path = DATABASE_PATH
 ) -> list[dict[str, str]]:
     """Return every setlist containing a TIDAL track, including its timestamp."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -2115,7 +2122,7 @@ def tidal_setlists_for_tracks(
     """Batch reverse-membership lookup for TIDAL tracks in local setlists."""
     unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
     result: dict[str, list[dict[str, str]]] = {track_id: [] for track_id in unique_ids}
-    if not unique_ids or not path.exists():
+    if not unique_ids or not _database_available(path):
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
@@ -2144,7 +2151,7 @@ def tidal_artists_for_tracks(
     """Return ordered individual artists for several TIDAL tracks."""
     unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
     result: dict[str, list[dict[str, str]]] = {track_id: [] for track_id in unique_ids}
-    if not unique_ids or not path.exists():
+    if not unique_ids or not _database_available(path):
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
@@ -2168,7 +2175,7 @@ def tidal_artists_for_tracks(
 
 def tidal_artist(artist_key: str, path: Path = DATABASE_PATH) -> dict[str, str] | None:
     """Return one normalized artist identity from the local TIDAL index."""
-    if not path.exists():
+    if not _database_available(path):
         return None
     initialize(path)
     with connect(path) as connection:
@@ -2193,7 +2200,7 @@ def tidal_artist_overview_page(
     path: Path = DATABASE_PATH,
 ) -> tuple[list[dict[str, Any]], int]:
     """Summarize artists represented by the same tracks as artist detail pages."""
-    if not path.exists():
+    if not _database_available(path):
         return [], 0
     initialize(path)
     normalized_user = str(username or "").strip().casefold()
@@ -2261,7 +2268,7 @@ def tidal_playlists_for_track(
     track_id: str, path: Path = DATABASE_PATH
 ) -> list[dict[str, str]]:
     """Reverse membership lookup supported by the playlist_tracks index."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -2285,7 +2292,7 @@ def tidal_playlists_for_tracks(
     """Batch reverse-membership lookup for a set of TIDAL track IDs."""
     unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
     result: dict[str, list[dict[str, str]]] = {track_id: [] for track_id in unique_ids}
-    if not unique_ids or not path.exists():
+    if not unique_ids or not _database_available(path):
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
@@ -2318,7 +2325,7 @@ def tidal_indexed_playlists(
     path: Path = DATABASE_PATH, collection_type: str | None = None
 ) -> list[dict[str, str]]:
     """Return every locally indexed TIDAL playlist in display order."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -2341,7 +2348,7 @@ def set_tidal_playlist_collection_type(
     kind = str(collection_type or "playlist").strip().lower()
     if kind not in {"playlist", "event", "source"}:
         raise ValueError(f"Unknown playlist collection type: {collection_type!r}")
-    if not path.exists():
+    if not _database_available(path):
         return
     initialize(path)
     with connect(path) as connection:
@@ -2361,7 +2368,7 @@ def tidal_playlist_tracks_page(
     path: Path = DATABASE_PATH,
 ) -> list[dict[str, Any]]:
     """Read one ordered page from an indexed TIDAL playlist."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -2389,7 +2396,7 @@ def tidal_setlist_tracks_page(
     path: Path = DATABASE_PATH,
 ) -> list[dict[str, Any]]:
     """Read one ordered page from a setlist, independently of playlists."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -2418,7 +2425,7 @@ def tidal_liked_tracks_page(
     path: Path = DATABASE_PATH,
 ) -> list[dict[str, Any]]:
     """Read an indexed liked-track page without applying cache-age policy."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -2445,7 +2452,7 @@ def tidal_library_tracks_page(
     path: Path = DATABASE_PATH,
 ) -> list[dict[str, Any]]:
     """Read unique TIDAL tracks present in the searchable local library."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -2483,7 +2490,7 @@ def tidal_library_tracks_page(
 
 def latest_tidal_liked_user_id(path: Path = DATABASE_PATH) -> str | None:
     """Return the most recently refreshed local TIDAL liked-library owner."""
-    if not path.exists():
+    if not _database_available(path):
         return None
     initialize(path)
     with connect(path) as connection:
@@ -2503,7 +2510,7 @@ def tidal_liked_track_ids(
     user_id: str, path: Path = DATABASE_PATH
 ) -> list[str]:
     """Return all cached liked-track IDs in their current order."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -2655,7 +2662,7 @@ def tidal_artist_tracks_page(
     path: Path = DATABASE_PATH,
 ) -> list[dict[str, Any]]:
     """Read unique locally indexed tracks credited to one artist."""
-    if not path.exists():
+    if not _database_available(path):
         return []
     initialize(path)
     with connect(path) as connection:
@@ -2773,7 +2780,7 @@ def tidal_dimensions_for_tracks(
     """Return all local classification dimensions for several TIDAL tracks."""
     unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
     result: dict[str, dict[str, list[str]]] = {track_id: {} for track_id in unique_ids}
-    if not unique_ids or not path.exists():
+    if not unique_ids or not _database_available(path):
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
@@ -2921,7 +2928,7 @@ def cached_tidal_liked_tracks(
     offset: int = 0,
 ) -> list[dict[str, Any]] | None:
     """Return a recent liked-tracks snapshot, or None when it needs refreshing."""
-    if not path.exists():
+    if not _database_available(path):
         return None
     initialize(path)
     with connect(path) as connection:

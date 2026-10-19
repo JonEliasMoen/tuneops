@@ -1,5 +1,6 @@
 .*
 !.gitignore
+!.vercelignore
 __pycache__
 *.log
 *.sqlite3
