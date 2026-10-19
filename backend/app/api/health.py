@@ -6,6 +6,8 @@ from fastapi import APIRouter
 
 import main as engine
 from music_library.database import DATABASE_PATH
+from music_library.connection import database_backend
+from music_library.credentials import credentials_available
 
 from ..schemas import HealthResponse, ProviderStatus
 
@@ -19,13 +21,13 @@ def health() -> HealthResponse:
     spotify_label = str(state.get("spotify") or "")
     tidal_label = str(state.get("tidal") or "")
     return HealthResponse(
-        database_ready=DATABASE_PATH.exists(),
+        database_ready=database_backend() == "turso" or DATABASE_PATH.exists(),
         providers={
             "spotify": ProviderStatus(
-                connected=engine.SPOTIFY_CACHE.exists(), label=spotify_label
+                connected=credentials_available("spotify", engine.SPOTIFY_CACHE), label=spotify_label
             ),
             "tidal": ProviderStatus(
-                connected=engine.TIDAL_CACHE.exists(), label=tidal_label
+                connected=credentials_available("tidal", engine.TIDAL_CACHE), label=tidal_label
             ),
         },
         lastfm_api_key_configured=bool(os.getenv("LASTFM_API_KEY", "").strip()),

@@ -1,17 +1,52 @@
 # MusicSync authentication storage migration plan
 
-Last reviewed: 2026-10-18.
+Last reviewed: 2026-10-19.
 
 ## Goal
 
 Move user-specific provider sessions from ignored files into an encrypted,
-user-scoped database store without changing provider behavior. The first
-version remains a single-user local application. The same repository and data
-model must later work behind a separate MusicSync application sign-in without
-another credential migration.
+user-scoped database store without changing provider behavior. TuneOps remains
+a private single-user application for now, but both the local application and
+the Vercel preview deployment use the same Turso/libSQL database as primary.
 
 This plan does not move application registration secrets into the database.
 Client secrets and server API keys remain deployment secrets.
+
+## Current deployment decision
+
+- Turso/libSQL is the one writable primary database for local Python and the
+  Vercel preview deployment.
+- Local SQLite remains an explicit recovery target and receives periodic,
+  validated backups from Turso. Never fail over automatically: writing to a
+  stale local copy would create two divergent databases.
+- The local app and `startup_sync.py` normally use Turso. Long-running sync
+  work stays local initially; Vercel provides the signed-in web/API surface.
+- One internal app-user UUID owns the current data. Google OIDC
+  `(issuer, subject)` resolves it on Vercel; local/headless execution resolves
+  the same UUID through `TUNEOPS_LOCAL_USER_ID`.
+- Local and Vercel initially share a dedicated `TUNEOPS_CREDENTIAL_KEY`. It is
+  separate from `TUNEOPS_SESSION_SECRET`. Managed KMS and key separation are
+  future hardening rather than a launch blocker.
+- Preserve the existing Spotify authorization. Import its complete refresh
+  token payload without requiring a new redirect URI or consent, and retain the
+  original cache offline until the shared record refreshes successfully.
+
+## Database transport and migration boundary
+
+- `TUNEOPS_DATABASE_BACKEND=turso` selects the shared remote primary;
+  `sqlite` remains the explicit local fallback.
+- Prefer `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN`. The current Vercel names
+  `tuneopsdb_TURSO_DATABASE_URL` / `tuneopsdb_TURSO_AUTH_TOKEN` are accepted as
+  transitional fallbacks.
+- Runtime Python uses Turso's transactional Hrana HTTP v3 protocol. Use the
+  official Turso CLI for controlled initial import, inspection and operational
+  backup/export; the CLI does not replace the runtime connection layer.
+- Before import, stop local writers, create an external copy, switch/check WAL,
+  checkpoint/truncate the WAL, and validate the copied database.
+- Compare schema and every core table count before enabling remote writes. Keep
+  the original SQLite file untouched through the rollback window.
+- Remote-to-local backups land in a temporary file, pass integrity and count
+  checks, and are then atomically promoted to a timestamped backup and `latest`.
 
 ## Current state inventory
 
@@ -87,12 +122,12 @@ CredentialCipher.decrypt(user_id, provider, ciphertext, key_id) -> plaintext
 - Use authenticated encryption and bind user ID, provider and connection ID as
   associated data, preventing ciphertext from being moved to another owner.
 - Never keep the encryption key in the same database.
-- Local Windows mode should use an OS-protected key source such as DPAPI or
-  Windows Credential Manager. An environment development key is only an
-  explicit fallback.
-- Hosted mode uses envelope encryption through Azure Key Vault or the selected
-  cloud KMS. PostgreSQL stores only ciphertext, wrapped data-key material and
-  key version.
+- The private MVP uses one random `TUNEOPS_CREDENTIAL_KEY`, stored outside the
+  database in local and Vercel environment secrets. Never derive it from the
+  session secret, Google identity or email.
+- A future managed-KMS phase separates environment keys and adds envelope
+  encryption. Keep a key/version field in the payload so that hardening does
+  not require another provider-token migration.
 - Support key rotation by decrypting with the stored version and rewriting
   with the current version after a successful read or refresh.
 - Never log decrypted payloads; retain them in memory only while constructing
@@ -154,55 +189,79 @@ dependency resolves the authenticated browser session or background-job owner.
 
 ## Delivery phases
 
-### Phase 1 — interfaces and local ownership
+### Phase 0 — shared Turso primary
 
-- [ ] Add `app_users`, `provider_connections` and audit tables through a
-  reviewed migration.
-- [ ] Create one stable local user and a backend dependency resolving it.
+- [x] Add an explicit SQLite/Turso connection boundary; SQLite remains the
+  default until controlled cutover.
+- [x] Verify read-only and transactional Hrana HTTP connectivity against the
+  configured Turso database without changing schema or data.
+- [ ] Install and authenticate the Turso CLI under WSL.
+- [x] Stop the app and startup sync, then make an external SQLite/auth backup.
+- [x] Preflight WAL/checkpoint, integrity, schema and row counts.
+- [x] Import SQLite through the protected Hrana migration utility and compare
+  every application table count. The utility replaced the earlier partial
+  remote cache only after explicit approval and a local backup.
+- [x] Enable `TUNEOPS_DATABASE_BACKEND=turso` locally, verify remote reads,
+  writes, counts, and credential decryption, and configure the same database
+  and credential settings for the Vercel Preview environment.
+- [ ] Add a validated Turso-to-local backup command and document manual
+  fallback/recovery, including credential changes made during fallback.
+
+### Phase 1 — interfaces and shared ownership
+
+- [x] Define additive `app_users`, `external_identities`,
+  `provider_connections`, and audit tables in the shared schema. Applying them
+  to the live local database remains part of the coordinated cutover.
+- [ ] Create one stable internal user and resolvers mapping both Google identity
+  and `TUNEOPS_LOCAL_USER_ID` to it.
 - [ ] Implement the repository plus an in-memory fake for tests.
-- [ ] Implement the cipher using a local protected-key backend and a
-  deterministic test-only cipher.
+- [x] Implement AES-GCM authenticated encryption using
+  `TUNEOPS_CREDENTIAL_KEY`, context-bound associated data, and stored key/schema
+  versions for future rotation. Tests use an isolated fixed test key.
 - [ ] Add token/authorization-header redaction helpers.
-- [ ] Do not remove or modify existing credential files yet.
+- [x] Do not remove or modify existing credential files yet.
 
 ### Phase 2 — provider adapters and dual-read
 
 - [ ] Make Spotify, TIDAL and YouTube factories accept `user_id`.
-- [ ] Read encrypted DB credentials first.
-- [ ] If absent, read the old file once, validate it, encrypt it into the DB
-  transactionally, then compare safe metadata such as provider, expiry and
-  account identity after reading it back.
-- [ ] Keep original files untouched as rollback copies during this phase.
-- [ ] Write newly issued/refreshed tokens only to the database once that
-  connection has migrated successfully.
+- [x] With `TUNEOPS_CREDENTIAL_STORAGE=database`, read encrypted DB credentials
+  first.
+- [x] If absent, read the old file once, encrypt it into the DB, then decrypt it
+  again before handing it to the provider adapter.
+- [x] Keep original files untouched as rollback copies during this phase.
+- [x] With database credential storage enabled, write newly issued/refreshed
+  Spotify, TIDAL, and YouTube tokens only to the database. Preserve refresh
+  tokens when refresh responses omit them.
 - [ ] Expose migration status as `file only`, `database`, `needs reconnect`, or
   `error`, without exposing token values.
 
-### Phase 3 — controlled local cutover
+### Phase 3 — controlled shared-credential cutover
 
-- [ ] Announce the live-data migration and require the app/startup sync to be
+- [x] Announce the live-data migration and require the app/startup sync to be
   stopped under the existing database safety rule.
-- [ ] Back up SQLite and all auth/state files outside the repository.
-- [ ] Run a read-only preflight reporting which providers can be imported and
-  which require reconnecting.
-- [ ] Run an idempotent import for the stable local user.
-- [ ] Verify health, Spotify reads, TIDAL reads/writes, YouTube analytics and
-  `startup_sync.py` with DB credentials.
+- [x] Back up SQLite and all auth/state files outside the repository.
+- [x] Add and run a read-only preflight reporting which providers have legacy
+  files and which already exist in the database, without exposing tokens.
+- [x] Run an idempotent import for the stable local user.
+- [ ] Verify health, Spotify reads/refresh, TIDAL reads/writes, YouTube
+  analytics and local `startup_sync.py` against the same Turso credentials.
+- [ ] Verify Vercel resolves the same user and credential rows without running
+  concurrent refreshes.
 - [ ] Rename source files to timestamped `.migrated-backup` files rather than
   deleting them.
 - [ ] After a rollback window, remove fallback code and manually securely
   delete credential backups.
 - [ ] Remove `.connection_state.json` after every consumer uses DB metadata.
 
-### Phase 4 — MusicSync application sign-in
+### Phase 4 — complete TuneOps application identity
 
-- [ ] Create a separate Google OIDC registration using Authorization Code +
-  PKCE for MusicSync sign-in.
+- [x] Add Google OIDC Authorization Code login with PKCE, nonce, signed state,
+  secure cookies and an initial email allowlist.
 - [ ] Add `external_identities` keyed by Google issuer and subject.
 - [ ] Replace `current_local_user_id()` with a required authenticated-session
   dependency for browser requests.
-- [ ] Use `HttpOnly`, `Secure`, `SameSite` cookies, CSRF protection, session
-  rotation and explicit sign-out.
+- [ ] Replace the temporary stateless identity cookie with persisted internal
+  user/session ownership, CSRF protection, rotation and visible sign-out.
 - [ ] Attach the resolved user ID to jobs when enqueued; workers load only that
   owner's credentials.
 - [ ] Scope all library/config rows and queries by `user_id` before enabling a
@@ -210,10 +269,10 @@ dependency resolves the authenticated browser session or background-job owner.
 - [ ] Each MusicSync user connects providers separately. Never copy the local
   user's tokens into another signed-in account.
 
-### Phase 5 — hosted secrets and encryption
+### Phase 5 — hosted secret hardening
 
-- [ ] Move `.env` app secrets to the platform secret manager—not to the user
-  credential table.
+- [ ] Keep app-registration secrets in Vercel environment secrets—not in the
+  user credential table.
 - [ ] Replace the local cipher with managed envelope encryption while retaining
   the same repository contract and versioned payloads.
 - [ ] Grant decrypt access only to API/worker workload identities.

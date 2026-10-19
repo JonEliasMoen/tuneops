@@ -3,6 +3,7 @@ name = "tuneops"
 version = "0.1.0"
 requires-python = ">=3.12,<3.15"
 dependencies = [
+    "cryptography>=46,<51",
     "fastapi>=0.135,<1",
     "google-auth>=2.41,<3",
     "musicbrainzngs>=0.7.1,<1",
@@ -11,6 +12,7 @@ dependencies = [
     "requests>=2.32,<3",
     "spotipy>=2.25,<3",
     "tidalapi>=0.8.3,<1",
+    "truststore>=0.10,<1; sys_platform == 'win32'",
     "uvicorn[standard]>=0.41,<1",
 ]
 

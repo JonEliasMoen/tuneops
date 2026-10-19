@@ -54,6 +54,14 @@ from music_library.database import (  # noqa: E402 - local .env configures its p
     tidal_track_record,
 )
 from music_library import config_store  # noqa: E402
+from music_library.credentials import (  # noqa: E402
+    SpotifyDatabaseCacheHandler,
+    credentials_available,
+    load_or_import_file_credentials,
+    read_json_file,
+    save_credentials,
+    storage_enabled as credential_storage_enabled,
+)
 
 CONFIG_PATH = Path(os.getenv("MUSICSYNC_CONFIG", ROOT / "music_sync.json"))
 SPOTIFY_CACHE = ROOT / ".spotify_cache"
@@ -250,9 +258,10 @@ def _remember_connection(provider: str, label: str) -> None:
 
 def _connection_badge(provider: str, cache: Path) -> tuple[str, str]:
     label = _connection_state().get(provider)
-    if cache.exists() and label:
+    connected = credentials_available(provider, cache)
+    if connected and label:
         return f"● {provider.title()} connected: {label}", "connection connected"
-    if cache.exists():
+    if connected:
         return f"● {provider.title()} credentials saved", "connection connected"
     return f"○ {provider.title()} not connected", "connection disconnected"
 
@@ -358,8 +367,8 @@ def spotify_client():
     except ImportError as exc:
         raise RuntimeError("Install dependencies first: pip install -r requirements.txt") from exc
 
-    client_id = os.getenv("SPOTIPY_CLIENT_ID")
-    client_secret = os.getenv("SPOTIPY_CLIENT_SECRET")
+    client_id = os.getenv("SPOTIPY_CLIENT_ID") or os.getenv("SPOTIFY_CLIENT_ID")
+    client_secret = os.getenv("SPOTIPY_CLIENT_SECRET") or os.getenv("SPOTIFY_CLIENT_SECRET")
     redirect = os.getenv("SPOTIPY_REDIRECT_URI", "http://127.0.0.1:8080/callback")
     if not client_id or not client_secret:
         LOGGER.error("spotify.auth configuration missing client_id=%s client_secret=%s", bool(client_id), bool(client_secret))
@@ -370,13 +379,18 @@ def spotify_client():
         redirect,
         SPOTIFY_CACHE.exists(),
     )
+    auth_options: dict[str, Any] = {}
+    if credential_storage_enabled():
+        auth_options["cache_handler"] = SpotifyDatabaseCacheHandler(SPOTIFY_CACHE)
+    else:
+        auth_options["cache_path"] = str(SPOTIFY_CACHE)
     auth = SpotifyOAuth(
         client_id=client_id,
         client_secret=client_secret,
         redirect_uri=redirect,
         scope="playlist-read-private playlist-read-collaborative playlist-modify-private playlist-modify-public",
-        cache_path=str(SPOTIFY_CACHE),
         open_browser=True,
+        **auth_options,
     )
     return spotipy.Spotify(auth_manager=auth)
 
@@ -388,35 +402,45 @@ def spotify_auth_manager():
     except ImportError as exc:
         raise RuntimeError("Install dependencies first: pip install -r requirements.txt") from exc
 
-    client_id = os.getenv("SPOTIPY_CLIENT_ID")
-    client_secret = os.getenv("SPOTIPY_CLIENT_SECRET")
+    client_id = os.getenv("SPOTIPY_CLIENT_ID") or os.getenv("SPOTIFY_CLIENT_ID")
+    client_secret = os.getenv("SPOTIPY_CLIENT_SECRET") or os.getenv("SPOTIFY_CLIENT_SECRET")
     redirect = os.getenv("SPOTIPY_REDIRECT_URI", "http://127.0.0.1:8080/callback")
     if not client_id or not client_secret:
         raise RuntimeError("Set SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET")
+    auth_options: dict[str, Any] = {}
+    if credential_storage_enabled():
+        auth_options["cache_handler"] = SpotifyDatabaseCacheHandler(SPOTIFY_CACHE)
+    else:
+        auth_options["cache_path"] = str(SPOTIFY_CACHE)
     return SpotifyOAuth(
         client_id=client_id,
         client_secret=client_secret,
         redirect_uri=redirect,
         scope="playlist-read-private playlist-read-collaborative playlist-modify-private playlist-modify-public",
-        cache_path=str(SPOTIFY_CACHE),
         open_browser=False,
+        **auth_options,
     )
 
 
 def _save_tidal_session(session: Any) -> None:
     expiry = session.expiry_time
-    TIDAL_CACHE.write_text(
-        json.dumps(
-            {
-                "token_type": session.token_type,
-                "access_token": session.access_token,
-                "refresh_token": session.refresh_token,
-                "expiry_time": expiry.isoformat() if expiry else None,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    payload = {
+        "token_type": session.token_type,
+        "access_token": session.access_token,
+        "refresh_token": session.refresh_token,
+        "expiry_time": expiry.isoformat() if expiry else None,
+    }
+    if credential_storage_enabled():
+        user = getattr(session, "user", None)
+        save_credentials(
+            "tidal",
+            payload,
+            provider_account_id=str(getattr(user, "id", "") or ""),
+            expires_at=payload["expiry_time"],
+            event_type="credentials_refreshed",
+        )
+    else:
+        TIDAL_CACHE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     LOGGER.info("tidal.auth session_saved expiry=%s", expiry.isoformat() if expiry else "unknown")
 
 
@@ -427,10 +451,21 @@ def tidal_client(interactive: bool = False, message: Callable[[str], None] = pri
         raise RuntimeError("Install dependencies first: pip install -r requirements.txt") from exc
 
     session = tidalapi.Session()
-    LOGGER.info("tidal.auth initialize cache_exists=%s interactive=%s", TIDAL_CACHE.exists(), interactive)
-    if TIDAL_CACHE.exists():
-        try:
-            saved = json.loads(TIDAL_CACHE.read_text(encoding="utf-8"))
+    database_credentials = credential_storage_enabled()
+    cache_exists = TIDAL_CACHE.exists()
+    LOGGER.info(
+        "tidal.auth initialize storage=%s credentials_available=%s interactive=%s",
+        "database" if database_credentials else "file",
+        credentials_available("tidal", TIDAL_CACHE),
+        interactive,
+    )
+    try:
+        saved = (
+            load_or_import_file_credentials("tidal", TIDAL_CACHE)
+            if database_credentials
+            else (read_json_file(TIDAL_CACHE) if cache_exists else None)
+        )
+        if saved:
             expiry = datetime.fromisoformat(saved["expiry_time"]) if saved.get("expiry_time") else None
             if session.load_oauth_session(
                 saved["token_type"], saved["access_token"], saved.get("refresh_token"), expiry
@@ -438,8 +473,8 @@ def tidal_client(interactive: bool = False, message: Callable[[str], None] = pri
                 _save_tidal_session(session)  # Persist a possibly refreshed token.
                 LOGGER.info("tidal.auth cached_session_loaded user_id=%s", session.user.id)
                 return session
-        except (KeyError, ValueError, json.JSONDecodeError):
-            LOGGER.exception("tidal.auth cached_session_invalid")
+    except (KeyError, ValueError, json.JSONDecodeError):
+        LOGGER.exception("tidal.auth cached_session_invalid")
     if not interactive:
         raise RuntimeError("TIDAL is not connected. Use the Connect TIDAL button first.")
     login, login_future = session.login_oauth()

@@ -5,17 +5,21 @@ from __future__ import annotations
 import os
 import json
 import sqlite3
+import threading
 import unicodedata
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
 from music_library.dimensions import DIMENSION_MAX_VALUES, DIMENSION_VALUES
+from music_library.connection import database_backend, open_connection
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE_PATH = Path(os.getenv("MUSICSYNC_DATABASE", ROOT / "music_library.sqlite3"))
+_REMOTE_INITIALIZED: set[str] = set()
+_REMOTE_INITIALIZE_LOCK = threading.Lock()
 
 
 SCHEMA = """
@@ -359,6 +363,68 @@ CREATE TABLE IF NOT EXISTS config_store_meta (
     imported_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS app_users (
+    id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS external_identities (
+    user_id TEXT NOT NULL,
+    issuer TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (issuer, subject),
+    FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS external_identities_by_user
+    ON external_identities(user_id);
+
+CREATE TABLE IF NOT EXISTS provider_connections (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    provider_account_id TEXT NOT NULL DEFAULT '',
+    display_label TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'connected',
+    scopes_json TEXT NOT NULL DEFAULT '[]',
+    expires_at TEXT,
+    last_refreshed_at TEXT,
+    last_verified_at TEXT,
+    credential_ciphertext TEXT NOT NULL,
+    credential_key_id TEXT NOT NULL,
+    credential_schema_version INTEGER NOT NULL DEFAULT 1,
+    credential_version INTEGER NOT NULL DEFAULT 1,
+    refresh_locked_until TEXT,
+    refresh_lock_owner TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (user_id, provider),
+    FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS provider_connections_by_user
+    ON provider_connections(user_id, provider, status);
+
+CREATE TABLE IF NOT EXISTS credential_audit_events (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS credential_audit_by_user
+    ON credential_audit_events(user_id, created_at);
 """
 
 
@@ -431,12 +497,9 @@ def _store_track_artists(
 
 
 @contextmanager
-def connect(path: Path = DATABASE_PATH) -> Iterator[sqlite3.Connection]:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path, timeout=10)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 10000")
+def connect(path: Path = DATABASE_PATH) -> Iterator[Any]:
+    remote = database_backend() == "turso" and Path(path) == DATABASE_PATH
+    connection = open_connection(Path(path), remote=remote)
     try:
         yield connection
         connection.commit()
@@ -448,6 +511,22 @@ def connect(path: Path = DATABASE_PATH) -> Iterator[sqlite3.Connection]:
 
 
 def initialize(path: Path = DATABASE_PATH) -> None:
+    remote = database_backend() == "turso" and Path(path) == DATABASE_PATH
+    remote_key = os.getenv("TURSO_DATABASE_URL") or os.getenv(
+        "tuneopsdb_TURSO_DATABASE_URL", ""
+    )
+    if remote and remote_key in _REMOTE_INITIALIZED:
+        return
+    lock = _REMOTE_INITIALIZE_LOCK if remote else nullcontext()
+    with lock:
+        if remote and remote_key in _REMOTE_INITIALIZED:
+            return
+        _initialize_connection(path)
+        if remote:
+            _REMOTE_INITIALIZED.add(remote_key)
+
+
+def _initialize_connection(path: Path) -> None:
     with connect(path) as connection:
         connection.executescript(SCHEMA)
         # A like is a membership, not a playlist occurrence. Older cache builds

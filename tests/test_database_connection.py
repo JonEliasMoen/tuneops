@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+from music_library import connection
+
+
+def test_database_backend_is_explicit(monkeypatch):
+    monkeypatch.delenv("TUNEOPS_DATABASE_BACKEND", raising=False)
+    assert connection.database_backend() == "sqlite"
+    monkeypatch.setenv("TUNEOPS_DATABASE_BACKEND", "turso")
+    assert connection.database_backend() == "turso"
+
+
+def test_turso_configuration_accepts_vercel_integration_names(monkeypatch):
+    monkeypatch.delenv("TURSO_DATABASE_URL", raising=False)
+    monkeypatch.delenv("TURSO_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("tuneopsdb_TURSO_DATABASE_URL", "libsql://example.invalid")
+    monkeypatch.setenv("tuneopsdb_TURSO_AUTH_TOKEN", "secret-token")
+    assert connection.turso_configuration() == (
+        "libsql://example.invalid",
+        "secret-token",
+    )
+
+
+def test_remote_row_is_sqlite_row_compatible():
+    row = connection.RemoteRow(("id", "name"), (7, "TuneOps"))
+    assert row["id"] == 7
+    assert dict(row) == {"id": 7, "name": "TuneOps"}
+
+
+def test_split_script_keeps_complete_statements():
+    assert connection._split_script(
+        "CREATE TABLE example(id INTEGER);\n"
+        "INSERT INTO example VALUES(1);\n"
+    ) == [
+        "CREATE TABLE example(id INTEGER);",
+        "INSERT INTO example VALUES(1);",
+    ]
+
+
+def test_turso_connection_uses_one_transactional_stream(monkeypatch):
+    calls: list[dict] = []
+
+    class Response:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+
+        def post(self, url, *, json, timeout):
+            calls.append(json)
+            results = []
+            for request in json["requests"]:
+                if request["type"] == "close":
+                    results.append({"type": "ok", "response": {"type": "close"}})
+                    continue
+                sql = request["stmt"]["sql"]
+                raw = {
+                    "cols": [{"name": "value"}],
+                    "rows": [[request["stmt"]["args"][0]]],
+                    "affected_row_count": 0,
+                } if sql == "SELECT ? AS value" else {
+                    "cols": [], "rows": [], "affected_row_count": 0,
+                }
+                results.append({
+                    "type": "ok",
+                    "response": {"type": "execute", "result": raw},
+                })
+            return Response({
+                "baton": None if json["requests"][-1]["type"] == "close" else "next",
+                "base_url": None,
+                "results": results,
+            })
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(connection.requests, "Session", Session)
+    monkeypatch.setattr(connection, "_enable_system_trust_store", lambda: None)
+    database = connection.TursoConnection("libsql://example.invalid", "token")
+    row = database.execute("SELECT ? AS value", (42,)).fetchone()
+    database.commit()
+
+    assert row is not None and row["value"] == 42
+    assert calls[0]["baton"] is None
+    assert [item["stmt"]["sql"] for item in calls[0]["requests"]] == [
+        "PRAGMA foreign_keys = ON",
+        "BEGIN",
+    ]
+    assert calls[1]["baton"] == "next"
+    assert calls[-1]["requests"] == [{"type": "close"}]

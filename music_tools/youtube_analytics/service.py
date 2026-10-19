@@ -16,6 +16,12 @@ from urllib.parse import urlencode
 
 import requests
 
+from music_library.credentials import (
+    load_or_import_file_credentials,
+    save_credentials,
+    storage_enabled as credential_storage_enabled,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKEN_PATH = ROOT / ".youtube_oauth.json"
@@ -66,6 +72,8 @@ def authorization_url(state: str) -> str:
 
 
 def _read_token() -> dict[str, Any]:
+    if credential_storage_enabled():
+        return load_or_import_file_credentials("youtube", TOKEN_PATH) or {}
     try:
         value = json.loads(TOKEN_PATH.read_text(encoding="utf-8"))
         return value if isinstance(value, dict) else {}
@@ -74,6 +82,22 @@ def _read_token() -> dict[str, Any]:
 
 
 def _write_token(token: dict[str, Any]) -> None:
+    if credential_storage_enabled():
+        current = load_or_import_file_credentials("youtube", TOKEN_PATH) or {}
+        payload = dict(token)
+        if not payload.get("refresh_token") and current.get("refresh_token"):
+            payload["refresh_token"] = current["refresh_token"]
+        scopes = payload.get("scope") or payload.get("scopes") or SCOPES
+        if isinstance(scopes, str):
+            scopes = scopes.split()
+        save_credentials(
+            "youtube",
+            payload,
+            scopes=[str(scope) for scope in scopes],
+            expires_at=payload.get("expires_at"),
+            event_type="credentials_refreshed",
+        )
+        return
     temporary = TOKEN_PATH.with_suffix(TOKEN_PATH.suffix + ".tmp")
     temporary.write_text(json.dumps(token, indent=2) + "\n", encoding="utf-8")
     temporary.replace(TOKEN_PATH)

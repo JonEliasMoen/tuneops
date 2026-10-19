@@ -193,6 +193,25 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
 The default database is `music_library.sqlite3`; `MUSICSYNC_DATABASE` can
 override it. Database, WAL, and shared-memory files are ignored by Git.
 
+`music_library.connection` is the database transport boundary. SQLite remains
+the safe default; `TUNEOPS_DATABASE_BACKEND=turso` explicitly selects the
+shared remote primary using `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` (with the
+current Vercel-prefixed names accepted as transitional fallbacks). Never
+silently fall back from Turso to a stale local SQLite file after a remote
+failure. After cutover, Turso is writable primary; local SQLite copies are
+validated backups or an explicitly selected disaster-recovery mode.
+
+Provider credentials use `music_library.credentials` as their only storage
+boundary. File storage remains the default during migration;
+`TUNEOPS_CREDENTIAL_STORAGE=database` opts into encrypted, user-scoped rows in
+`provider_connections`. The encryption key comes only from
+`TUNEOPS_CREDENTIAL_KEY`, and local/background ownership comes from the stable
+UUID in `TUNEOPS_LOCAL_USER_ID`. Never print ciphertext, plaintext tokens, the
+encryption key, or provider authorization headers. Spotify refreshes must keep
+an existing refresh token when the provider omits it from a refresh response.
+The legacy credential files remain untouched rollback inputs until an explicit,
+coordinated cleanup after both local and hosted credential flows are verified.
+
 Adding a new independent table with `CREATE TABLE IF NOT EXISTS` is safe while
 the app is running and does not require a stop. Before changing, copying,
 backing up, rebuilding, or migrating any existing live table or its data, tell
@@ -202,6 +221,10 @@ do not require this coordination.
 
 Core tables:
 
+- `app_users`, `external_identities`, `provider_connections`, and
+  `credential_audit_events`: stable internal ownership plus AES-GCM encrypted
+  Spotify/TIDAL/YouTube credential payloads. App-registration secrets remain
+  environment variables and never belong in these tables.
 - `app_settings`: versioned, semi-structured non-secret settings for the local
   profile.
 - `sync_mappings`: ordered playlist-sync definitions and runtime state with a
@@ -481,7 +504,15 @@ revalidation on the following run.
 - `.env`: local environment values; never expose or overwrite casually.
 - `music_sync.log`: rotating application log.
 - `.spotify_cache`, `.tidal_session.json`, `.connection_state.json`: local auth
-  and connection state.
+  and connection state. During the credential cutover these remain untouched
+  rollback inputs; active reads/writes use encrypted database rows when
+  `TUNEOPS_CREDENTIAL_STORAGE=database`.
+- `migrate_auth.py`: read-only inspection plus explicit local credential import
+  and decryption verification. It intentionally targets SQLite before the full
+  database migration.
+- `migrate_database.py`: protected SQLite-to-Turso copy/verification utility.
+  It refuses to merge non-empty mismatched tables unless `--replace` is
+  explicitly supplied, migrates table-by-table, and verifies every row count.
 
 ## Verification
 
