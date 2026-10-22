@@ -11,7 +11,6 @@ def test_public_settings_never_exposes_private_config_values(monkeypatch):
     monkeypatch.setattr(settings.engine, "load_config", lambda: {
         "settings": {
             "dark_mode": False,
-            "ollama_model": "qwen3:4b",
             "internal_token": "must-not-leak",
         },
         "quick_views": [{"id": "dj", "name": "DJ", "fields": ["title"]}],
@@ -21,7 +20,7 @@ def test_public_settings_never_exposes_private_config_values(monkeypatch):
     result = settings.settings()
 
     assert result.dark_mode is False
-    assert result.ollama_model == "qwen3:4b"
+    assert result.default_sort_direction == "asc"
     assert "internal_token" not in result.model_dump()
     assert result.quick_views[0]["id"] == "dj"
     assert result.mix_quick_views[0]["id"] == "performance"
@@ -39,6 +38,17 @@ def test_settings_patch_persists_only_submitted_public_values(monkeypatch):
     assert result.lastfm_username == "Aruzhu"
     assert config["settings"]["provider_secret"] == "keep"
     assert saved and saved[0]["settings"] == config["settings"]
+
+
+def test_settings_patch_persists_default_sort_direction(monkeypatch):
+    config = {"settings": {}, "quick_views": []}
+    monkeypatch.setattr(settings.engine, "load_config", lambda: config)
+    monkeypatch.setattr(settings.engine, "save_config", lambda _value: None)
+
+    result = settings.patch_settings(SettingsPatch(default_sort_direction="desc"))
+
+    assert result.default_sort_direction == "desc"
+    assert config["settings"]["default_sort_direction"] == "desc"
 
 
 def test_settings_rejects_multiple_default_quick_views_without_saving(monkeypatch):

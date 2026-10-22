@@ -100,6 +100,9 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
   selected from `collection["type"]`; do not infer schemas from whichever rows
   happen to be loaded.
 - Shared table headers are clickable and cycle ascending, descending, then off.
+  The first direction comes from `settings.default_sort_direction`; the second
+  click uses the opposite direction and the third turns sorting off. Missing
+  values remain last in both directions.
   Off restores `_source_order`; appending an infinite-scroll page reapplies the
   active sort and preserves selection by source order rather than row index.
 - **Date added** sorting is collection-wide: sort the complete SQLite result
@@ -129,11 +132,6 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
   store so it survives navigation between track collections without browser
   persistence. Settings persists only the startup default as
   `settings.tags_collapsed_by_default` in the SQLite configuration store.
-- **Auto tag with Qwen3** is a shared track action backed only by the local
-  Ollama endpoint configured by `settings.ollama_url` and
-  `settings.ollama_model`. Send cached metadata only, require catalog-constrained
-  JSON, validate every returned value, preserve Rating, and write accepted
-  dimensions to SQLite. It must work for the current multi-track selection.
 - Quick filters operate on the complete current SQLite collection before
   pagination, not only the loaded browser rows. Different filter categories are
   ANDed; multiple selections inside a category are ORed. Filter controls retain
@@ -517,6 +515,35 @@ revalidation on the following run.
 - `migrate_database.py`: protected SQLite-to-Turso copy/verification utility.
   It refuses to merge non-empty mismatched tables unless `--replace` is
   explicitly supplied, migrates table-by-table, and verifies every row count.
+
+## VirtualDJ companion
+
+- The downloadable, standard-library-only companion lives under
+  `frontend/public/downloads/virtualdj-companion/`; Vite copies this directory
+  unchanged into the deployed site. Do not edit generated `frontend/dist`
+  assets by hand.
+- Collection track tables export every track plus typed dimensions and
+  free-form tags through the authenticated `virtualdj-metadata` endpoint.
+  Version its JSON contract before making a breaking change. The companion
+  consumes ratings, typed dimensions, and free-form tags while retaining
+  backward compatibility with the version-one ratings-only export.
+- Match VirtualDJ TIDAL-extension entries only by the exact numeric provider ID
+  found in `netsearch://td<ID>` or `Link NetSearch="td<ID>"`. Never guess using
+  title or artist, and refuse entries whose two ID locations disagree.
+- Ratings map to VirtualDJ's native `Stars="1"` through `Stars="5"` attribute
+  on an existing `Tags` element. Do not store ratings in `Comment`.
+- A valid release year maps to VirtualDJ's native `Tags Year="YYYY"` attribute.
+- Other typed dimensions and free-form tags map to one managed Comment line:
+  `[TuneOps] #Energy4 #Dark #VibeFlip`. Collapse spaces/punctuation into a
+  hashtag-safe token, replace only the TuneOps line on rerun, and preserve all
+  other user-authored comment content.
+- Never synthesize missing VirtualDJ `Song` records: the minimal records tested
+  in VirtualDJ were rejected as corrupt. Users must let VirtualDJ materialize
+  provider tracks first, for example through a batch tag edit.
+- Preview is read-only by default. An explicit apply must create a timestamped
+  backup, validate the resulting XML, and atomically replace `database.xml`.
+  Preserve all unrelated attributes, elements, and comments. VirtualDJ must be
+  closed before an apply.
 
 ## Verification
 

@@ -41,6 +41,14 @@ describe('My Mixes overview sorting', () => {
     expect(sortMixes([low, high], { field: 'youtube_thumbnail_ctr', direction: 'desc' })[0].folder_name).toBe('High')
   })
 
+  it('keeps missing values last in either direction', () => {
+    const missing = mix('Missing', 1)
+    const low = { ...mix('Low', 1), youtube_views: 2 }
+    const high = { ...mix('High', 1), youtube_views: 20 }
+    expect(sortMixes([missing, high, low], { field: 'youtube_views', direction: 'asc' }).map((row) => row.folder_name)).toEqual(['Low', 'High', 'Missing'])
+    expect(sortMixes([missing, low, high], { field: 'youtube_views', direction: 'desc' }).map((row) => row.folder_name)).toEqual(['High', 'Low', 'Missing'])
+  })
+
   it('normalizes views by days since upload and sorts the derived rate', () => {
     const newer = { ...mix('Newer', 1, '2026-10-06'), youtube_views: 100 }
     const older = { ...mix('Older', 1, '2026-09-28'), youtube_views: 50 }

@@ -23,6 +23,13 @@ export type MixSort = {
   direction: 'asc' | 'desc'
 } | null
 
+const NUMERIC_MIX_FIELDS = new Set<MixSortField>([
+  'track_count', 'youtube_duration_seconds', 'youtube_views', 'youtube_thumbnail_impressions',
+  'youtube_thumbnail_ctr', 'youtube_watch_minutes', 'youtube_average_view_duration',
+  'youtube_average_view_percentage', 'youtube_likes', 'youtube_comments',
+  'youtube_subscribers_gained',
+])
+
 export function viewsPerDay(mix: MixSummary, today = new Date()): number | null {
   if (mix.youtube_views === null || !/^\d{4}-\d{2}-\d{2}$/.test(mix.youtube_upload_date)) return null
   const uploaded = Date.parse(`${mix.youtube_upload_date}T00:00:00Z`)
@@ -69,24 +76,30 @@ export function mixPerformance(mix: MixSummary, mixes: MixSummary[], today = new
 
 export function sortMixes(mixes: MixSummary[], sort: MixSort): MixSummary[] {
   if (!sort) return [...mixes]
+  const field = sort.field
   const direction = sort.direction === 'asc' ? 1 : -1
+  function value(mix: MixSummary): string | number | null {
+    if (field === 'youtube_views_per_day') return viewsPerDay(mix)
+    if (field === 'youtube_performance') return mixPerformance(mix, mixes)?.score ?? null
+    if (field === 'youtube_verdict') return mixPerformance(mix, mixes)?.verdict ?? null
+    if (NUMERIC_MIX_FIELDS.has(field)) {
+      const candidate = mix[field]
+      return candidate === null || candidate === undefined ? null : Number(candidate)
+    }
+    const candidate = mix[field]
+    return candidate === null || candidate === undefined || candidate === '' ? null : String(candidate)
+  }
   return [...mixes].sort((left, right) => {
-    if (sort.field === 'youtube_views_per_day') {
-      return (Number(viewsPerDay(left) ?? -1) - Number(viewsPerDay(right) ?? -1)) * direction
+    const leftValue = value(left)
+    const rightValue = value(right)
+    if (leftValue === null && rightValue === null) return 0
+    if (leftValue === null) return 1
+    if (rightValue === null) return -1
+    if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+      return (leftValue - rightValue) * direction
     }
-    if (sort.field === 'youtube_performance') {
-      return (Number(mixPerformance(left, mixes)?.score ?? -1) - Number(mixPerformance(right, mixes)?.score ?? -1)) * direction
-    }
-    if (sort.field === 'youtube_verdict') {
-      return String(mixPerformance(left, mixes)?.verdict || '').localeCompare(
-        String(mixPerformance(right, mixes)?.verdict || ''), undefined, { sensitivity: 'base' },
-      ) * direction
-    }
-    if (['track_count', 'youtube_duration_seconds', 'youtube_views', 'youtube_thumbnail_impressions', 'youtube_thumbnail_ctr', 'youtube_watch_minutes', 'youtube_average_view_duration', 'youtube_average_view_percentage', 'youtube_likes', 'youtube_comments', 'youtube_subscribers_gained'].includes(sort.field)) {
-      return (Number(left[sort.field] ?? -1) - Number(right[sort.field] ?? -1)) * direction
-    }
-    return String(left[sort.field] || '').localeCompare(
-      String(right[sort.field] || ''), undefined, { numeric: true, sensitivity: 'base' },
-    ) * direction
+    return String(leftValue).localeCompare(String(rightValue), undefined, {
+      numeric: true, sensitivity: 'base',
+    }) * direction
   })
 }

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
 from calendar import month_name
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import re
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 import main as engine
 
@@ -26,6 +29,7 @@ from music_library.database import (
     resolve_pending_track,
     replace_tidal_track_dimensions,
     tidal_dimensions_for_tracks,
+    tidal_tags_for_tracks,
     tidal_indexed_playlists,
     save_watched_mix,
     set_watched_mix_rating,
@@ -378,6 +382,65 @@ def tracks(
     except CollectionNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return TrackPage.model_validate(payload)
+
+
+@router.get("/collections/{kind}/{collection_id}/virtualdj-metadata")
+def virtualdj_metadata(kind: str, collection_id: str) -> Response:
+    """Download TuneOps metadata for the local VirtualDJ companion.
+
+    The export deliberately contains provider IDs rather than fuzzy identity
+    fields. VirtualDJ's TIDAL extension stores those IDs as ``td<id>`` in its
+    database, so the companion never has to guess based on title or artist.
+    """
+    try:
+        page = collection_page(kind, collection_id, offset=0, limit=1_000_000)
+    except CollectionNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    track_ids = [str(row.get("id") or "") for row in page["items"]]
+    free_tags = tidal_tags_for_tracks(track_ids)
+    tracks: list[dict[str, object]] = []
+    for row in page["items"]:
+        track_id = str(row.get("id") or "")
+        dimensions = {
+            str(dimension): [str(value) for value in values]
+            for dimension, values in (row.get("dimensions") or {}).items()
+            if values
+        }
+        values = dimensions.get("rating") or []
+        try:
+            rating = int(values[0])
+        except (IndexError, TypeError, ValueError):
+            rating = None
+        if rating is not None and not 1 <= rating <= 5:
+            rating = None
+        tracks.append({
+            "tidal_track_id": track_id,
+            "rating": rating,
+            "title": str(row.get("title") or ""),
+            "artist": str(row.get("artist") or ""),
+            "album": str(row.get("album") or ""),
+            "year": str(row.get("year") or ""),
+            "dimensions": dimensions,
+            "tags": free_tags.get(track_id, []),
+        })
+    collection = page["collection"]
+    payload = {
+        "schema_version": 2,
+        "type": "tuneops.virtualdj-metadata",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "collection": {
+            "type": collection["type"],
+            "id": collection["id"],
+            "name": collection["name"],
+        },
+        "tracks": tracks,
+    }
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", collection["name"]).strip("-.") or "collection"
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}-virtualdj-metadata.json"'},
+    )
 
 
 @router.get("/dimensions")

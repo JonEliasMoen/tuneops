@@ -29,6 +29,14 @@ describe('sort and Quick View transitions', () => {
     expect(nextSort(descending, 'date_added')).toBeNull()
   })
 
+  it('cycles descending, ascending, then off when configured', () => {
+    const descending = nextSort(null, 'rating', 'desc')
+    const ascending = nextSort(descending, 'rating', 'desc')
+    expect(descending).toEqual({ field: 'rating', direction: 'desc' })
+    expect(ascending).toEqual({ field: 'rating', direction: 'asc' })
+    expect(nextSort(ascending, 'rating', 'desc')).toBeNull()
+  })
+
   it('deduplicates Quick View fields and ignores removed column keys', () => {
     expect(normalizeQuickViewFields(
       ['title', 'rating', 'rating', 'obsolete'],

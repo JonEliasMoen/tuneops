@@ -81,6 +81,8 @@ a { color: inherit; }
 .tool-heading p { margin: 0; }
 .tool-heading.track-toolbar-only { margin: 4px 0 10px; }
 .track-toolbar, .button-row, .connections { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.track-toolbar .icon-button { display: inline-grid; width: 38px; min-width: 38px; min-height: 38px; padding: 8px; place-items: center; }
+.track-toolbar .icon-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .fields-picker { position: relative; }
 .fields-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; width: 230px; max-height: 420px; overflow: auto; padding: 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); box-shadow: 0 20px 50px #0008; }
 .fields-menu label { display: flex; align-items: center; gap: 8px; padding: 6px; color: var(--text); }
@@ -137,6 +139,7 @@ a { color: inherit; }
 .track-table tbody tr:hover { background: var(--panel-3); }
 .track-table tbody tr.multi-selected { box-shadow: inset 3px 0 var(--accent); background: color-mix(in srgb, var(--accent-bg) 72%, var(--panel)); }
 .track-table tbody tr.selected { background: #2c4655; }
+:root[data-theme="light"] .track-table tbody tr.selected { background: var(--accent-bg); }
 .column-remix { width: 140px; max-width: 140px !important; }
 .numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .artist-link { color: var(--text); text-decoration: none; }

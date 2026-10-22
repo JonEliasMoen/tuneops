@@ -139,10 +139,7 @@ export function SettingsPage() {
       <section className="settings-card"><h2>Appearance</h2>
         <label className="toggle-row"><input type="checkbox" checked={draft.dark_mode} onChange={(event) => setDraft({ ...draft, dark_mode: event.target.checked })} />Dark mode</label>
         <label className="toggle-row"><input type="checkbox" checked={draft.tags_collapsed_by_default} onChange={(event) => setDraft({ ...draft, tags_collapsed_by_default: event.target.checked })} />Tags collapsed by default</label>
-      </section>
-      <section className="settings-card"><h2>Local Qwen tagging</h2>
-        <label>Ollama model<input value={draft.ollama_model} onChange={(event) => setDraft({ ...draft, ollama_model: event.target.value })} /></label>
-        <label>Ollama URL<input value={draft.ollama_url} onChange={(event) => setDraft({ ...draft, ollama_url: event.target.value })} /></label>
+        <label>Default column sort direction<select value={draft.default_sort_direction} onChange={(event) => setDraft({ ...draft, default_sort_direction: event.target.value as 'asc' | 'desc' })}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
       </section>
       <section className="settings-card"><h2>Last.fm</h2>
         <label>Username<input value={draft.lastfm_username} onChange={(event) => setDraft({ ...draft, lastfm_username: event.target.value })} /></label>
@@ -157,6 +154,14 @@ export function SettingsPage() {
       </section>
       <section className="settings-card"><h2>Spotify matching</h2>
         <label>Search delay (seconds)<input type="number" min="0" step="0.05" value={draft.spotify_search_delay_seconds} onChange={(event) => setDraft({ ...draft, spotify_search_delay_seconds: Number(event.target.value) })} /></label>
+      </section>
+      <section className="settings-card"><h2>VirtualDJ companion</h2>
+        <p>Download the standalone companion, then use a metadata export from any track table to import TuneOps ratings and tags into VirtualDJ.</p>
+        <p className="muted">Downloading is safe and does not run anything. The companion previews changes by default; it writes only when you close VirtualDJ and explicitly run it with <code>--apply</code>.</p>
+        <div className="button-row">
+          <a className="button-link primary" href="/downloads/virtualdj-companion/tuneops_virtualdj.py" download="tuneops_virtualdj.py">Download VirtualDJ companion</a>
+          <a className="button-link" href="/downloads/virtualdj-companion/README.txt" download="TuneOps-VirtualDJ-instructions.txt">Download instructions</a>
+        </div>
       </section>
       <section className="settings-card quick-view-settings"><div className="settings-card-heading"><div><h2>Quick Views</h2><p>Named field sets for every track table. The default applies when no session view has been chosen yet.</p></div><button type="button" onClick={addQuickView}>Add Quick View</button></div>
         {draft.quick_views.length ? <div className="quick-view-list">{draft.quick_views.map((view) => <article className="quick-view-editor" key={view.id}>

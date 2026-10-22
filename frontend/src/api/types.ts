@@ -42,7 +42,7 @@ export type Track = {
   mixes: Membership[]
   djmi: Membership[]
   dimensions: Record<string, string[]>
-  play_count: number
+  play_count: number | null
   last_played: string
   tidal_uri: string
   _source_order: number
@@ -91,8 +91,7 @@ export type Navigation = {
 export type PublicSettings = {
   dark_mode: boolean
   tags_collapsed_by_default: boolean
-  ollama_model: string
-  ollama_url: string
+  default_sort_direction: 'asc' | 'desc'
   lastfm_username: string
   history_top_tracks: number
   spotify_search_delay_seconds: number

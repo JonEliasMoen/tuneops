@@ -2855,6 +2855,32 @@ def tidal_dimensions_for_tracks(
     return result
 
 
+def tidal_tags_for_tracks(
+    track_ids: list[str], path: Path = DATABASE_PATH
+) -> dict[str, list[str]]:
+    """Return free-form tags for several TIDAL tracks."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    result: dict[str, list[str]] = {track_id: [] for track_id in unique_ids}
+    if not unique_ids or not _database_available(path):
+        return result
+    initialize(path)
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT tt.provider_track_id AS track_id, t.name
+            FROM track_tags tt
+            JOIN tags t ON t.id=tt.tag_id
+            WHERE tt.provider='tidal' AND tt.provider_track_id IN ({placeholders})
+            ORDER BY t.name COLLATE NOCASE
+            """,
+            unique_ids,
+        ).fetchall()
+    for row in rows:
+        result[row["track_id"]].append(row["name"])
+    return result
+
+
 def toggle_tidal_track_dimension(
     track_id: str,
     dimension: str,

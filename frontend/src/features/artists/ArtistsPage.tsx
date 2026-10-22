@@ -1,8 +1,8 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, queryString } from '../../api/client'
-import type { ArtistOverviewPage, ArtistOverviewRow } from '../../api/types'
+import type { ArtistOverviewPage, ArtistOverviewRow, PublicSettings } from '../../api/types'
 import { nextTableSort, usePersistentTableSort, useTableKeyboardNavigation } from '../../components/dataTableState'
 
 const PAGE_SIZE = 200
@@ -17,6 +17,7 @@ export function ArtistsPage() {
   const restoredScroll = useRef(false)
   const [query, setQuery] = useState(() => sessionStorage.getItem(QUERY_STORAGE_KEY) || '')
   const deferredQuery = useDeferredValue(query)
+  const settings = useQuery({ queryKey: ['settings'], queryFn: () => api<PublicSettings>('/settings') })
   const [sort, setSort] = usePersistentTableSort<ArtistSortField>('musicsync.table-sort:artists', null)
   const pages = useInfiniteQuery({
     queryKey: ['artists', deferredQuery, sort],
@@ -66,7 +67,7 @@ export function ArtistsPage() {
     return <button type="button" className="sort-button" onClick={() => {
       tableRef.current?.scrollTo({ top: 0 })
       sessionStorage.setItem(SCROLL_STORAGE_KEY, '0')
-      setSort((current) => nextTableSort(current, field))
+      setSort((current) => nextTableSort(current, field, settings.data?.default_sort_direction ?? 'asc'))
     }}>
       {label}<span>{sort?.field === field ? sort.direction === 'asc' ? '▲' : '▼' : ''}</span>
     </button>

@@ -79,7 +79,9 @@ export function MixOverviewTable({ mixes }: { mixes: MixSummary[] }) {
   }, [])
 
   function changeSort(field: MixField) {
-    if (SORTABLE.has(field)) setSort((current) => nextTableSort(current, field as MixSortField))
+    if (SORTABLE.has(field)) {
+      setSort((current) => nextTableSort(current, field as MixSortField, settings.data?.default_sort_direction ?? 'asc'))
+    }
   }
 
   function applyQuickView(fields: string[]) {

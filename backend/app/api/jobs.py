@@ -8,17 +8,14 @@ from fastapi import APIRouter, HTTPException
 
 import main as engine
 from music_library.database import lastfm_import_summary
-from music_library.database import replace_tidal_track_dimensions
 from music_library.database import pending_track, pending_tracks, update_pending_track_candidates, watched_mix
-from music_tools.auto_tagging import auto_tag_tracks
-from music_tools.liked_tracks.service import fetch_library_tracks
 from music_tools.lastfm import import_scrobbles, reconcile_track_matches
 from music_tools.mixes.service import import_tidal_setlist, mix_for
 from music_tools.watched_mixes.tracklist import find_tidal_matches
 
 from ..config import number_setting
 from ..jobs import JOBS
-from ..schemas import AutoTagRequest, JobResponse, MixTidalImportRequest, TracklistSearchRequest
+from ..schemas import JobResponse, MixTidalImportRequest, TracklistSearchRequest
 from ..services.library import CollectionNotFound, descriptor
 
 
@@ -85,41 +82,6 @@ def run_lastfm_reconcile() -> JobResponse:
         return reconcile_track_matches(username)
 
     return JobResponse.model_validate(JOBS.snapshot(JOBS.submit("lastfm-reconcile", execute)))
-
-
-@router.post("/tracks/auto-tag", response_model=JobResponse, status_code=202)
-def run_auto_tag(body: AutoTagRequest) -> JobResponse:
-    settings = engine.load_config().get("settings", {})
-    wanted = set(dict.fromkeys(body.track_ids))
-
-    def execute(progress):
-        progress(f"Loading metadata for {len(wanted)} selected track(s)")
-        records, _ = fetch_library_tracks(limit=1_000_000)
-        selected = [record for record in records if str(record.get("id") or "") in wanted]
-        if len(selected) != len(wanted):
-            missing = len(wanted) - len(selected)
-            raise RuntimeError(f"{missing} selected track(s) are no longer in the local library.")
-        progress(f"Classifying {len(selected)} track(s) with {settings.get('ollama_model', 'qwen3:4b')}")
-        suggestions = auto_tag_tracks(
-            selected,
-            model=str(settings.get("ollama_model", "qwen3:4b")),
-            base_url=str(settings.get("ollama_url", "http://127.0.0.1:11434")),
-            timeout_seconds=number_setting(
-                settings, "ollama_timeout_seconds", 300, minimum=1,
-            ),
-        )
-        tagged = 0
-        for track in selected:
-            track_id = str(track.get("id") or "")
-            dimensions = suggestions.get(track_id)
-            if not dimensions:
-                continue
-            replace_tidal_track_dimensions(track_id, dimensions)
-            tagged += 1
-        progress(f"Stored tags for {tagged} of {len(selected)} track(s)")
-        return {"requested": len(selected), "tagged": tagged}
-
-    return JobResponse.model_validate(JOBS.snapshot(JOBS.submit("auto-tag", execute)))
 
 
 @router.post(

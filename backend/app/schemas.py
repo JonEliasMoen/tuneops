@@ -150,15 +150,10 @@ class WatchedMixAssociation(BaseModel):
     video_id: str = Field(min_length=1)
 
 
-class AutoTagRequest(BaseModel):
-    track_ids: list[str] = Field(min_length=1, max_length=100)
-
-
 class PublicSettings(BaseModel):
     dark_mode: bool = True
     tags_collapsed_by_default: bool = True
-    ollama_model: str = "qwen3:4b"
-    ollama_url: str = "http://127.0.0.1:11434"
+    default_sort_direction: Literal["asc", "desc"] = "asc"
     lastfm_username: str = ""
     history_top_tracks: int = Field(default=20, ge=1, le=100)
     spotify_search_delay_seconds: float = 0.75
@@ -170,8 +165,7 @@ class PublicSettings(BaseModel):
 class SettingsPatch(BaseModel):
     dark_mode: bool | None = None
     tags_collapsed_by_default: bool | None = None
-    ollama_model: str | None = None
-    ollama_url: str | None = None
+    default_sort_direction: Literal["asc", "desc"] | None = None
     lastfm_username: str | None = None
     history_top_tracks: int | None = Field(default=None, ge=1, le=100)
     spotify_search_delay_seconds: float | None = Field(default=None, ge=0, le=30)

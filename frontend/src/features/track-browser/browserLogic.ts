@@ -25,9 +25,15 @@ export function selectTrackRange(
   return { selectedIds: [trackId], anchorId: trackId, lastRangeIndex: index }
 }
 
-export function nextSort(current: SortState, field: string): SortState {
-  if (!current || current.field !== field) return { field, direction: 'asc' }
-  if (current.direction === 'asc') return { field, direction: 'desc' }
+export function nextSort(
+  current: SortState,
+  field: string,
+  initialDirection: 'asc' | 'desc' = 'asc',
+): SortState {
+  if (!current || current.field !== field) return { field, direction: initialDirection }
+  if (current.direction === initialDirection) {
+    return { field, direction: initialDirection === 'asc' ? 'desc' : 'asc' }
+  }
   return null
 }
 

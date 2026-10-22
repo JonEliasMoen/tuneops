@@ -7,8 +7,7 @@ import { SettingsPage } from './SettingsPage'
 const initialSettings = {
   dark_mode: true,
   tags_collapsed_by_default: true,
-  ollama_model: 'qwen3:4b',
-  ollama_url: 'http://127.0.0.1:11434',
+  default_sort_direction: 'asc' as const,
   lastfm_username: 'Aruzhu',
   history_top_tracks: 20,
   spotify_search_delay_seconds: 0.75,
@@ -53,5 +52,14 @@ describe('SettingsPage autosave', () => {
     await waitFor(() => expect(writes).toHaveLength(1), { timeout: 2000 })
     expect(writes[0].lastfm_username).toBe('UpdatedUser')
     await screen.findByText('Saved automatically.')
+  })
+
+  it('offers the standalone VirtualDJ companion as a direct download', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>)
+
+    const link = await screen.findByRole('link', { name: 'Download VirtualDJ companion' })
+    expect(link.getAttribute('href')).toBe('/downloads/virtualdj-companion/tuneops_virtualdj.py')
+    expect(link.getAttribute('download')).toBe('tuneops_virtualdj.py')
   })
 })

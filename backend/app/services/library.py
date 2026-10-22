@@ -157,7 +157,8 @@ def _attach_related(rows: list[dict[str, Any]], collection: dict[str, str]) -> N
         row["artists"] = artists.get(track_id, [])
         row["dimensions"] = dimensions.get(track_id, {})
         if current_type != "history":
-            row["play_count"] = int(listening.get(track_id, {}).get("play_count", 0)) if username else 0
+            plays = listening.get(track_id, {}).get("play_count") if username else None
+            row["play_count"] = int(plays) if plays is not None else None
         last_played = row.get("last_played") if current_type == "history" else listening.get(track_id, {}).get("last_played")
         row["last_played"] = (
             datetime.fromtimestamp(int(last_played)).strftime("%Y-%m-%d %H:%M")

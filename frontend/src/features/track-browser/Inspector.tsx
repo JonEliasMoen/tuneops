@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../../api/client'
-import type { Collection, Job, Track, TrackPage } from '../../api/types'
-import { JobStatus } from '../../components/JobStatus'
+import type { Collection, Track, TrackPage } from '../../api/types'
 import { useTagsPanel } from './uiPreferences'
 
 type Catalog = {
@@ -51,7 +50,6 @@ export function Inspector({
   const [recentAddPlaylistId, setRecentAddPlaylistId] = useState(storedRecentAddPlaylist)
   const [feedback, setFeedback] = useState('')
   const [tagFeedback, setTagFeedback] = useState('')
-  const [autoTagJob, setAutoTagJob] = useState<string | null>(null)
   const catalog = useQuery({ queryKey: ['dimensions'], queryFn: () => api<Catalog>('/dimensions') })
   const playlists = useQuery({ queryKey: ['playlist-options'], queryFn: () => api<PlaylistOption[]>('/playlist-options') })
   const watchedMixes = useQuery({ queryKey: ['watched-mixes'], queryFn: () => api<WatchedMix[]>('/watched-mixes') })
@@ -134,16 +132,6 @@ export function Inspector({
         client.invalidateQueries({ queryKey: ['navigation'] }),
       ])
       document.querySelector<HTMLElement>('[data-track-browser-root]')?.focus()
-    },
-    onError: (error) => setFeedback(error.message),
-  })
-  const autoTag = useMutation({
-    mutationFn: () => api<Job>('/tracks/auto-tag', {
-      method: 'POST', body: JSON.stringify({ track_ids: selectedTracks.map((item) => item.id) }),
-    }),
-    onSuccess: (job) => {
-      setFeedback('')
-      setAutoTagJob(job.id)
     },
     onError: (error) => setFeedback(error.message),
   })
@@ -254,8 +242,6 @@ export function Inspector({
         <button data-action-entry type="button" onClick={() => { setFeedback(''); setMode('remove') }}>Remove from playlist</button>
         {collectionType === 'playlist' ? <button data-action-entry type="button" onClick={() => { setFeedback(''); setMode('move') }}>Move to playlist</button> : null}
         <button data-action-entry type="button" onClick={() => { setFeedback(''); setMode('associate') }}>Associate with watched mix</button>
-        <button data-action-entry type="button" disabled={autoTag.isPending || Boolean(autoTagJob)} onClick={() => autoTag.mutate()}>Auto tag with Qwen3</button>
-        <JobStatus jobId={autoTagJob} onComplete={() => { client.invalidateQueries({ queryKey: ['tracks'] }); setAutoTagJob(null); setFeedback('Auto tagging complete.') }} onFailed={(message) => { setAutoTagJob(null); setFeedback(message) }} />
       </div> : <div className="action-list">
         <button data-action-entry type="button" className="action-back" onClick={() => setMode(null)}>← Back</button>
         <p className="action-prompt">{mode === 'associate' ? `Choose a watched mix for ${count} track${count === 1 ? '' : 's'}` : `${mode === 'add' ? 'Add to' : mode === 'remove' ? 'Remove from' : 'Move to'}…`}</p>

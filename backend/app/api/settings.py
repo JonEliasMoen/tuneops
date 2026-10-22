@@ -29,8 +29,7 @@ _PLAYLIST_CACHE_SECONDS = 300
 PUBLIC_SETTING_KEYS = {
     "dark_mode",
     "tags_collapsed_by_default",
-    "ollama_model",
-    "ollama_url",
+    "default_sort_direction",
     "lastfm_username",
     "history_top_tracks",
     "spotify_search_delay_seconds",

@@ -2,9 +2,15 @@ import { useEffect, useState, type KeyboardEvent } from 'react'
 
 export type TableSort<Field extends string> = { field: Field; direction: 'asc' | 'desc' } | null
 
-export function nextTableSort<Field extends string>(current: TableSort<Field>, field: Field): TableSort<Field> {
-  if (!current || current.field !== field) return { field, direction: 'asc' }
-  if (current.direction === 'asc') return { field, direction: 'desc' }
+export function nextTableSort<Field extends string>(
+  current: TableSort<Field>,
+  field: Field,
+  initialDirection: 'asc' | 'desc' = 'asc',
+): TableSort<Field> {
+  if (!current || current.field !== field) return { field, direction: initialDirection }
+  if (current.direction === initialDirection) {
+    return { field, direction: initialDirection === 'asc' ? 'desc' : 'asc' }
+  }
   return null
 }
 

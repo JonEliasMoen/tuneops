@@ -20,6 +20,14 @@ function isEditing(target: EventTarget | null) {
   return Boolean((target as HTMLElement | null)?.closest('input, textarea, select, button, a, summary, [contenteditable="true"]'))
 }
 
+function RefreshIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" /></svg>
+}
+
+function DownloadIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 21h14" /></svg>
+}
+
 export function keepRowVisible(viewport: HTMLElement, row: HTMLElement) {
   const viewportRect = viewport.getBoundingClientRect()
   const rowRect = row.getBoundingClientRect()
@@ -234,7 +242,7 @@ export function TrackBrowser({ collectionType, collectionId, hideCollectionHeadi
 
   function cycleSort(field: string) {
     setLoaded(PAGE_SIZE)
-    setSort((current) => nextSort(current, field))
+    setSort((current) => nextSort(current, field, settings.data?.default_sort_direction ?? 'asc'))
   }
 
   function applyQuickView(fields: string[]) {
@@ -270,10 +278,19 @@ export function TrackBrowser({ collectionType, collectionId, hideCollectionHeadi
         </div>
         <button
           type="button"
-          className="primary"
+          className="primary icon-button"
           onClick={() => providerBacked ? void refreshFromTidal(true) : void tracks.refetch()}
           disabled={tracks.isFetching}
-        >{providerBacked ? 'Refresh from TIDAL' : tracks.isFetching ? 'Loading…' : 'Reload SQLite'}</button>
+          aria-label={providerBacked ? 'Refresh from TIDAL' : 'Reload SQLite'}
+          title={providerBacked ? 'Refresh from TIDAL' : 'Reload SQLite'}
+        ><RefreshIcon /></button>
+        <a
+          className="button-link primary icon-button"
+          href={`/api/v1/collections/${collectionType}/${encodeURIComponent(collectionId)}/virtualdj-metadata`}
+          download
+          aria-label="Download VirtualDJ metadata"
+          title="Download VirtualDJ metadata"
+        ><DownloadIcon /></a>
       </div>
     </header>
     {refreshError ? <div className="error-banner">{refreshError}</div> : null}

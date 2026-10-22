@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from backend.app.services import library
@@ -54,6 +55,50 @@ def test_collection_filters_before_pagination(monkeypatch):
 
     assert page["total"] == 10
     assert [item["id"] for item in page["items"]] == ["10", "11", "12"]
+
+
+def test_virtualdj_export_contains_all_track_dimensions_and_free_tags(monkeypatch):
+    monkeypatch.setattr(library_api, "collection_page", lambda *_args, **_kwargs: {
+        "collection": {"type": "playlist", "id": "playlist-id", "name": "My Playlist"},
+        "items": [
+            {"id": "12", "title": "Rated", "artist": "Artist", "album": "Album", "year": "2024", "dimensions": {"rating": ["5"], "energy": ["4"], "vibe": ["Dark", "Hypnotic"]}},
+            {"id": "34", "title": "Unrated", "artist": "Artist", "dimensions": {}},
+        ],
+    })
+    monkeypatch.setattr(library_api, "tidal_tags_for_tracks", lambda _ids: {
+        "12": ["Warehouse"], "34": ["Needs review"],
+    })
+
+    response = library_api.virtualdj_metadata("playlist", "playlist-id")
+    payload = json.loads(response.body)
+
+    assert payload["schema_version"] == 2
+    assert payload["type"] == "tuneops.virtualdj-metadata"
+    assert payload["tracks"] == [
+        {
+            "tidal_track_id": "12", "rating": 5, "title": "Rated",
+            "artist": "Artist", "album": "Album", "year": "2024",
+            "dimensions": {"rating": ["5"], "energy": ["4"], "vibe": ["Dark", "Hypnotic"]},
+            "tags": ["Warehouse"],
+        },
+        {
+            "tidal_track_id": "34", "rating": None, "title": "Unrated",
+            "artist": "Artist", "album": "", "year": "", "dimensions": {},
+            "tags": ["Needs review"],
+        },
+    ]
+    assert response.headers["content-disposition"] == 'attachment; filename="My-Playlist-virtualdj-metadata.json"'
+
+
+def test_numeric_sort_keeps_missing_play_counts_last_in_both_directions():
+    rows = [
+        {**_row("missing", "Missing", None), "play_count": None},
+        {**_row("low", "Low", None), "play_count": 2},
+        {**_row("high", "High", None), "play_count": 20},
+    ]
+
+    assert [row["id"] for row in library._sort(rows, "play_count", "asc")] == ["low", "high", "missing"]
+    assert [row["id"] for row in library._sort(rows, "play_count", "desc")] == ["high", "low", "missing"]
 
 
 def test_global_collection_type_filter_uses_indexed_memberships_not_liked_state():
