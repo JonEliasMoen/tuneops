@@ -127,6 +127,10 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
   after a short debounce. Do not restore a normal Save Settings button. Do not
   let an older save response overwrite newer local edits; show an explicit
   retry only after autosave ultimately fails.
+- Settings reads use the narrow `config_store.load_settings_bundle()` path and
+  must not hydrate sync mappings or unmatched-track state. The shared frontend
+  Settings query stays fresh for five minutes; successful autosaves update that
+  cache immediately.
 - The selected-track **Tags & ratings** section is a native collapsible panel.
   Its current open/closed state lives in the root in-memory `ui-preferences`
   store so it survives navigation between track collections without browser

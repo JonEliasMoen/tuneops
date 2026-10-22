@@ -49,6 +49,29 @@ def test_config_round_trip_preserves_portable_data(tmp_path, sample_config):
     assert config_store.exists(database)
 
 
+def test_settings_bundle_omits_mappings_and_preserves_quick_view_extras(
+    tmp_path, sample_config,
+):
+    database = tmp_path / "library.sqlite3"
+    config_store.replace(sample_config, database)
+
+    result = config_store.load_settings_bundle(database)
+
+    assert result == {
+        "settings": sample_config["settings"],
+        "quick_views": sample_config["quick_views"],
+        "mix_quick_views": sample_config["mix_quick_views"],
+    }
+    assert "playlists" not in result
+    assert "future_top_level" not in result
+
+
+def test_settings_bundle_is_absent_before_config_import(tmp_path):
+    database = tmp_path / "library.sqlite3"
+
+    assert config_store.load_settings_bundle(database) is None
+
+
 def test_replace_is_transactional_on_invalid_mapping(tmp_path, sample_config):
     database = tmp_path / "library.sqlite3"
     config_store.replace(sample_config, database)

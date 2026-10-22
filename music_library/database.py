@@ -529,6 +529,17 @@ def connect(path: Path = DATABASE_PATH) -> Iterator[Any]:
         connection.close()
 
 
+@contextmanager
+def connect_readonly(path: Path = DATABASE_PATH) -> Iterator[Any]:
+    """Open a one-statement read without a remote write transaction."""
+    remote = database_backend() == "turso" and Path(path) == DATABASE_PATH
+    connection = open_connection(Path(path), remote=remote, read_only=remote)
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
 def _database_available(path: Path) -> bool:
     """Treat the configured remote primary as available without a local file."""
     return (

@@ -185,7 +185,14 @@ def _split_script(script: str) -> list[str]:
 class TursoConnection:
     """Small synchronous DB-API subset backed by a stateful Hrana stream."""
 
-    def __init__(self, url: str, auth_token: str, *, timeout: float = 20):
+    def __init__(
+        self,
+        url: str,
+        auth_token: str,
+        *,
+        timeout: float = 20,
+        read_only: bool = False,
+    ):
         _enable_system_trust_store()
         self._base_url = url.replace("libsql://", "https://", 1).rstrip("/") + "/"
         self._session = requests.Session()
@@ -196,11 +203,13 @@ class TursoConnection:
         self._timeout = timeout
         self._baton: str | None = None
         self._closed = False
+        self._read_only = read_only
         self.total_changes = 0
-        self._pipeline([
-            {"type": "execute", "stmt": _statement("PRAGMA foreign_keys = ON")},
-            {"type": "execute", "stmt": _statement("BEGIN")},
-        ])
+        if not read_only:
+            self._pipeline([
+                {"type": "execute", "stmt": _statement("PRAGMA foreign_keys = ON")},
+                {"type": "execute", "stmt": _statement("BEGIN")},
+            ])
 
     def _pipeline(self, operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if self._closed:
@@ -249,9 +258,18 @@ class TursoConnection:
     def execute(
         self, sql: str, parameters: Sequence[Any] | Mapping[str, Any] = ()
     ) -> RemoteCursor:
-        result = self._pipeline([
-            {"type": "execute", "stmt": _statement(sql, parameters)}
-        ])[0]
+        operations = [{"type": "execute", "stmt": _statement(sql, parameters)}]
+        if self._read_only:
+            # A one-shot read does not need a write transaction. Execute and
+            # close the Hrana stream in the same HTTP request, reducing a
+            # simple SELECT from four network round trips to one.
+            operations.append({"type": "close"})
+        try:
+            result = self._pipeline(operations)[0]
+        finally:
+            if self._read_only:
+                self._closed = True
+                self._session.close()
         cursor = self._cursor(result)
         if cursor.rowcount > 0:
             self.total_changes += cursor.rowcount
@@ -260,6 +278,8 @@ class TursoConnection:
     def executemany(
         self, sql: str, parameter_rows: Iterable[Sequence[Any] | Mapping[str, Any]]
     ) -> RemoteCursor:
+        if self._read_only:
+            raise TursoDatabaseError("A read-only Turso connection supports one SELECT")
         operations = [
             {"type": "execute", "stmt": _statement(sql, parameters)}
             for parameters in parameter_rows
@@ -276,6 +296,8 @@ class TursoConnection:
         return RemoteCursor(rowcount=affected, lastrowid=lastrowid)
 
     def executescript(self, script: str) -> RemoteCursor:
+        if self._read_only:
+            raise TursoDatabaseError("A read-only Turso connection supports one SELECT")
         statements = _split_script(script)
         operations = [
             {"type": "execute", "stmt": _statement(statement)}
@@ -289,11 +311,19 @@ class TursoConnection:
     def commit(self) -> None:
         if self._closed:
             return
+        if self._read_only:
+            self._closed = True
+            self._session.close()
+            return
         self._pipeline([{"type": "execute", "stmt": _statement("COMMIT")}])
         self._close_stream()
 
     def rollback(self) -> None:
         if self._closed:
+            return
+        if self._read_only:
+            self._closed = True
+            self._session.close()
             return
         try:
             self._pipeline([{"type": "execute", "stmt": _statement("ROLLBACK")}])
@@ -318,10 +348,12 @@ class TursoConnection:
             self.rollback()
 
 
-def open_connection(path: Path, *, remote: bool) -> sqlite3.Connection | TursoConnection:
+def open_connection(
+    path: Path, *, remote: bool, read_only: bool = False,
+) -> sqlite3.Connection | TursoConnection:
     if remote:
         url, token = turso_configuration()
-        return TursoConnection(url, token)
+        return TursoConnection(url, token, read_only=read_only)
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path, timeout=10)
     connection.row_factory = sqlite3.Row

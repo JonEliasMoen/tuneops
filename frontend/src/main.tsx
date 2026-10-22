@@ -10,6 +10,7 @@ const queryClient = new QueryClient({
     queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 },
   },
 })
+queryClient.setQueryDefaults(['settings'], { staleTime: 5 * 60_000 })
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

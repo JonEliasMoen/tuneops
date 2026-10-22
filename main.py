@@ -231,6 +231,25 @@ def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
     return config_store.load() or data
 
 
+def load_settings_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
+    """Load the settings-facing subset without loading sync mapping state."""
+    if not _uses_sqlite_config(path):
+        data = _load_json_config(path)
+        return {
+            "settings": data.get("settings", {}),
+            "quick_views": data.get("quick_views", []),
+            "mix_quick_views": data.get("mix_quick_views", []),
+        }
+    stored = config_store.load_settings_bundle()
+    if stored is not None:
+        return stored
+    # Preserve the same first-run JSON import behavior as load_config().
+    load_config(path)
+    return config_store.load_settings_bundle() or {
+        "settings": {}, "quick_views": [], "mix_quick_views": [],
+    }
+
+
 def save_config(data: dict[str, Any], path: Path = CONFIG_PATH) -> None:
     if _uses_sqlite_config(path):
         config_store.replace(data)

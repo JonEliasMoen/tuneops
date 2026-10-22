@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from music_library.database import DATABASE_PATH, connect, initialize
+from music_library.database import DATABASE_PATH, connect, connect_readonly, initialize
 
 
 PROFILE_ID = "local"
@@ -277,6 +277,76 @@ def load(path: Path = DATABASE_PATH, *, include_internal: bool = True) -> dict[s
                 views.append(view)
             result[config_key] = views
         return result
+
+
+def load_settings_bundle(path: Path = DATABASE_PATH) -> dict[str, Any] | None:
+    """Load only public settings and Quick Views without hydrating mappings.
+
+    The full compatibility document performs mapping-specific unmatched-track
+    queries. That is useful to the sync engine, but unnecessarily expensive for
+    the Settings UI when the database is remote. Keep this read to one SQL
+    execution so its cost does not grow with the number of sync mappings.
+    """
+    initialize(path)
+    with connect_readonly(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                'meta' AS record_type,
+                '' AS view_type,
+                '' AS id,
+                '' AS name,
+                0 AS is_default,
+                0 AS position,
+                NULL AS fields_json,
+                NULL AS extra_json,
+                NULL AS settings_json
+            FROM config_store_meta
+            WHERE profile_id=?
+            UNION ALL
+            SELECT
+                'settings', '', '', '', 0, 0, NULL, NULL, settings_json
+            FROM app_settings
+            WHERE profile_id=?
+            UNION ALL
+            SELECT
+                'view', view_type, id, name, is_default, position,
+                fields_json, extra_json, NULL
+            FROM quick_views
+            WHERE view_type IN ('track', 'mix')
+            ORDER BY record_type, view_type, position, id
+            """,
+            (PROFILE_ID, PROFILE_ID),
+        ).fetchall()
+
+    if not any(row["record_type"] == "meta" for row in rows):
+        return None
+
+    result: dict[str, Any] = {
+        "settings": {},
+        "quick_views": [],
+        "mix_quick_views": [],
+    }
+    for row in rows:
+        if row["record_type"] == "settings":
+            settings = _object(row["settings_json"], {})
+            result["settings"] = settings if isinstance(settings, dict) else {}
+            continue
+        if row["record_type"] != "view":
+            continue
+        view = _object(row["extra_json"], {})
+        if not isinstance(view, dict):
+            view = {}
+        fields = _object(row["fields_json"], [])
+        view.update({
+            "id": row["id"],
+            "name": row["name"],
+            "fields": fields if isinstance(fields, list) else [],
+            "default": bool(row["is_default"]),
+        })
+        config_key = "quick_views" if row["view_type"] == "track" else "mix_quick_views"
+        result[config_key].append(view)
+    return result
 
 
 def export(path: Path = DATABASE_PATH) -> dict[str, Any] | None:

@@ -8,7 +8,7 @@ from backend.app.schemas import SettingsPatch, SyncMappings
 
 
 def test_public_settings_never_exposes_private_config_values(monkeypatch):
-    monkeypatch.setattr(settings.engine, "load_config", lambda: {
+    monkeypatch.setattr(settings.engine, "load_settings_config", lambda: {
         "settings": {
             "dark_mode": False,
             "internal_token": "must-not-leak",

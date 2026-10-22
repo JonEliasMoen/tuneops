@@ -107,3 +107,58 @@ def test_turso_connection_uses_one_transactional_stream(monkeypatch):
     ]
     assert calls[1]["baton"] == "next"
     assert calls[-1]["requests"] == [{"type": "close"}]
+
+
+def test_turso_read_only_connection_uses_one_http_pipeline(monkeypatch):
+    calls: list[dict] = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "baton": None,
+                "base_url": None,
+                "results": [
+                    {
+                        "type": "ok",
+                        "response": {
+                            "type": "execute",
+                            "result": {
+                                "cols": [{"name": "value"}],
+                                "rows": [[{"type": "integer", "value": "42"}]],
+                                "affected_row_count": 0,
+                            },
+                        },
+                    },
+                    {"type": "ok", "response": {"type": "close"}},
+                ],
+            }
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+            self.closed = False
+
+        def post(self, url, *, json, timeout):
+            calls.append(json)
+            return Response()
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(connection.requests, "Session", Session)
+    monkeypatch.setattr(connection, "_enable_system_trust_store", lambda: None)
+
+    database = connection.TursoConnection(
+        "libsql://example.invalid", "token", read_only=True,
+    )
+    row = database.execute("SELECT ? AS value", (42,)).fetchone()
+    database.commit()
+
+    assert row is not None and row["value"] == 42
+    assert len(calls) == 1
+    assert calls[0]["baton"] is None
+    assert calls[0]["requests"][0]["stmt"]["sql"] == "SELECT ? AS value"
+    assert calls[0]["requests"][1] == {"type": "close"}

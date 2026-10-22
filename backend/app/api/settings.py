@@ -48,7 +48,7 @@ def _public(config: dict[str, Any]) -> PublicSettings:
 
 @router.get("/settings", response_model=PublicSettings)
 def settings() -> PublicSettings:
-    return _public(engine.load_config())
+    return _public(engine.load_settings_config())
 
 
 @router.patch("/settings", response_model=PublicSettings)
