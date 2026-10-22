@@ -136,6 +136,9 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
 - Backend callers that need only application settings use
   `main.load_runtime_settings()`. Do not load mappings, unmatched tracks, or
   Quick Views merely to read a runtime setting.
+- Navigation obtains qualifying Last.fm years and months through the combined
+  `lastfm_history_navigation()` query; do not split it back into two remote
+  reads.
 - The selected-track **Tags & ratings** section is a native collapsible panel.
   Its current open/closed state lives in the root in-memory `ui-preferences`
   store so it survives navigation between track collections without browser

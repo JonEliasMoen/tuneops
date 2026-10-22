@@ -1158,6 +1158,58 @@ def lastfm_history_years(
     return [dict(row) for row in rows]
 
 
+def lastfm_history_navigation(
+    username: str,
+    minimum_tracks: int = 20,
+    path: Path = DATABASE_PATH,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return qualifying Last.fm years and months in one read-only query."""
+    if not str(username or "").strip():
+        return {"years": [], "months": []}
+    initialize(path)
+    threshold = max(1, int(minimum_tracks))
+    with connect_readonly(path) as connection:
+        rows = connection.execute(
+            """
+            WITH periods AS (
+                SELECT
+                    strftime('%Y', played_at, 'unixepoch', 'localtime') AS year,
+                    strftime('%m', played_at, 'unixepoch', 'localtime') AS month,
+                    tidal_track_id
+                FROM lastfm_scrobbles
+                WHERE username=? AND tidal_track_id IS NOT NULL
+            )
+            SELECT 'year' AS period_type, year, NULL AS month,
+                   COUNT(DISTINCT tidal_track_id) AS track_count,
+                   COUNT(*) AS play_count
+            FROM periods
+            GROUP BY year
+            HAVING COUNT(DISTINCT tidal_track_id) >= ?
+            UNION ALL
+            SELECT 'month', year, month,
+                   COUNT(DISTINCT tidal_track_id), COUNT(*)
+            FROM periods
+            GROUP BY year, month
+            HAVING COUNT(DISTINCT tidal_track_id) >= ?
+            ORDER BY year DESC, period_type DESC, month DESC
+            """,
+            (str(username).strip().casefold(), threshold, threshold),
+        ).fetchall()
+    result: dict[str, list[dict[str, Any]]] = {"years": [], "months": []}
+    for row in rows:
+        item = {
+            "year": row["year"],
+            "track_count": int(row["track_count"]),
+            "play_count": int(row["play_count"]),
+        }
+        if row["period_type"] == "month":
+            item["month"] = row["month"]
+            result["months"].append(item)
+        else:
+            result["years"].append(item)
+    return result
+
+
 def lastfm_month_top_tracks(
     username: str,
     year: int,

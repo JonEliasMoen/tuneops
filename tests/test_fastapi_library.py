@@ -155,12 +155,12 @@ def test_navigation_builds_history_from_configured_lastfm_cache(monkeypatch):
     monkeypatch.setattr(library_api, "tidal_indexed_playlists", lambda: [])
     monkeypatch.setattr(library_api, "discover_mixes", lambda: [])
     monkeypatch.setattr(library_api, "watched_mixes", lambda: [])
-    monkeypatch.setattr(library_api, "lastfm_history_years", lambda username, limit: [
-        {"year": "2026", "track_count": 40, "play_count": 120},
-    ])
-    monkeypatch.setattr(library_api, "lastfm_history_months", lambda username, limit: [
-        {"year": "2026", "month": "09", "track_count": 25, "play_count": 80},
-    ])
+    monkeypatch.setattr(library_api, "lastfm_history_navigation", lambda username, limit: {
+        "years": [{"year": "2026", "track_count": 40, "play_count": 120}],
+        "months": [
+            {"year": "2026", "month": "09", "track_count": 25, "play_count": 80},
+        ],
+    })
 
     result = library_api.navigation()
 
@@ -198,8 +198,10 @@ def test_artist_overview_uses_configured_lastfm_user(monkeypatch):
 def test_navigation_puts_overview_first_in_my_mixes(monkeypatch):
     monkeypatch.setattr(library_api.engine, "load_runtime_settings", lambda: {})
     monkeypatch.setattr(library_api, "tidal_indexed_playlists", lambda: [])
-    monkeypatch.setattr(library_api, "lastfm_history_years", lambda *_: [])
-    monkeypatch.setattr(library_api, "lastfm_history_months", lambda *_: [])
+    monkeypatch.setattr(
+        library_api, "lastfm_history_navigation",
+        lambda *_: {"years": [], "months": []},
+    )
     monkeypatch.setattr(library_api, "watched_mixes", lambda: [])
     monkeypatch.setattr(
         library_api,

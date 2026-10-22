@@ -12,7 +12,6 @@ import main as engine
 from backend.app.config import integer_setting
 from music_library.database import (
     lastfm_track_stats,
-    lastfm_history_months,
     lastfm_month_top_tracks,
     lastfm_year_top_tracks,
     lastfm_all_time_top_tracks,

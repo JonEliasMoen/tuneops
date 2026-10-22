@@ -22,8 +22,7 @@ from music_library.database import (
     delete_pending_track,
     delete_watched_mix,
     event_links,
-    lastfm_history_months,
-    lastfm_history_years,
+    lastfm_history_navigation,
     tidal_artist_overview_page,
     save_event_links,
     resolve_pending_track,
@@ -171,7 +170,8 @@ def navigation() -> NavigationResponse:
     settings = engine.load_runtime_settings()
     history_limit = max(1, min(100, int(settings.get("history_top_tracks", 20) or 20)))
     history_username = str(settings.get("lastfm_username", "") or "")
-    history_rows = lastfm_history_months(history_username, history_limit)
+    history = lastfm_history_navigation(history_username, history_limit)
+    history_rows = history["months"]
     history_years: dict[str, list[dict[str, str]]] = {
         str(row.get("year") or ""): [{
             "id": f"{row.get('year')}-overall",
@@ -180,7 +180,7 @@ def navigation() -> NavigationResponse:
             "kind": "history_year_overall",
             "icon": "★",
         }]
-        for row in lastfm_history_years(history_username, history_limit)
+        for row in history["years"]
         if str(row.get("year") or "")
     }
     for row in history_rows:
