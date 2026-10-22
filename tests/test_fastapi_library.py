@@ -142,7 +142,7 @@ def test_history_collection_preserves_monthly_instead_of_all_time_play_count(mon
     monkeypatch.setattr(library, "tidal_artists_for_tracks", lambda *_: {})
     monkeypatch.setattr(library, "tidal_dimensions_for_tracks", lambda *_: {})
     monkeypatch.setattr(library, "lastfm_track_stats", lambda *_: {"track": {"play_count": 999, "last_played": 1_800_000_000}})
-    monkeypatch.setattr(library.engine, "load_config", lambda: {"settings": {"lastfm_username": "user"}})
+    monkeypatch.setattr(library.engine, "load_runtime_settings", lambda: {"lastfm_username": "user"})
 
     library._attach_related([row], {"type": "history", "id": "2026-09", "name": "September 2026"})
 
@@ -151,7 +151,7 @@ def test_history_collection_preserves_monthly_instead_of_all_time_play_count(mon
 
 
 def test_navigation_builds_history_from_configured_lastfm_cache(monkeypatch):
-    monkeypatch.setattr(library_api.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu", "history_top_tracks": 20}})
+    monkeypatch.setattr(library_api.engine, "load_runtime_settings", lambda: {"lastfm_username": "Aruzhu", "history_top_tracks": 20})
     monkeypatch.setattr(library_api, "tidal_indexed_playlists", lambda: [])
     monkeypatch.setattr(library_api, "discover_mixes", lambda: [])
     monkeypatch.setattr(library_api, "watched_mixes", lambda: [])
@@ -175,7 +175,7 @@ def test_navigation_builds_history_from_configured_lastfm_cache(monkeypatch):
 
 def test_artist_overview_uses_configured_lastfm_user(monkeypatch):
     captured = {}
-    monkeypatch.setattr(library_api.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu"}})
+    monkeypatch.setattr(library_api.engine, "load_runtime_settings", lambda: {"lastfm_username": "Aruzhu"})
     monkeypatch.setattr(
         library_api,
         "tidal_artist_overview_page",
@@ -196,7 +196,7 @@ def test_artist_overview_uses_configured_lastfm_user(monkeypatch):
 
 
 def test_navigation_puts_overview_first_in_my_mixes(monkeypatch):
-    monkeypatch.setattr(library_api.engine, "load_config", lambda: {"settings": {}})
+    monkeypatch.setattr(library_api.engine, "load_runtime_settings", lambda: {})
     monkeypatch.setattr(library_api, "tidal_indexed_playlists", lambda: [])
     monkeypatch.setattr(library_api, "lastfm_history_years", lambda *_: [])
     monkeypatch.setattr(library_api, "lastfm_history_months", lambda *_: [])
@@ -217,7 +217,7 @@ def test_navigation_puts_overview_first_in_my_mixes(monkeypatch):
 
 
 def test_history_overall_uses_the_configured_yearly_top_tracks(monkeypatch):
-    monkeypatch.setattr(library.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu", "history_top_tracks": 20}})
+    monkeypatch.setattr(library.engine, "load_runtime_settings", lambda: {"lastfm_username": "Aruzhu", "history_top_tracks": 20})
     monkeypatch.setattr(library, "lastfm_year_top_tracks", lambda username, year, limit: [{
         "id": "top", "title": "Top track", "artist": "Artist", "play_count": 12, "last_played": 1_790_000_000,
     }])
@@ -229,7 +229,7 @@ def test_history_overall_uses_the_configured_yearly_top_tracks(monkeypatch):
 
 
 def test_history_root_overall_uses_all_cached_scrobbles(monkeypatch):
-    monkeypatch.setattr(library.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu", "history_top_tracks": 20}})
+    monkeypatch.setattr(library.engine, "load_runtime_settings", lambda: {"lastfm_username": "Aruzhu", "history_top_tracks": 20})
     monkeypatch.setattr(library, "lastfm_all_time_top_tracks", lambda username, limit: [{
         "id": "forever", "title": "All-time track", "artist": "Artist", "play_count": 88, "last_played": 1_790_000_000,
     }])

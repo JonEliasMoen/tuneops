@@ -72,6 +72,23 @@ def test_settings_bundle_is_absent_before_config_import(tmp_path):
     assert config_store.load_settings_bundle(database) is None
 
 
+def test_runtime_settings_omit_views_mappings_and_top_level_extras(
+    tmp_path, sample_config,
+):
+    database = tmp_path / "library.sqlite3"
+    config_store.replace(sample_config, database)
+
+    result = config_store.load_runtime_settings(database)
+
+    assert result == sample_config["settings"]
+
+
+def test_runtime_settings_are_absent_before_config_import(tmp_path):
+    database = tmp_path / "library.sqlite3"
+
+    assert config_store.load_runtime_settings(database) is None
+
+
 def test_replace_is_transactional_on_invalid_mapping(tmp_path, sample_config):
     database = tmp_path / "library.sqlite3"
     config_store.replace(sample_config, database)

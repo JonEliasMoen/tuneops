@@ -168,7 +168,7 @@ def navigation() -> NavigationResponse:
                 ],
             )
         )
-    settings = engine.load_config().get("settings", {})
+    settings = engine.load_runtime_settings()
     history_limit = max(1, min(100, int(settings.get("history_top_tracks", 20) or 20)))
     history_username = str(settings.get("lastfm_username", "") or "")
     history_rows = lastfm_history_months(history_username, history_limit)
@@ -275,7 +275,7 @@ def artist_overview(
     sort_field: str = Query(default="name"),
     sort_direction: str = Query(default="asc"),
 ) -> ArtistOverviewPage:
-    username = str(engine.load_config().get("settings", {}).get("lastfm_username", "") or "")
+    username = str(engine.load_runtime_settings().get("lastfm_username", "") or "")
     rows, total = tidal_artist_overview_page(
         username,
         limit=limit,

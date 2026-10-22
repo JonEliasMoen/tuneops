@@ -250,6 +250,18 @@ def load_settings_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
     }
 
 
+def load_runtime_settings(path: Path = CONFIG_PATH) -> dict[str, Any]:
+    """Load settings without mappings or Quick Views."""
+    if not _uses_sqlite_config(path):
+        return _load_json_config(path).get("settings", {})
+    stored = config_store.load_runtime_settings()
+    if stored is not None:
+        return stored
+    # Preserve the first-run JSON import bridge used by the other config reads.
+    load_config(path)
+    return config_store.load_runtime_settings() or {}
+
+
 def save_config(data: dict[str, Any], path: Path = CONFIG_PATH) -> None:
     if _uses_sqlite_config(path):
         config_store.replace(data)

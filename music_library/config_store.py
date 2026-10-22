@@ -349,6 +349,26 @@ def load_settings_bundle(path: Path = DATABASE_PATH) -> dict[str, Any] | None:
     return result
 
 
+def load_runtime_settings(path: Path = DATABASE_PATH) -> dict[str, Any] | None:
+    """Load only application settings in one read-only database request."""
+    initialize(path)
+    with connect_readonly(path) as connection:
+        row = connection.execute(
+            """
+            SELECT settings.settings_json
+            FROM config_store_meta AS meta
+            LEFT JOIN app_settings AS settings
+              ON settings.profile_id=meta.profile_id
+            WHERE meta.profile_id=?
+            """,
+            (PROFILE_ID,),
+        ).fetchone()
+    if row is None:
+        return None
+    settings = _object(row["settings_json"], {})
+    return settings if isinstance(settings, dict) else {}
+
+
 def export(path: Path = DATABASE_PATH) -> dict[str, Any] | None:
     """Return a portable document without internal SQLite-only identifiers."""
     return load(path, include_internal=False)

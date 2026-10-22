@@ -44,7 +44,7 @@ def test_liked_refresh_reuses_backend_session_and_bounded_maintenance(monkeypatc
     monkeypatch.setattr(jobs, "JOBS", registry)
     monkeypatch.setattr(jobs, "descriptor", lambda *_: {"name": "Liked tracks"})
     monkeypatch.setattr(jobs.engine, "tidal_client", lambda interactive=False: session)
-    monkeypatch.setattr(jobs.engine, "load_config", lambda: {"settings": {"liked_tracks_cache_max_pages": 3}})
+    monkeypatch.setattr(jobs.engine, "load_runtime_settings", lambda: {"liked_tracks_cache_max_pages": 3})
     monkeypatch.setattr(
         jobs.engine,
         "maintain_tidal_liked_tracks",
@@ -59,7 +59,7 @@ def test_liked_refresh_reuses_backend_session_and_bounded_maintenance(monkeypatc
 
 
 def test_lastfm_status_reports_configuration_without_exposing_the_api_key(monkeypatch):
-    monkeypatch.setattr(jobs.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu"}})
+    monkeypatch.setattr(jobs.engine, "load_runtime_settings", lambda: {"lastfm_username": "Aruzhu"})
     monkeypatch.setattr(jobs, "lastfm_import_summary", lambda username: {"cached": 7, "username_seen": username})
     monkeypatch.setenv("LASTFM_API_KEY", "private-lastfm-key")
 
@@ -73,7 +73,7 @@ def test_lastfm_import_job_uses_configured_username_delay_and_secret_only_in_pro
     registry = ImmediateJobs()
     captured: dict[str, object] = {}
     monkeypatch.setattr(jobs, "JOBS", registry)
-    monkeypatch.setattr(jobs.engine, "load_config", lambda: {"settings": {"lastfm_username": "Aruzhu", "lastfm_import_delay_seconds": 0.2}})
+    monkeypatch.setattr(jobs.engine, "load_runtime_settings", lambda: {"lastfm_username": "Aruzhu", "lastfm_import_delay_seconds": 0.2})
     monkeypatch.setenv("LASTFM_API_KEY", "private-lastfm-key")
     monkeypatch.setattr(
         jobs,
@@ -117,7 +117,7 @@ def test_indexed_collection_refresh_preserves_the_explicit_force_flag(monkeypatc
 def test_pending_refresh_does_not_open_tidal_when_queue_is_empty(monkeypatch):
     registry = ImmediateJobs()
     monkeypatch.setattr(jobs, "JOBS", registry)
-    monkeypatch.setattr(jobs.engine, "load_config", lambda: {"settings": {}})
+    monkeypatch.setattr(jobs.engine, "load_runtime_settings", lambda: {})
     monkeypatch.setattr(jobs, "pending_tracks", lambda: [])
     monkeypatch.setattr(
         jobs.engine,
@@ -139,7 +139,7 @@ def test_single_pending_refresh_updates_only_the_requested_track(monkeypatch):
     session = object()
     monkeypatch.setattr(jobs, "JOBS", registry)
     monkeypatch.setattr(jobs, "pending_track", lambda pending_id: record if pending_id == 42 else None)
-    monkeypatch.setattr(jobs.engine, "load_config", lambda: {"settings": {}})
+    monkeypatch.setattr(jobs.engine, "load_runtime_settings", lambda: {})
     monkeypatch.setattr(jobs.engine, "tidal_client", lambda interactive=False: session)
     monkeypatch.setattr(jobs, "find_tidal_matches", lambda _engine, actual_session, row: [{"id": "tidal-id", "score": 9}] if actual_session is session and row is record else [])
     monkeypatch.setattr(jobs, "update_pending_track_candidates", lambda pending_id, candidates, status: updated.update(id=pending_id, candidates=candidates, status=status))
@@ -186,8 +186,8 @@ def test_watched_mix_tracklist_search_loads_delay_settings_before_job_runs(monke
     monkeypatch.setattr(jobs, "watched_mix", lambda video_id: {"video_id": video_id})
     monkeypatch.setattr(
         jobs.engine,
-        "load_config",
-        lambda: {"settings": {"tidal_search_delay_seconds": 0}},
+        "load_runtime_settings",
+        lambda: {"tidal_search_delay_seconds": 0},
     )
     monkeypatch.setattr(jobs.engine, "tidal_client", lambda interactive=False: session)
     monkeypatch.setattr(

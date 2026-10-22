@@ -46,7 +46,7 @@ def run_sync() -> JobResponse:
 
 @router.get("/lastfm/status")
 def lastfm_status() -> dict[str, object]:
-    username = str(engine.load_config().get("settings", {}).get("lastfm_username", "") or "").strip()
+    username = str(engine.load_runtime_settings().get("lastfm_username", "") or "").strip()
     return {
         "username": username,
         "api_key_configured": bool(os.getenv("LASTFM_API_KEY", "").strip()),
@@ -56,7 +56,7 @@ def lastfm_status() -> dict[str, object]:
 
 @router.post("/lastfm/import", response_model=JobResponse, status_code=202)
 def run_lastfm_import() -> JobResponse:
-    settings = engine.load_config().get("settings", {})
+    settings = engine.load_runtime_settings()
     username = str(settings.get("lastfm_username", "") or "").strip()
     api_key = os.getenv("LASTFM_API_KEY", "")
 
@@ -75,7 +75,7 @@ def run_lastfm_import() -> JobResponse:
 
 @router.post("/lastfm/reconcile", response_model=JobResponse, status_code=202)
 def run_lastfm_reconcile() -> JobResponse:
-    username = str(engine.load_config().get("settings", {}).get("lastfm_username", "") or "").strip()
+    username = str(engine.load_runtime_settings().get("lastfm_username", "") or "").strip()
 
     def execute(progress):
         progress("Matching cached Last.fm identities to the TIDAL library")
@@ -104,7 +104,7 @@ def refresh_collection(kind: str, collection_id: str, force: bool = False) -> Jo
             tidal = engine.tidal_client(interactive=False)
             return engine.maintain_tidal_liked_tracks(
                 tidal,
-                engine.load_config().get("settings", {}),
+                engine.load_runtime_settings(),
                 progress=progress,
             )
         progress(f"Checking {collection['name']} on TIDAL")
@@ -140,7 +140,7 @@ def import_mix_tidal_setlist(folder_name: str, body: MixTidalImportRequest) -> J
 def search_watched_mix_tracklist(video_id: str, body: TracklistSearchRequest) -> JobResponse:
     if not watched_mix(video_id):
         raise HTTPException(status_code=404, detail="Watched mix was not found")
-    settings = engine.load_config().get("settings", {})
+    settings = engine.load_runtime_settings()
     rows = [dict(row) for row in body.rows]
 
     def execute(progress):
@@ -170,7 +170,7 @@ def search_watched_mix_tracklist(video_id: str, body: TracklistSearchRequest) ->
 
 @router.post("/pending-tracks/refresh", response_model=JobResponse, status_code=202)
 def refresh_pending_tracks() -> JobResponse:
-    settings = engine.load_config().get("settings", {})
+    settings = engine.load_runtime_settings()
 
     def execute(progress):
         rows = pending_tracks()

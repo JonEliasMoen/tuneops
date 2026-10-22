@@ -108,7 +108,7 @@ def _base_rows(kind: str, collection_id: str) -> list[dict[str, Any]]:
     elif kind == "search":
         rows, _ = fetch_library_tracks(limit=limit)
     elif kind == "history":
-        settings = engine.load_config().get("settings", {})
+        settings = engine.load_runtime_settings()
         username = str(settings.get("lastfm_username", "") or "").strip()
         top_tracks = integer_setting(
             settings, "history_top_tracks", 20, minimum=1, maximum=100,
@@ -131,7 +131,7 @@ def _attach_related(rows: list[dict[str, Any]], collection: dict[str, str]) -> N
     watched = tidal_watched_mixes_for_tracks(track_ids)
     artists = tidal_artists_for_tracks(track_ids)
     dimensions = tidal_dimensions_for_tracks(track_ids)
-    username = str(engine.load_config().get("settings", {}).get("lastfm_username", "") or "").strip()
+    username = str(engine.load_runtime_settings().get("lastfm_username", "") or "").strip()
     listening = lastfm_track_stats(username, track_ids) if username else {}
     current_type = collection["type"]
     current_id = collection["id"]
