@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -303,6 +304,47 @@ def test_persisted_job_can_be_polled_from_another_registry(tmp_path):
     assert result is not None
     assert result["state"] == "succeeded"
     assert result["result"] == {"ok": True}
+
+
+def test_persisted_job_poll_uses_read_only_connection(monkeypatch, tmp_path):
+    used_paths = []
+
+    class Cursor:
+        @staticmethod
+        def fetchone():
+            return {
+                "id": "remote-job", "kind": "test", "state": "running",
+                "phase": "", "current": 2, "total": 5, "message": "Working",
+                "result_json": None, "error": "",
+                "created_at": "2026-10-22T12:00:00+00:00",
+                "started_at": "2026-10-22T12:00:01+00:00", "finished_at": None,
+            }
+
+    class Connection:
+        @staticmethod
+        def execute(_sql, parameters):
+            assert parameters == ("remote-job",)
+            return Cursor()
+
+    @contextmanager
+    def readonly(path):
+        used_paths.append(path)
+        yield Connection()
+
+    monkeypatch.setattr(job_registry, "initialize", lambda _path: None)
+    monkeypatch.setattr(job_registry, "connect_readonly", readonly)
+    registry = job_registry.JobRegistry(
+        workers=1, persist=True, database_path=tmp_path / "jobs.sqlite3",
+    )
+    try:
+        result = registry.get("remote-job")
+    finally:
+        registry.shutdown()
+
+    assert used_paths == [tmp_path / "jobs.sqlite3"]
+    assert result is not None
+    assert result["state"] == "running"
+    assert result["message"] == "Working"
 
 
 def test_synchronous_registry_returns_only_after_job_is_terminal(tmp_path):

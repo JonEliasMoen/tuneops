@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from music_library.database import DATABASE_PATH, connect, initialize
+from music_library.database import DATABASE_PATH, connect, connect_readonly, initialize
 
 
 LOGGER = logging.getLogger("musicsync")
@@ -119,7 +119,7 @@ class JobRegistry:
         if not self._persist_enabled:
             return None
         initialize(self._database_path)
-        with connect(self._database_path) as connection:
+        with connect_readonly(self._database_path) as connection:
             row = connection.execute(
                 """
                 SELECT id, kind, state, phase, current, total, message,

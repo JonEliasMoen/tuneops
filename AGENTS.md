@@ -82,6 +82,8 @@ and database work out of React components. Reuse
 existing provider/session functions and SQLite functions instead of duplicating
 authentication or storage logic. Browsing, sorting, filtering, and paging are
 SQLite-only. TIDAL refreshes run as explicit background jobs.
+Persisted job-status polling is a one-statement read and must use
+`connect_readonly()`; progress/result writes retain explicit transactions.
 
 ## Track browser extension contract
 
