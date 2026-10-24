@@ -14,6 +14,7 @@ import pylast
 from music_library.database import (
     lastfm_latest_scrobble,
     lastfm_unmatched_identities,
+    rebuild_lastfm_history_cache,
     set_lastfm_track_matches,
     store_lastfm_scrobbles,
     tidal_artists_for_tracks,
@@ -185,6 +186,7 @@ def reconcile_track_matches(username: str) -> dict[str, int]:
                 }
             )
     updated = set_lastfm_track_matches(username, matches)
+    history_cache = rebuild_lastfm_history_cache(username)
     LOGGER.info(
         "lastfm.match complete username=%r identities_checked=%d "
         "identities_matched=%d scrobbles_matched=%d",
@@ -197,6 +199,8 @@ def reconcile_track_matches(username: str) -> dict[str, int]:
         "identities_checked": len(identities),
         "identities_matched": len(matches),
         "scrobbles_matched": updated,
+        "history_months_cached": history_cache["months"],
+        "history_track_months_cached": history_cache["tracks"],
     }
 
 
@@ -331,6 +335,9 @@ def import_scrobbles(
         raise safe_error from exc
 
     matching = reconcile_track_matches(username)
+    progress(
+        f"History cache ready: {matching['history_months_cached']:,} months"
+    )
     result = {
         "fetched": fetched,
         "added": added,

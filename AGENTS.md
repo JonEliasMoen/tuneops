@@ -300,6 +300,12 @@ Core tables:
 - `lastfm_scrobbles`: immutable listening-history rows keyed by user, timestamp,
   and normalized identity. Preserve timestamps for monthly charts. Matching to
   TIDAL tracks must be conservative: ambiguous identities remain unmatched.
+- `lastfm_monthly_track_counts` and `lastfm_history_cache_state`: rebuildable
+  per-user materialized history aggregates. Raw `lastfm_scrobbles` remain the
+  authority. History navigation and month/year/overall Top X queries use these
+  counts after a successful import or reconciliation, but retain a raw-query
+  fallback for databases that have not built the cache yet. Any operation that
+  changes historical TIDAL matches must rebuild or invalidate this cache.
 - `youtube_mix_analytics`: independent cached owner analytics keyed by local
   My Mix folder. Only show a row when its cached video ID still matches the
   mix's saved YouTube URL; entering My Mixes Overview triggers one refresh.

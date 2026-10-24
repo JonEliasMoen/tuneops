@@ -258,6 +258,10 @@ This explains why navigation can be slower than the page it frames.
 
 - [x] Replace the full configuration read with `load_runtime_settings()`.
 - [x] Combine Last.fm year/month navigation into one grouped database query.
+- [x] Materialize matched Last.fm play counts per user/month/track so History
+  navigation and month/year/overall Top X no longer scan the full scrobble log.
+  Preserve raw-query fallback until the first import/reconciliation builds the
+  new cache.
 - [ ] Build a `navigation_snapshot()` repository operation that pipelines or
   combines playlist, history, setlist, and watched-mix metadata reads.
 - [x] Cache the assembled navigation response in process for 30-60 seconds.

@@ -85,6 +85,9 @@ def run_lastfm_reconcile() -> JobResponse:
     def execute(progress):
         progress("Matching cached Last.fm identities to the TIDAL library")
         result = reconcile_track_matches(username)
+        progress(
+            f"History cache ready: {int(result.get('history_months_cached', 0)):,} months"
+        )
         invalidate_navigation_snapshot()
         return result
 
