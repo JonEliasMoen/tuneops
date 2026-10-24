@@ -75,6 +75,13 @@ def create_app() -> FastAPI:
         try:
             response = await call_next(request)
             response.headers["X-Request-ID"] = request_id
+            # A deployment replaces content-hashed Vite assets. The SPA shell
+            # must therefore be revalidated on every document load, otherwise
+            # an old cached index can reference asset hashes that no longer
+            # exist on the current Vercel deployment.
+            content_type = response.headers.get("content-type", "")
+            if content_type.lower().startswith("text/html"):
+                response.headers["Cache-Control"] = "no-store"
             if not os.getenv("VERCEL"):
                 response.headers["Server-Timing"] = (
                     f"db;dur={database_metrics.database_ms:.1f}"

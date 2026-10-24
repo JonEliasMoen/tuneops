@@ -23,6 +23,8 @@ def test_built_frontend_serves_hashed_assets_and_spa_routes(monkeypatch):
     assert "javascript" in asset.headers["content-type"]
     assert route.status_code == 200
     assert "<div id=\"root\"></div>" in route.text
+    assert route.headers["cache-control"] == "no-store"
+    assert asset.headers.get("cache-control") != "no-store"
 
 
 def test_info_and_unknown_api_route_use_the_json_api_boundary():
