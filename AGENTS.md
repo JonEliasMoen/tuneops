@@ -261,6 +261,7 @@ the user exactly what will change and wait for confirmation that the web app
 and startup sync are stopped. Migrations against new temporary test databases
 do not require this coordination.
 
+
 Core tables:
 
 - `app_users`, `external_identities`, `provider_connections`, and
