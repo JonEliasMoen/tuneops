@@ -361,3 +361,22 @@ def test_synchronous_registry_returns_only_after_job_is_terminal(tmp_path):
     assert result is not None
     assert result["state"] == "succeeded"
     assert result["result"] == {"done": True}
+
+
+def test_progress_persistence_is_throttled_but_terminal_state_is_saved(monkeypatch):
+    registry = job_registry.JobRegistry(workers=1, persist=True)
+    job = job_registry.Job(id="throttled", kind="import", created_at="now")
+    registry._jobs[job.id] = job
+    registry._active_kinds[job.kind] = job.id
+    persisted = []
+    monkeypatch.setattr(registry, "_persist", lambda current: persisted.append((current.state, current.current)))
+    monkeypatch.setattr(job_registry.time, "monotonic", lambda: 10.0)
+    try:
+        registry._run(
+            job.id,
+            lambda progress: [progress(f"Step {index}") for index in range(5)],
+        )
+    finally:
+        registry.shutdown()
+
+    assert persisted == [("running", 0), ("succeeded", 5)]

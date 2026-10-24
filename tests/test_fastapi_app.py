@@ -33,6 +33,7 @@ def test_info_and_unknown_api_route_use_the_json_api_boundary():
 
     assert info.status_code == 200
     assert info.json()["ui"] == "react"
+    assert info.headers["server-timing"].startswith("db;dur=")
     assert missing.status_code == 404
     body = missing.json()["error"]
     assert body["code"] == "not_found"

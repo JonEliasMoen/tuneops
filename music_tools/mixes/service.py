@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+import time
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
@@ -14,6 +16,7 @@ import requests
 
 from music_library.database import (
     setlist_metadata,
+    setlist_metadata_for,
     store_tidal_setlist,
     tidal_track_record,
 )
@@ -22,6 +25,20 @@ from music_library.database import (
 DEFAULT_MIX_ROOT = Path.home() / "Documents" / "djstuff"
 MIX_ROOT = Path(os.getenv("MUSICSYNC_MIX_ROOT", DEFAULT_MIX_ROOT)).resolve()
 EXCLUDED_FOLDERS = {"vis1tracktimer", "visv1tracktimer"}
+MIX_SNAPSHOT_SECONDS = 30.0
+
+
+@dataclass(frozen=True)
+class _MixFiles:
+    folder_name: str
+    positions: str
+    cover_path: Path | None
+    audio_path: Path | None
+
+
+_snapshot_lock = threading.Lock()
+_snapshot_at = 0.0
+_snapshot_files: tuple[_MixFiles, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -151,66 +168,120 @@ def _is_excluded(name: str) -> bool:
     return name.casefold() in EXCLUDED_FOLDERS
 
 
-def discover_mixes() -> list[Mix]:
-    """Discover immediate child folders without walking arbitrary paths."""
-    if not MIX_ROOT.is_dir():
-        return []
-    saved_metadata = setlist_metadata()
-    mixes: list[Mix] = []
-    for folder in sorted(MIX_ROOT.iterdir(), key=lambda item: item.name.casefold()):
-        if not folder.is_dir() or _is_excluded(folder.name):
-            continue
-        positions_path = folder / "positions.txt"
-        cover_path = folder / "cover.png"
-        audio_path = folder / f"{folder.name}yt.wav"
-        try:
-            positions = positions_path.read_text(encoding="utf-8-sig") if positions_path.is_file() else ""
-        except UnicodeDecodeError:
-            positions = positions_path.read_text(encoding="cp1252", errors="replace")
-        metadata = saved_metadata.get(folder.name, {})
-        saved_youtube_url = str(metadata.get("youtube_url", "") or "")
-        analytics_current = bool(
-            youtube_video_id(saved_youtube_url)
-            and youtube_video_id(saved_youtube_url) == metadata.get("youtube_video_id")
-        )
-        mixes.append(
-            Mix(
-                folder_name=folder.name,
-                positions=positions,
-                cover_path=cover_path.resolve() if cover_path.is_file() else None,
-                audio_path=audio_path.resolve() if audio_path.is_file() else None,
-                youtube_url=saved_youtube_url,
-                tidal_url=metadata.get("tidal_url", ""),
-                tidal_playlist_id=metadata.get("tidal_playlist_id", ""),
-                tidal_playlist_name=metadata.get("tidal_playlist_name", ""),
-                updated_at=str(metadata.get("updated_at", "") or ""),
-                track_count=int(metadata.get("track_count", 0) or 0),
-                youtube_views=metadata.get("youtube_views") if analytics_current else None,
-                youtube_thumbnail_impressions=metadata.get("youtube_thumbnail_impressions") if analytics_current else None,
-                youtube_thumbnail_ctr=metadata.get("youtube_thumbnail_ctr") if analytics_current else None,
-                youtube_watch_minutes=metadata.get("youtube_watch_minutes") if analytics_current else None,
-                youtube_average_view_duration=metadata.get("youtube_average_view_duration") if analytics_current else None,
-                youtube_average_view_percentage=metadata.get("youtube_average_view_percentage") if analytics_current else None,
-                youtube_likes=metadata.get("youtube_likes") if analytics_current else None,
-                youtube_comments=metadata.get("youtube_comments") if analytics_current else None,
-                youtube_subscribers_gained=metadata.get("youtube_subscribers_gained") if analytics_current else None,
-                youtube_analytics_fetched_at=str(metadata.get("youtube_analytics_fetched_at", "") or "") if analytics_current else "",
-            )
-        )
-    return mixes
+def _read_positions(folder: Path) -> str:
+    positions_path = folder / "positions.txt"
+    if not positions_path.is_file():
+        return ""
+    try:
+        return positions_path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        return positions_path.read_text(encoding="cp1252", errors="replace")
 
 
-def cover_for(folder_name: str) -> Path | None:
-    """Resolve a cover only for a currently discovered mix."""
-    return next(
-        (mix.cover_path for mix in discover_mixes() if mix.folder_name == folder_name),
-        None,
+def _safe_mix_folder(folder_name: str) -> Path | None:
+    """Resolve one immediate mix child without allowing path traversal."""
+    name = str(folder_name or "")
+    if not name or _is_excluded(name) or Path(name).name != name:
+        return None
+    candidate = (MIX_ROOT / name).resolve()
+    if candidate.parent != MIX_ROOT or not candidate.is_dir():
+        return None
+    return candidate
+
+
+def _files_for(folder: Path) -> _MixFiles:
+    cover_path = folder / "cover.png"
+    audio_path = folder / f"{folder.name}yt.wav"
+    return _MixFiles(
+        folder_name=folder.name,
+        positions=_read_positions(folder),
+        cover_path=cover_path.resolve() if cover_path.is_file() else None,
+        audio_path=audio_path.resolve() if audio_path.is_file() else None,
     )
 
 
+def invalidate_mix_snapshot() -> None:
+    """Discard the short-lived local folder snapshot after a relevant change."""
+    global _snapshot_at, _snapshot_files
+    with _snapshot_lock:
+        _snapshot_at = 0.0
+        _snapshot_files = ()
+
+
+def _mix_files_snapshot() -> tuple[_MixFiles, ...]:
+    global _snapshot_at, _snapshot_files
+    now = time.monotonic()
+    with _snapshot_lock:
+        if _snapshot_at and now - _snapshot_at < MIX_SNAPSHOT_SECONDS:
+            return _snapshot_files
+    if not MIX_ROOT.is_dir():
+        files: tuple[_MixFiles, ...] = ()
+    else:
+        files = tuple(
+            _files_for(folder)
+            for folder in sorted(MIX_ROOT.iterdir(), key=lambda item: item.name.casefold())
+            if folder.is_dir() and not _is_excluded(folder.name)
+        )
+    with _snapshot_lock:
+        _snapshot_files = files
+        _snapshot_at = now
+    return files
+
+
+def _mix_from(files: _MixFiles, metadata: dict[str, Any]) -> Mix:
+    saved_youtube_url = str(metadata.get("youtube_url", "") or "")
+    analytics_current = bool(
+        youtube_video_id(saved_youtube_url)
+        and youtube_video_id(saved_youtube_url) == metadata.get("youtube_video_id")
+    )
+    return Mix(
+        folder_name=files.folder_name,
+        positions=files.positions,
+        cover_path=files.cover_path,
+        audio_path=files.audio_path,
+        youtube_url=saved_youtube_url,
+        tidal_url=str(metadata.get("tidal_url", "") or ""),
+        tidal_playlist_id=str(metadata.get("tidal_playlist_id", "") or ""),
+        tidal_playlist_name=str(metadata.get("tidal_playlist_name", "") or ""),
+        updated_at=str(metadata.get("updated_at", "") or ""),
+        track_count=int(metadata.get("track_count", 0) or 0),
+        youtube_views=metadata.get("youtube_views") if analytics_current else None,
+        youtube_thumbnail_impressions=metadata.get("youtube_thumbnail_impressions") if analytics_current else None,
+        youtube_thumbnail_ctr=metadata.get("youtube_thumbnail_ctr") if analytics_current else None,
+        youtube_watch_minutes=metadata.get("youtube_watch_minutes") if analytics_current else None,
+        youtube_average_view_duration=metadata.get("youtube_average_view_duration") if analytics_current else None,
+        youtube_average_view_percentage=metadata.get("youtube_average_view_percentage") if analytics_current else None,
+        youtube_likes=metadata.get("youtube_likes") if analytics_current else None,
+        youtube_comments=metadata.get("youtube_comments") if analytics_current else None,
+        youtube_subscribers_gained=metadata.get("youtube_subscribers_gained") if analytics_current else None,
+        youtube_analytics_fetched_at=str(metadata.get("youtube_analytics_fetched_at", "") or "") if analytics_current else "",
+    )
+
+
+def discover_mixes() -> list[Mix]:
+    """Discover immediate child folders without walking arbitrary paths."""
+    saved_metadata = setlist_metadata()
+    return [
+        _mix_from(files, saved_metadata.get(files.folder_name, {}))
+        for files in _mix_files_snapshot()
+    ]
+
+
+def cover_for(folder_name: str) -> Path | None:
+    """Resolve one mix cover directly without scanning every folder."""
+    folder = _safe_mix_folder(folder_name)
+    if folder is None:
+        return None
+    cover = folder / "cover.png"
+    return cover.resolve() if cover.is_file() else None
+
+
 def mix_for(folder_name: str) -> Mix | None:
-    """Return one discovered mix by its exact folder name."""
-    return next((mix for mix in discover_mixes() if mix.folder_name == folder_name), None)
+    """Return one exact mix without loading metadata or files for all mixes."""
+    folder = _safe_mix_folder(folder_name)
+    if folder is None:
+        return None
+    return _mix_from(_files_for(folder), setlist_metadata_for(folder.name))
 
 
 def track_positions(positions_text: str) -> list[str]:

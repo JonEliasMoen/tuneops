@@ -515,6 +515,101 @@ def _store_track_artists(
         )
 
 
+_TRACK_UPSERT_SQL = """
+    INSERT INTO tracks(
+        provider, provider_track_id, title, artist, remix, album, album_art_url,
+        duration_seconds, bpm, musical_key, key_scale, release_year,
+        isrc, refreshed_at
+    ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(provider, provider_track_id) DO UPDATE SET
+        title=excluded.title, artist=excluded.artist, remix=excluded.remix,
+        album=excluded.album, album_art_url=excluded.album_art_url,
+        duration_seconds=excluded.duration_seconds, bpm=excluded.bpm,
+        musical_key=excluded.musical_key, key_scale=excluded.key_scale,
+        release_year=excluded.release_year, isrc=excluded.isrc,
+        refreshed_at=excluded.refreshed_at
+"""
+
+_ARTIST_UPSERT_SQL = """
+    INSERT INTO artists(
+        provider, artist_key, provider_artist_id, name, normalized_name
+    ) VALUES('tidal', ?, ?, ?, ?)
+    ON CONFLICT(provider, artist_key) DO UPDATE SET
+        provider_artist_id=CASE
+            WHEN excluded.provider_artist_id != '' THEN excluded.provider_artist_id
+            ELSE artists.provider_artist_id
+        END,
+        name=excluded.name,
+        normalized_name=excluded.normalized_name
+"""
+
+_WRITE_BATCH_SIZE = 250
+
+
+def _chunks(rows: list[Any], size: int = _WRITE_BATCH_SIZE) -> Iterator[list[Any]]:
+    for start in range(0, len(rows), size):
+        yield rows[start:start + size]
+
+
+def _executemany_chunked(connection: Any, sql: str, rows: list[tuple[Any, ...]]) -> None:
+    for chunk in _chunks(rows):
+        connection.executemany(sql, chunk)
+
+
+def _store_tracks_and_artists(
+    connection: Any, records: list[dict[str, Any]], refreshed_at: str,
+) -> list[str]:
+    """Upsert canonical tracks and replace artist credits in bounded batches."""
+    accepted: dict[str, dict[str, Any]] = {}
+    for record in records:
+        track_id = str(record.get("id") or "")
+        if track_id:
+            accepted[track_id] = record
+    track_rows = [
+        (
+            track_id, record.get("title", ""), record.get("artist", ""),
+            record.get("remix", ""), record.get("album", ""),
+            record.get("album_art_url", ""), record.get("duration_seconds"),
+            record.get("bpm"), record.get("musical_key", ""),
+            record.get("key_scale", ""), record.get("year"),
+            record.get("isrc", ""), refreshed_at,
+        )
+        for track_id, record in accepted.items()
+    ]
+    _executemany_chunked(connection, _TRACK_UPSERT_SQL, track_rows)
+    _executemany_chunked(
+        connection,
+        "DELETE FROM track_artists WHERE provider='tidal' AND provider_track_id=?",
+        [(track_id,) for track_id in accepted],
+    )
+    artists: dict[str, tuple[str, str, str, str]] = {}
+    relationships: list[tuple[str, str, int]] = []
+    for track_id, record in accepted.items():
+        seen: set[str] = set()
+        for position, artist in enumerate(_record_artists(record)):
+            name = artist["name"]
+            key = _artist_key(name)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            candidate = (key, artist["id"], name, key)
+            existing = artists.get(key)
+            if existing is None or (not existing[1] and candidate[1]):
+                artists[key] = candidate
+            relationships.append((track_id, key, position))
+    _executemany_chunked(connection, _ARTIST_UPSERT_SQL, list(artists.values()))
+    _executemany_chunked(
+        connection,
+        """
+        INSERT INTO track_artists(
+            provider, provider_track_id, artist_key, position
+        ) VALUES('tidal', ?, ?, ?)
+        """,
+        relationships,
+    )
+    return list(accepted)
+
+
 @contextmanager
 def connect(path: Path = DATABASE_PATH) -> Iterator[Any]:
     remote = database_backend() == "turso" and Path(path) == DATABASE_PATH
@@ -773,35 +868,61 @@ def orphaned_tidal_tracks(
     initialize(path)
     limit = max(1, min(int(limit), 1000))
     offset = max(0, int(offset))
-    with connect(path) as connection:
-        total = int(connection.execute(
-            f"SELECT COUNT(*) FROM tracks t WHERE {_ORPHANED_TIDAL_TRACK}"
-        ).fetchone()[0])
-        rows = connection.execute(
+    with connect_readonly(path) as connection:
+        result = connection.execute(
             f"""
-            SELECT t.provider_track_id AS id, t.title, t.artist, t.album,
-                   COALESCE(m.star_rating, 0) AS rating,
-                   (SELECT COUNT(*) FROM track_tags tt
-                    WHERE tt.provider=t.provider
-                      AND tt.provider_track_id=t.provider_track_id) AS tag_count,
-                   (SELECT COUNT(*) FROM track_dimension_values td
-                    WHERE td.provider=t.provider
-                      AND td.provider_track_id=t.provider_track_id) AS dimension_count,
-                   (SELECT COUNT(*) FROM lastfm_scrobbles ls
-                    WHERE ls.tidal_track_id=t.provider_track_id) AS lastfm_plays
-            FROM tracks t
-            LEFT JOIN track_user_metadata m
-              ON m.provider=t.provider
-             AND m.provider_track_id=t.provider_track_id
-            WHERE {_ORPHANED_TIDAL_TRACK}
-            ORDER BY t.artist COLLATE NOCASE, t.title COLLATE NOCASE,
-                     t.provider_track_id
-            LIMIT ? OFFSET ?
+            WITH tag_counts AS (
+                SELECT provider, provider_track_id, COUNT(*) AS tag_count
+                FROM track_tags GROUP BY provider, provider_track_id
+            ), dimension_counts AS (
+                SELECT provider, provider_track_id, COUNT(*) AS dimension_count
+                FROM track_dimension_values GROUP BY provider, provider_track_id
+            ), play_counts AS (
+                SELECT tidal_track_id, COUNT(*) AS lastfm_plays
+                FROM lastfm_scrobbles
+                WHERE tidal_track_id IS NOT NULL GROUP BY tidal_track_id
+            ), filtered AS (
+                SELECT t.provider_track_id AS id, t.title, t.artist, t.album,
+                       COALESCE(m.star_rating, 0) AS rating,
+                       COALESCE(tags.tag_count, 0) AS tag_count,
+                       COALESCE(dimensions.dimension_count, 0) AS dimension_count,
+                       COALESCE(plays.lastfm_plays, 0) AS lastfm_plays
+                FROM tracks t
+                LEFT JOIN track_user_metadata m
+                  ON m.provider=t.provider
+                 AND m.provider_track_id=t.provider_track_id
+                LEFT JOIN tag_counts tags
+                  ON tags.provider=t.provider
+                 AND tags.provider_track_id=t.provider_track_id
+                LEFT JOIN dimension_counts dimensions
+                  ON dimensions.provider=t.provider
+                 AND dimensions.provider_track_id=t.provider_track_id
+                LEFT JOIN play_counts plays
+                  ON plays.tidal_track_id=t.provider_track_id
+                WHERE {_ORPHANED_TIDAL_TRACK}
+            ), counted AS (
+                SELECT filtered.*, COUNT(*) OVER() AS total FROM filtered
+            ), page AS (
+                SELECT * FROM counted
+                ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE, id
+                LIMIT ? OFFSET ?
+            )
+            SELECT page.*, 0 AS sentinel FROM page
+            UNION ALL
+            SELECT NULL, NULL, NULL, NULL, 0, 0, 0, 0,
+                   (SELECT COUNT(*) FROM filtered), 1
+            WHERE NOT EXISTS (SELECT 1 FROM page)
+            ORDER BY sentinel
             """,
             (limit, offset),
         ).fetchall()
+    total = int(result[0]["total"]) if result else 0
+    rows = [row for row in result if not row["sentinel"]]
     return {
-        "items": [dict(row) for row in rows],
+        "items": [
+            {key: value for key, value in dict(row).items() if key not in {"total", "sentinel"}}
+            for row in rows
+        ],
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -905,7 +1026,7 @@ def event_links(
 ) -> dict[str, str]:
     """Return the user-owned links associated with one indexed TIDAL event."""
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         row = connection.execute(
             """
             SELECT youtube_url, concert_archives_url, updated_at
@@ -919,6 +1040,31 @@ def event_links(
         "concert_archives_url": "",
         "updated_at": "",
     }
+
+
+def tidal_event_with_links(
+    playlist_id: str, path: Path = DATABASE_PATH
+) -> dict[str, str] | None:
+    """Read one indexed event and its optional links in one statement."""
+    initialize(path)
+    with connect_readonly(path) as connection:
+        row = connection.execute(
+            """
+            SELECT p.name AS event_name,
+                   COALESCE(el.youtube_url, '') AS youtube_url,
+                   COALESCE(el.concert_archives_url, '') AS concert_archives_url,
+                   COALESCE(el.updated_at, '') AS updated_at
+            FROM playlists p
+            LEFT JOIN event_links el
+              ON el.provider=p.provider
+             AND el.provider_playlist_id=p.provider_playlist_id
+            WHERE p.provider='tidal'
+              AND p.provider_playlist_id=?
+              AND p.collection_type='event'
+            """,
+            (str(playlist_id),),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def save_event_links(
@@ -949,12 +1095,55 @@ def save_event_links(
         )
 
 
+def save_tidal_event_links(
+    playlist_id: str,
+    youtube_url: str,
+    concert_archives_url: str,
+    path: Path = DATABASE_PATH,
+) -> dict[str, str] | None:
+    """Validate one indexed event and save its links in one transaction."""
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    youtube = str(youtube_url or "").strip()
+    concert = str(concert_archives_url or "").strip()
+    with connect(path) as connection:
+        event = connection.execute(
+            """
+            SELECT name FROM playlists
+            WHERE provider='tidal' AND provider_playlist_id=?
+              AND collection_type='event'
+            """,
+            (str(playlist_id),),
+        ).fetchone()
+        if event is None:
+            return None
+        connection.execute(
+            """
+            INSERT INTO event_links(
+                provider, provider_playlist_id, youtube_url,
+                concert_archives_url, updated_at
+            ) VALUES('tidal', ?, ?, ?, ?)
+            ON CONFLICT(provider, provider_playlist_id) DO UPDATE SET
+                youtube_url=excluded.youtube_url,
+                concert_archives_url=excluded.concert_archives_url,
+                updated_at=excluded.updated_at
+            """,
+            (str(playlist_id), youtube, concert, now),
+        )
+    return {
+        "event_name": str(event["name"] or playlist_id),
+        "youtube_url": youtube,
+        "concert_archives_url": concert,
+        "updated_at": now,
+    }
+
+
 def lastfm_latest_scrobble(
     username: str, path: Path = DATABASE_PATH
 ) -> int | None:
     """Return the newest imported Last.fm play timestamp for one user."""
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         value = connection.execute(
             "SELECT MAX(played_at) FROM lastfm_scrobbles WHERE username=?",
             (str(username).casefold(),),
@@ -1005,7 +1194,7 @@ def lastfm_unmatched_identities(
 ) -> list[dict[str, str]]:
     """Return distinct imported identities that still lack a TIDAL match."""
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT normalized_artist, normalized_title,
@@ -1085,7 +1274,7 @@ def lastfm_track_stats(
         return {}
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             f"""
             SELECT tidal_track_id, COUNT(*) AS play_count,
@@ -1114,7 +1303,7 @@ def lastfm_history_months(
     if not str(username or "").strip():
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT strftime('%Y', played_at, 'unixepoch', 'localtime') AS year,
@@ -1141,7 +1330,7 @@ def lastfm_history_years(
     if not str(username or "").strip():
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT strftime('%Y', played_at, 'unixepoch', 'localtime') AS year,
@@ -1221,7 +1410,7 @@ def lastfm_month_top_tracks(
     if not str(username or "").strip() or month < 1 or month > 12:
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix,
@@ -1253,7 +1442,7 @@ def lastfm_year_top_tracks(
     if not str(username or "").strip():
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix,
@@ -1283,7 +1472,7 @@ def lastfm_all_time_top_tracks(
     if not str(username or "").strip():
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix,
@@ -1310,7 +1499,7 @@ def lastfm_import_summary(
     if not str(username or "").strip():
         return {"scrobbles": 0, "matched": 0, "latest": None}
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         row = connection.execute(
             """
             SELECT COUNT(*) AS scrobbles,
@@ -1330,7 +1519,7 @@ def lastfm_import_summary(
 def setlist_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, Any]]:
     """Return all persisted user-owned metadata for local setlists."""
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT s.folder_name, s.youtube_url, s.tidal_url,
@@ -1387,6 +1576,69 @@ def setlist_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, Any]]:
     }
 
 
+def setlist_metadata_for(
+    folder_name: str, path: Path = DATABASE_PATH
+) -> dict[str, Any]:
+    """Return persisted metadata for one My Mix without loading all mixes."""
+    initialize(path)
+    with connect_readonly(path) as connection:
+        row = connection.execute(
+            """
+            SELECT s.folder_name, s.youtube_url, s.tidal_url,
+                   s.tidal_playlist_id, s.tidal_playlist_name, s.updated_at,
+                   COUNT(st.provider_track_id) AS track_count,
+                   ya.video_id, ya.views, ya.estimated_minutes_watched,
+                   ya.average_view_duration, ya.average_view_percentage,
+                   ya.likes, ya.comments, ya.subscribers_gained,
+                   ya.fetched_at AS analytics_fetched_at,
+                   yr.thumbnail_impressions, yr.thumbnail_ctr
+            FROM setlists AS s
+            LEFT JOIN setlist_tracks AS st ON st.folder_name=s.folder_name
+            LEFT JOIN youtube_mix_analytics AS ya ON ya.folder_name=s.folder_name
+            LEFT JOIN (
+                SELECT video_id,
+                       SUM(thumbnail_impressions) AS thumbnail_impressions,
+                       CASE WHEN SUM(thumbnail_impressions) > 0
+                            THEN 100.0 * SUM(thumbnail_impressions * thumbnail_ctr)
+                                 / SUM(thumbnail_impressions)
+                            ELSE NULL END AS thumbnail_ctr
+                FROM youtube_video_reach_daily
+                GROUP BY video_id
+            ) AS yr ON yr.video_id=ya.video_id
+            WHERE s.folder_name=?
+            GROUP BY s.folder_name, s.youtube_url, s.tidal_url,
+                     s.tidal_playlist_id, s.tidal_playlist_name, s.updated_at,
+                     ya.video_id, ya.views, ya.estimated_minutes_watched,
+                     ya.average_view_duration, ya.average_view_percentage,
+                     ya.likes, ya.comments, ya.subscribers_gained, ya.fetched_at,
+                     yr.thumbnail_impressions, yr.thumbnail_ctr
+            """,
+            (str(folder_name),),
+        ).fetchone()
+    if row is None:
+        return {}
+    video_id = str(row["video_id"] or "")
+    return {
+        "youtube_url": str(row["youtube_url"] or ""),
+        "tidal_url": str(row["tidal_url"] or ""),
+        "tidal_playlist_id": str(row["tidal_playlist_id"] or ""),
+        "tidal_playlist_name": str(row["tidal_playlist_name"] or ""),
+        "updated_at": str(row["updated_at"] or ""),
+        "track_count": int(row["track_count"] or 0),
+        "youtube_video_id": video_id,
+        "youtube_views": int(row["views"] or 0) if video_id else None,
+        "youtube_thumbnail_impressions": int(row["thumbnail_impressions"] or 0) if row["thumbnail_impressions"] is not None else None,
+        "youtube_thumbnail_ctr": float(row["thumbnail_ctr"]) if row["thumbnail_ctr"] is not None else None,
+        "youtube_watch_minutes": float(row["estimated_minutes_watched"] or 0) if video_id else None,
+        "youtube_average_view_duration": float(row["average_view_duration"] or 0) if video_id else None,
+        "youtube_average_view_percentage": float(row["average_view_percentage"] or 0) if video_id else None,
+        "youtube_likes": int(row["likes"] or 0) if video_id else None,
+        "youtube_comments": int(row["comments"] or 0) if video_id else None,
+        "youtube_subscribers_gained": int(row["subscribers_gained"] or 0) if video_id else None,
+        "youtube_analytics_fetched_at": str(row["analytics_fetched_at"] or ""),
+    }
+
+
 def store_youtube_mix_analytics(
     records: list[dict[str, Any]], path: Path = DATABASE_PATH,
 ) -> int:
@@ -1438,7 +1690,7 @@ def store_youtube_mix_analytics(
 def imported_youtube_reach_report_ids(path: Path = DATABASE_PATH) -> set[str]:
     """Return bulk reach report IDs that have already been cached."""
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             "SELECT report_id FROM youtube_reach_report_imports"
         ).fetchall()
@@ -1521,7 +1773,7 @@ def store_youtube_video_metadata(
 def youtube_video_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, str]]:
     """Return cached YouTube metadata keyed by video ID."""
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             "SELECT video_id, title, upload_date, fetched_at FROM youtube_video_metadata"
         ).fetchall()
@@ -1531,7 +1783,7 @@ def youtube_video_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, st
 def watched_mixes(path: Path = DATABASE_PATH) -> list[dict[str, Any]]:
     """Return manually saved YouTube mixes, newest first."""
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT wm.video_id, wm.youtube_url, wm.title, wm.channel_name,
@@ -1546,7 +1798,7 @@ def watched_mixes(path: Path = DATABASE_PATH) -> list[dict[str, Any]]:
 def watched_mix(video_id: str, path: Path = DATABASE_PATH) -> dict[str, Any] | None:
     """Return one saved YouTube mix."""
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         row = connection.execute(
             """
             SELECT wm.video_id, wm.youtube_url, wm.title, wm.channel_name,
@@ -1718,7 +1970,7 @@ def pending_track(pending_id: int, path: Path = DATABASE_PATH) -> dict[str, Any]
     if not _database_available(path):
         return None
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         row = connection.execute(
             """
             SELECT pt.*, wm.title AS mix_title, wm.channel_name
@@ -1736,7 +1988,7 @@ def pending_tracks(path: Path = DATABASE_PATH) -> list[dict[str, Any]]:
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT pt.*, wm.title AS mix_title, wm.channel_name
@@ -1806,7 +2058,7 @@ def tidal_watched_mix_tracks_page(
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
@@ -1835,7 +2087,7 @@ def tidal_watched_mixes_for_tracks(
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             f"""
             SELECT wmt.provider_track_id AS track_id, wm.video_id AS id,
@@ -1874,6 +2126,36 @@ def save_setlist_youtube_url(
                 updated_at=excluded.updated_at
             """,
             (name, str(youtube_url or "").strip(), datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def save_setlist_urls(
+    folder_name: str,
+    youtube_url: str,
+    tidal_url: str,
+    path: Path = DATABASE_PATH,
+) -> None:
+    """Persist both editable My Mix URLs in one transaction."""
+    name = str(folder_name).strip()
+    if not name:
+        raise ValueError("Mix folder name cannot be empty")
+    initialize(path)
+    with connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO setlists(folder_name, youtube_url, tidal_url, updated_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(folder_name) DO UPDATE SET
+                youtube_url=excluded.youtube_url,
+                tidal_url=excluded.tidal_url,
+                updated_at=excluded.updated_at
+            """,
+            (
+                name,
+                str(youtube_url or "").strip(),
+                str(tidal_url or "").strip(),
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
 
@@ -1984,28 +2266,48 @@ def cached_tidal_playlist(
     if version is None or not _database_available(path):
         return None
     initialize(path)
-    with connect(path) as connection:
-        playlist = connection.execute(
-            "SELECT source_last_updated FROM playlists "
-            "WHERE provider = 'tidal' AND provider_playlist_id = ?",
-            (str(playlist_id),),
-        ).fetchone()
-        if playlist is None or playlist["source_last_updated"] != version:
-            return None
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
                    t.duration_seconds, t.bpm, t.musical_key, t.key_scale,
-                   t.release_year AS year, t.isrc, t.album_art_url, pt.date_added
-            FROM playlist_tracks pt
+                   t.release_year AS year, t.isrc, t.album_art_url, pt.date_added,
+                   pt.position AS source_order, 0 AS sentinel
+            FROM playlists p
+            JOIN playlist_tracks pt
+              ON pt.provider=p.provider
+             AND pt.provider_playlist_id=p.provider_playlist_id
             JOIN tracks t
-              ON t.provider = pt.provider AND t.provider_track_id = pt.provider_track_id
-            WHERE pt.provider = 'tidal' AND pt.provider_playlist_id = ?
-            ORDER BY pt.position
+              ON t.provider=pt.provider AND t.provider_track_id=pt.provider_track_id
+            WHERE p.provider='tidal' AND p.provider_playlist_id=?
+              AND p.source_last_updated=?
+            UNION ALL
+            SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                   NULL, NULL, NULL, NULL, NULL, 1
+            WHERE EXISTS (
+                SELECT 1 FROM playlists p
+                WHERE p.provider='tidal' AND p.provider_playlist_id=?
+                  AND p.source_last_updated=?
+            ) AND NOT EXISTS (
+                SELECT 1 FROM playlist_tracks pt
+                WHERE pt.provider='tidal' AND pt.provider_playlist_id=?
+            )
+            ORDER BY sentinel, source_order
             """,
-            (str(playlist_id),),
+            (
+                str(playlist_id), version,
+                str(playlist_id), version, str(playlist_id),
+            ),
         ).fetchall()
-        return [dict(row) for row in rows]
+    if not rows:
+        return None
+    return [
+        {
+            key: value for key, value in dict(row).items()
+            if key not in {"sentinel", "source_order"}
+        }
+        for row in rows if not row["sentinel"]
+    ]
 
 
 def store_tidal_playlist(
@@ -2041,40 +2343,22 @@ def store_tidal_playlist(
             "DELETE FROM playlist_tracks WHERE provider='tidal' AND provider_playlist_id=?",
             (playlist_id,),
         )
-        for position, record in enumerate(records):
-            track_id = str(record.get("id", ""))
-            if not track_id:
-                continue
-            connection.execute(
-                """
-                INSERT INTO tracks(
-                    provider, provider_track_id, title, artist, remix, album, album_art_url,
-                    duration_seconds, bpm, musical_key, key_scale, release_year,
-                    isrc, refreshed_at
-                ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(provider, provider_track_id) DO UPDATE SET
-                    title=excluded.title, artist=excluded.artist, remix=excluded.remix,
-                    album=excluded.album, album_art_url=excluded.album_art_url,
-                    duration_seconds=excluded.duration_seconds,
-                    bpm=excluded.bpm, musical_key=excluded.musical_key,
-                    key_scale=excluded.key_scale, release_year=excluded.release_year,
-                    isrc=excluded.isrc, refreshed_at=excluded.refreshed_at
-                """,
-                (
-                    track_id, record.get("title", ""), record.get("artist", ""),
-                    record.get("remix", ""), record.get("album", ""),
-                    record.get("album_art_url", ""),
-                    record.get("duration_seconds"), record.get("bpm"),
-                    record.get("musical_key", ""), record.get("key_scale", ""),
-                    record.get("year"), record.get("isrc", ""), now,
-                ),
-            )
-            _store_track_artists(connection, track_id, record)
-            connection.execute(
-                "INSERT OR IGNORE INTO playlist_tracks(provider, provider_playlist_id, position, provider_track_id, date_added) "
-                "VALUES('tidal', ?, ?, ?, ?)",
-                (playlist_id, position, track_id, record.get("date_added")),
-            )
+        _store_tracks_and_artists(connection, records, now)
+        memberships = [
+            (playlist_id, position, track_id, record.get("date_added"))
+            for position, record in enumerate(records)
+            if (track_id := str(record.get("id") or ""))
+        ]
+        _executemany_chunked(
+            connection,
+            """
+            INSERT OR IGNORE INTO playlist_tracks(
+                provider, provider_playlist_id, position,
+                provider_track_id, date_added
+            ) VALUES('tidal', ?, ?, ?, ?)
+            """,
+            memberships,
+        )
 
 
 def store_tidal_setlist(
@@ -2110,50 +2394,28 @@ def store_tidal_setlist(
             (name, str(tidal_url), playlist_id, playlist_name, now),
         )
         connection.execute("DELETE FROM setlist_tracks WHERE folder_name=?", (name,))
-        for position, record in enumerate(records):
-            track_id = str(record.get("id", ""))
-            if not track_id:
-                continue
-            connection.execute(
-                """
-                INSERT INTO tracks(
-                    provider, provider_track_id, title, artist, remix, album, album_art_url,
-                    duration_seconds, bpm, musical_key, key_scale, release_year,
-                    isrc, refreshed_at
-                ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(provider, provider_track_id) DO UPDATE SET
-                    title=excluded.title, artist=excluded.artist, remix=excluded.remix,
-                    album=excluded.album, album_art_url=excluded.album_art_url,
-                    duration_seconds=excluded.duration_seconds,
-                    bpm=excluded.bpm, musical_key=excluded.musical_key,
-                    key_scale=excluded.key_scale, release_year=excluded.release_year,
-                    isrc=excluded.isrc, refreshed_at=excluded.refreshed_at
-                """,
-                (
-                    track_id, record.get("title", ""), record.get("artist", ""),
-                    record.get("remix", ""), record.get("album", ""),
-                    record.get("album_art_url", ""), record.get("duration_seconds"),
-                    record.get("bpm"), record.get("musical_key", ""),
-                    record.get("key_scale", ""), record.get("year"),
-                    record.get("isrc", ""), now,
-                ),
+        _store_tracks_and_artists(connection, records, now)
+        memberships = [
+            (
+                name,
+                position,
+                track_id,
+                mix_positions[position] if position < len(mix_positions) else "",
+                record.get("date_added"),
             )
-            _store_track_artists(connection, track_id, record)
-            connection.execute(
-                """
-                INSERT INTO setlist_tracks(
-                    folder_name, position, provider, provider_track_id,
-                    mix_position, date_added
-                ) VALUES(?, ?, 'tidal', ?, ?, ?)
-                """,
-                (
-                    name,
-                    position,
-                    track_id,
-                    mix_positions[position] if position < len(mix_positions) else "",
-                    record.get("date_added"),
-                ),
-            )
+            for position, record in enumerate(records)
+            if (track_id := str(record.get("id") or ""))
+        ]
+        _executemany_chunked(
+            connection,
+            """
+            INSERT INTO setlist_tracks(
+                folder_name, position, provider, provider_track_id,
+                mix_position, date_added
+            ) VALUES(?, ?, 'tidal', ?, ?, ?)
+            """,
+            memberships,
+        )
 
 
 def tidal_setlists_for_track(
@@ -2163,7 +2425,7 @@ def tidal_setlists_for_track(
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT s.folder_name AS id,
@@ -2189,7 +2451,7 @@ def tidal_setlists_for_tracks(
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             f"""
             SELECT DISTINCT st.provider_track_id AS track_id,
@@ -2218,7 +2480,7 @@ def tidal_artists_for_tracks(
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             f"""
             SELECT ta.provider_track_id AS track_id, a.artist_key AS id, a.name
@@ -2241,7 +2503,7 @@ def tidal_artist(artist_key: str, path: Path = DATABASE_PATH) -> dict[str, str] 
     if not _database_available(path):
         return None
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         row = connection.execute(
             """
             SELECT artist_key AS id, provider_artist_id, name
@@ -2269,7 +2531,7 @@ def tidal_artist_overview_page(
     normalized_user = str(username or "").strip().casefold()
     search = f"%{str(query or '').strip()}%"
     order_columns = {
-        "name": "a.name COLLATE NOCASE",
+        "name": "name COLLATE NOCASE",
         "indexed_tracks": "indexed_tracks",
         "lastfm_plays": "lastfm_plays",
     }
@@ -2292,17 +2554,8 @@ def tidal_artist_overview_page(
             GROUP BY ta.artist_key
         )
     """
-    with connect(path) as connection:
-        total = int(connection.execute(
-            library_cte + """
-            SELECT COUNT(*)
-            FROM artists a
-            JOIN indexed i ON i.artist_key=a.artist_key
-            WHERE a.provider='tidal' AND a.name LIKE ? COLLATE NOCASE
-            """,
-            (search,),
-        ).fetchone()[0])
-        rows = connection.execute(
+    with connect_readonly(path) as connection:
+        result = connection.execute(
             library_cte + f"""
             , plays AS (
                 SELECT ta.artist_key, COUNT(*) AS lastfm_plays
@@ -2311,20 +2564,35 @@ def tidal_artist_overview_page(
                   ON ta.provider='tidal' AND ta.provider_track_id=ls.tidal_track_id
                 WHERE ls.username=? AND ls.tidal_track_id IS NOT NULL
                 GROUP BY ta.artist_key
+            ), filtered AS (
+                SELECT a.artist_key AS id, a.name,
+                       i.indexed_tracks,
+                       COALESCE(p.lastfm_plays, 0) AS lastfm_plays
+                FROM artists a
+                JOIN indexed i ON i.artist_key=a.artist_key
+                LEFT JOIN plays p ON p.artist_key=a.artist_key
+                WHERE a.provider='tidal' AND a.name LIKE ? COLLATE NOCASE
+            ), counted AS (
+                SELECT filtered.*, COUNT(*) OVER() AS total FROM filtered
+            ), page AS (
+                SELECT * FROM counted
+                ORDER BY {order_column} {direction}, name COLLATE NOCASE ASC
+                LIMIT ? OFFSET ?
             )
-            SELECT a.artist_key AS id, a.name,
-                   i.indexed_tracks,
-                   COALESCE(p.lastfm_plays, 0) AS lastfm_plays
-            FROM artists a
-            JOIN indexed i ON i.artist_key=a.artist_key
-            LEFT JOIN plays p ON p.artist_key=a.artist_key
-            WHERE a.provider='tidal' AND a.name LIKE ? COLLATE NOCASE
-            ORDER BY {order_column} {direction}, a.name COLLATE NOCASE ASC
-            LIMIT ? OFFSET ?
+            SELECT page.*, 0 AS sentinel FROM page
+            UNION ALL
+            SELECT NULL, NULL, 0, 0, (SELECT COUNT(*) FROM filtered), 1
+            WHERE NOT EXISTS (SELECT 1 FROM page)
+            ORDER BY sentinel
             """,
             (normalized_user, search, max(1, min(500, int(limit))), max(0, int(offset))),
         ).fetchall()
-    return [dict(row) for row in rows], total
+    total = int(result[0]["total"]) if result else 0
+    rows = [
+        {key: value for key, value in dict(row).items() if key not in {"total", "sentinel"}}
+        for row in result if not row["sentinel"]
+    ]
+    return rows, total
 
 
 def tidal_playlists_for_track(
@@ -2334,7 +2602,7 @@ def tidal_playlists_for_track(
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT DISTINCT p.provider_playlist_id AS id, p.name, p.collection_type
@@ -2359,7 +2627,7 @@ def tidal_playlists_for_tracks(
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             f"""
             SELECT DISTINCT pt.provider_track_id AS track_id,
@@ -2391,7 +2659,7 @@ def tidal_indexed_playlists(
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT provider_playlist_id AS id, name, collection_type
@@ -2434,7 +2702,7 @@ def tidal_playlist_tracks_page(
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
@@ -2462,7 +2730,7 @@ def tidal_setlist_tracks_page(
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
@@ -2491,7 +2759,7 @@ def tidal_liked_tracks_page(
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
@@ -2518,7 +2786,7 @@ def tidal_library_tracks_page(
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             WITH library_memberships AS (
@@ -2556,7 +2824,7 @@ def latest_tidal_liked_user_id(path: Path = DATABASE_PATH) -> str | None:
     if not _database_available(path):
         return None
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         row = connection.execute(
             """
             SELECT provider_user_id
@@ -2576,7 +2844,7 @@ def tidal_liked_track_ids(
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT provider_track_id
@@ -2595,7 +2863,7 @@ def tidal_track_by_id(
 ) -> dict[str, Any] | None:
     """Return one cached canonical TIDAL track record."""
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         row = connection.execute(
             """
             SELECT provider_track_id AS id, title, artist, remix, album,
@@ -2607,6 +2875,113 @@ def tidal_track_by_id(
             (str(track_id),),
         ).fetchone()
     return dict(row) if row else None
+
+
+def tidal_tracks_by_ids(
+    track_ids: list[str], path: Path = DATABASE_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return selected cached canonical TIDAL tracks with one read."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    if not unique_ids:
+        return {}
+    initialize(path)
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect_readonly(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT provider_track_id AS id, title, artist, remix, album,
+                   album_art_url, duration_seconds, bpm, musical_key,
+                   key_scale, release_year AS year, isrc
+            FROM tracks
+            WHERE provider='tidal' AND provider_track_id IN ({placeholders})
+            """,
+            unique_ids,
+        ).fetchall()
+    return {str(row["id"]): dict(row) for row in rows}
+
+
+def tidal_liked_membership_ids(
+    user_id: str, track_ids: list[str], path: Path = DATABASE_PATH,
+) -> set[str]:
+    """Return only selected IDs already present in the liked snapshot."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    if not unique_ids:
+        return set()
+    initialize(path)
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect_readonly(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT provider_track_id
+            FROM liked_tracks
+            WHERE provider='tidal' AND provider_user_id=?
+              AND provider_track_id IN ({placeholders})
+            """,
+            [str(user_id), *unique_ids],
+        ).fetchall()
+    return {str(row["provider_track_id"]) for row in rows}
+
+
+def add_tidal_liked_memberships(
+    user_id: str, track_ids: list[str], path: Path = DATABASE_PATH,
+) -> int:
+    """Prepend several already-cached tracks to one liked snapshot atomically."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    if not unique_ids:
+        return 0
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect(path) as connection:
+        existing = {
+            str(row["provider_track_id"])
+            for row in connection.execute(
+                f"""
+                SELECT provider_track_id FROM liked_tracks
+                WHERE provider='tidal' AND provider_user_id=?
+                  AND provider_track_id IN ({placeholders})
+                """,
+                [str(user_id), *unique_ids],
+            )
+        }
+        additions = [track_id for track_id in unique_ids if track_id not in existing]
+        if additions:
+            connection.execute(
+                """
+                UPDATE liked_tracks SET position=-(position + 1)
+                WHERE provider='tidal' AND provider_user_id=?
+                """,
+                (str(user_id),),
+            )
+            connection.execute(
+                """
+                UPDATE liked_tracks SET position=-position + ?
+                WHERE provider='tidal' AND provider_user_id=?
+                """,
+                (len(additions) - 1, str(user_id)),
+            )
+            connection.executemany(
+                """
+                INSERT INTO liked_tracks(
+                    provider, provider_user_id, position,
+                    provider_track_id, date_added
+                ) VALUES('tidal', ?, ?, ?, ?)
+                """,
+                [
+                    (str(user_id), position, track_id, now)
+                    for position, track_id in enumerate(additions)
+                ],
+            )
+        connection.execute(
+            """
+            INSERT INTO liked_track_snapshots(provider, provider_user_id, cached_at)
+            VALUES('tidal', ?, ?)
+            ON CONFLICT(provider, provider_user_id)
+            DO UPDATE SET cached_at=excluded.cached_at
+            """,
+            (str(user_id), now),
+        )
+    return len(additions)
 
 
 def merge_tidal_liked_tracks_prefix(
@@ -2664,6 +3039,7 @@ def merge_tidal_liked_tracks_prefix(
         )
         live_ids: list[str] = []
         live_dates: dict[str, str | None] = {}
+        new_records: list[dict[str, Any]] = []
         seen: set[str] = set()
         for record, track in records:
             track_id = str(record.get("id") or "")
@@ -2674,23 +3050,9 @@ def merge_tidal_liked_tracks_prefix(
             added = getattr(track, "user_date_added", None) or getattr(track, "date_added", None)
             live_dates[track_id] = _timestamp(added)
             if track_id not in known_track_ids:
-                connection.execute(
-                    """
-                    INSERT INTO tracks(
-                        provider, provider_track_id, title, artist, remix, album,
-                        album_art_url, duration_seconds, bpm, musical_key,
-                        key_scale, release_year, isrc, refreshed_at
-                    ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        track_id, record["title"], record["artist"], record["remix"],
-                        record["album"], record["album_art_url"],
-                        record["duration_seconds"], record["bpm"],
-                        record["musical_key"], record["key_scale"], record["year"],
-                        record["isrc"], now,
-                    ),
-                )
-                _store_track_artists(connection, track_id, record)
+                new_records.append(record)
+
+        _store_tracks_and_artists(connection, new_records, now)
 
         # Move existing positions out of the positive range, discard only the
         # provider-checked prefix, then shift the untouched tail with one SQL
@@ -2784,7 +3146,7 @@ def tidal_artist_tracks_page(
     if not _database_available(path):
         return []
     initialize(path)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT DISTINCT t.provider_track_id AS id, t.title, t.artist,
@@ -2861,6 +3223,95 @@ def add_tidal_playlist_membership(
         )
 
 
+def tidal_indexed_playlist(
+    playlist_id: str, path: Path = DATABASE_PATH,
+) -> dict[str, Any] | None:
+    """Look up one indexed TIDAL playlist directly by ID."""
+    initialize(path)
+    with connect_readonly(path) as connection:
+        row = connection.execute(
+            """
+            SELECT provider_playlist_id AS id, name, collection_type
+            FROM playlists
+            WHERE provider='tidal' AND provider_playlist_id=?
+            """,
+            (str(playlist_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def apply_tidal_playlist_membership_changes(
+    action: str,
+    playlist_id: str,
+    track_ids: list[str],
+    source_playlist_id: str | None = None,
+    path: Path = DATABASE_PATH,
+) -> None:
+    """Mirror successful provider playlist mutations in one transaction."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    if not unique_ids:
+        return
+    if action not in {"add", "remove", "move"}:
+        raise ValueError("Unknown playlist membership action")
+    if action == "move" and not source_playlist_id:
+        raise ValueError("Move requires a source playlist")
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect(path) as connection:
+        if action in {"add", "move"}:
+            existing = {
+                str(row["provider_track_id"])
+                for row in connection.execute(
+                    f"""
+                    SELECT provider_track_id FROM playlist_tracks
+                    WHERE provider='tidal' AND provider_playlist_id=?
+                      AND provider_track_id IN ({placeholders})
+                    """,
+                    [str(playlist_id), *unique_ids],
+                )
+            }
+            additions = [track_id for track_id in unique_ids if track_id not in existing]
+            next_position = int(connection.execute(
+                """
+                SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_tracks
+                WHERE provider='tidal' AND provider_playlist_id=?
+                """,
+                (str(playlist_id),),
+            ).fetchone()[0])
+            connection.executemany(
+                """
+                INSERT INTO playlist_tracks(
+                    provider, provider_playlist_id, position, provider_track_id
+                ) VALUES('tidal', ?, ?, ?)
+                """,
+                [
+                    (str(playlist_id), next_position + position, track_id)
+                    for position, track_id in enumerate(additions)
+                ],
+            )
+        removal_id = source_playlist_id if action == "move" else playlist_id
+        if action in {"remove", "move"}:
+            connection.execute(
+                f"""
+                DELETE FROM playlist_tracks
+                WHERE provider='tidal' AND provider_playlist_id=?
+                  AND provider_track_id IN ({placeholders})
+                """,
+                [str(removal_id), *unique_ids],
+            )
+        affected_playlists = [playlist_id]
+        if action == "move":
+            affected_playlists.append(str(source_playlist_id))
+        connection.executemany(
+            """
+            UPDATE playlists SET source_last_updated=NULL, indexed_at=?
+            WHERE provider='tidal' AND provider_playlist_id=?
+            """,
+            [(now, str(affected)) for affected in affected_playlists],
+        )
+
+
 def remove_tidal_playlist_membership(
     playlist_id: str, track_id: str, path: Path = DATABASE_PATH
 ) -> None:
@@ -2903,7 +3354,7 @@ def tidal_dimensions_for_tracks(
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             f"""
             SELECT provider_track_id AS track_id, dimension, value
@@ -2918,6 +3369,149 @@ def tidal_dimensions_for_tracks(
     return result
 
 
+def _dimensions_from_rows(
+    track_ids: list[str], rows: Any,
+) -> dict[str, dict[str, list[str]]]:
+    result: dict[str, dict[str, list[str]]] = {track_id: {} for track_id in track_ids}
+    for row in rows:
+        result[str(row["track_id"])].setdefault(str(row["dimension"]), []).append(
+            str(row["value"])
+        )
+    return result
+
+
+def replace_tidal_tracks_dimension(
+    track_ids: list[str],
+    dimension: str,
+    values: list[str],
+    path: Path = DATABASE_PATH,
+) -> dict[str, dict[str, list[str]]]:
+    """Replace one dimension for many tracks in one transaction."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    key = str(dimension or "").strip().lower()
+    if key not in DIMENSION_VALUES:
+        raise ValueError("Invalid track dimension")
+    allowed = DIMENSION_VALUES[key]
+    accepted = [value for value in dict.fromkeys(values or []) if value in allowed]
+    maximum = DIMENSION_MAX_VALUES.get(key)
+    if maximum:
+        accepted = accepted[:maximum]
+    if not unique_ids:
+        return {}
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    placeholders = ",".join("?" for _ in unique_ids)
+    with connect(path) as connection:
+        connection.execute(
+            f"""
+            DELETE FROM track_dimension_values
+            WHERE provider='tidal' AND dimension=?
+              AND provider_track_id IN ({placeholders})
+            """,
+            [key, *unique_ids],
+        )
+        connection.executemany(
+            """
+            INSERT INTO track_dimension_values(
+                provider, provider_track_id, dimension, value, created_at
+            ) VALUES('tidal', ?, ?, ?, ?)
+            """,
+            [
+                (track_id, key, value, now)
+                for track_id in unique_ids for value in accepted
+            ],
+        )
+        rows = connection.execute(
+            f"""
+            SELECT provider_track_id AS track_id, dimension, value
+            FROM track_dimension_values
+            WHERE provider='tidal' AND provider_track_id IN ({placeholders})
+            ORDER BY dimension, created_at, value COLLATE NOCASE
+            """,
+            unique_ids,
+        ).fetchall()
+    return _dimensions_from_rows(unique_ids, rows)
+
+
+def set_tidal_tracks_dimension_value(
+    track_ids: list[str],
+    dimension: str,
+    value: str,
+    enable: bool,
+    path: Path = DATABASE_PATH,
+) -> dict[str, dict[str, list[str]]]:
+    """Enable/disable one value across tracks with one atomic unit of work."""
+    unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
+    key = str(dimension or "").strip().lower()
+    selected_value = str(value or "").strip()
+    if key not in DIMENSION_VALUES or selected_value not in DIMENSION_VALUES[key]:
+        raise ValueError("Invalid track dimension or value")
+    if not unique_ids:
+        return {}
+    initialize(path)
+    placeholders = ",".join("?" for _ in unique_ids)
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(path) as connection:
+        current_rows = connection.execute(
+            f"""
+            SELECT provider_track_id AS track_id, value, created_at
+            FROM track_dimension_values
+            WHERE provider='tidal' AND dimension=?
+              AND provider_track_id IN ({placeholders})
+            ORDER BY created_at, value COLLATE NOCASE
+            """,
+            [key, *unique_ids],
+        ).fetchall()
+        current: dict[str, list[tuple[str, str]]] = {track_id: [] for track_id in unique_ids}
+        for row in current_rows:
+            current[str(row["track_id"])].append(
+                (str(row["value"]), str(row["created_at"]))
+            )
+        changed: dict[str, list[tuple[str, str]]] = {}
+        maximum = DIMENSION_MAX_VALUES.get(key)
+        for track_id in unique_ids:
+            values = current[track_id]
+            has_value = any(existing == selected_value for existing, _created in values)
+            if enable and not has_value:
+                retained = [] if maximum == 1 else list(values)
+                if maximum and len(retained) >= maximum:
+                    retained = retained[-(maximum - 1):] if maximum > 1 else []
+                changed[track_id] = [*retained, (selected_value, now)]
+            elif not enable and has_value:
+                changed[track_id] = [
+                    item for item in values if item[0] != selected_value
+                ]
+        connection.executemany(
+            """
+            DELETE FROM track_dimension_values
+            WHERE provider='tidal' AND provider_track_id=? AND dimension=?
+            """,
+            [(track_id, key) for track_id in changed],
+        )
+        connection.executemany(
+            """
+            INSERT INTO track_dimension_values(
+                provider, provider_track_id, dimension, value, created_at
+            ) VALUES('tidal', ?, ?, ?, ?)
+            """,
+            [
+                (track_id, key, item_value, created_at)
+                for track_id, items in changed.items()
+                for item_value, created_at in items
+            ],
+        )
+        rows = connection.execute(
+            f"""
+            SELECT provider_track_id AS track_id, dimension, value
+            FROM track_dimension_values
+            WHERE provider='tidal' AND provider_track_id IN ({placeholders})
+            ORDER BY dimension, created_at, value COLLATE NOCASE
+            """,
+            unique_ids,
+        ).fetchall()
+    return _dimensions_from_rows(unique_ids, rows)
+
+
 def tidal_tags_for_tracks(
     track_ids: list[str], path: Path = DATABASE_PATH
 ) -> dict[str, list[str]]:
@@ -2928,7 +3522,7 @@ def tidal_tags_for_tracks(
         return result
     initialize(path)
     placeholders = ",".join("?" for _ in unique_ids)
-    with connect(path) as connection:
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             f"""
             SELECT tt.provider_track_id AS track_id, t.name
@@ -3076,33 +3670,42 @@ def cached_tidal_liked_tracks(
     if not _database_available(path):
         return None
     initialize(path)
-    with connect(path) as connection:
-        snapshot = connection.execute(
-            "SELECT cached_at FROM liked_track_snapshots "
-            "WHERE provider='tidal' AND provider_user_id=?",
-            (str(user_id),),
-        ).fetchone()
-        if snapshot is None:
-            return None
-        cached_at = datetime.fromisoformat(snapshot["cached_at"])
-        age = (datetime.now(timezone.utc) - cached_at.astimezone(timezone.utc)).total_seconds()
-        if age > max_age_seconds:
-            return None
+    now = datetime.now(timezone.utc).isoformat()
+    with connect_readonly(path) as connection:
         rows = connection.execute(
             """
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,
                    t.duration_seconds, t.bpm, t.musical_key, t.key_scale,
                    t.release_year AS year, t.isrc, t.album_art_url, lt.date_added
-            FROM liked_tracks lt
+            FROM liked_track_snapshots snapshot
+            JOIN liked_tracks lt
+              ON lt.provider=snapshot.provider
+             AND lt.provider_user_id=snapshot.provider_user_id
             JOIN tracks t
               ON t.provider=lt.provider AND t.provider_track_id=lt.provider_track_id
-            WHERE lt.provider='tidal' AND lt.provider_user_id=?
+            WHERE snapshot.provider='tidal' AND snapshot.provider_user_id=?
+              AND (julianday(?) - julianday(snapshot.cached_at)) * 86400 <= ?
             ORDER BY lt.position
             LIMIT ? OFFSET ?
             """,
-            (str(user_id), int(limit), int(offset)),
+            (str(user_id), now, int(max_age_seconds), int(limit), int(offset)),
         ).fetchall()
-        return [dict(row) for row in rows]
+    if not rows:
+        # Distinguish a valid empty snapshot/page from a missing or stale cache
+        # with a very small one-shot read only when the requested page is empty.
+        with connect_readonly(path) as connection:
+            valid = connection.execute(
+                """
+                SELECT 1 FROM liked_track_snapshots
+                WHERE provider='tidal' AND provider_user_id=?
+                  AND (julianday(?) - julianday(cached_at)) * 86400 <= ?
+                """,
+                (str(user_id), now, int(max_age_seconds)),
+            ).fetchone()
+        return [] if valid else None
+    return [
+        dict(row) for row in rows
+    ]
 
 
 def store_tidal_liked_tracks(
@@ -3130,43 +3733,25 @@ def store_tidal_liked_tracks(
             "WHERE provider='tidal' AND provider_user_id=? AND position>=?",
             (str(user_id), int(offset)),
         )
+        _store_tracks_and_artists(connection, [record for record, _track in records], now)
+        memberships = []
         for position, (record, track) in enumerate(records):
-            track_id = record["id"]
+            track_id = str(record.get("id") or "")
             if not track_id:
                 continue
-            connection.execute(
-                """
-                INSERT INTO tracks(
-                    provider, provider_track_id, title, artist, remix, album, album_art_url,
-                    duration_seconds, bpm, musical_key, key_scale, release_year,
-                    isrc, refreshed_at
-                ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(provider, provider_track_id) DO UPDATE SET
-                    title=excluded.title, artist=excluded.artist, remix=excluded.remix,
-                    album=excluded.album, album_art_url=excluded.album_art_url,
-                    duration_seconds=excluded.duration_seconds,
-                    bpm=excluded.bpm, musical_key=excluded.musical_key,
-                    key_scale=excluded.key_scale, release_year=excluded.release_year,
-                    isrc=excluded.isrc, refreshed_at=excluded.refreshed_at
-                """,
-                (
-                    track_id, record["title"], record["artist"], record["remix"],
-                    record["album"], record["album_art_url"],
-                    record["duration_seconds"], record["bpm"],
-                    record["musical_key"], record["key_scale"], record["year"],
-                    record["isrc"], now,
-                ),
-            )
-            _store_track_artists(connection, track_id, record)
             added = getattr(track, "user_date_added", None) or getattr(track, "date_added", None)
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO liked_tracks(
-                    provider, provider_user_id, position, provider_track_id, date_added
-                ) VALUES('tidal', ?, ?, ?, ?)
-                """,
-                (str(user_id), offset + position, track_id, _timestamp(added)),
+            memberships.append(
+                (str(user_id), offset + position, track_id, _timestamp(added))
             )
+        _executemany_chunked(
+            connection,
+            """
+            INSERT OR IGNORE INTO liked_tracks(
+                provider, provider_user_id, position, provider_track_id, date_added
+            ) VALUES('tidal', ?, ?, ?, ?)
+            """,
+            memberships,
+        )
 
 
 def add_tidal_liked_track(

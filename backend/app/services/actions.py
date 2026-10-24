@@ -11,13 +11,12 @@ from typing import Literal
 
 import main as engine
 from music_library.database import (
-    add_tidal_liked_track,
-    add_tidal_playlist_membership,
-    remove_tidal_playlist_membership,
-    tidal_indexed_playlists,
-    tidal_liked_track_ids,
+    add_tidal_liked_memberships,
+    apply_tidal_playlist_membership_changes,
+    tidal_indexed_playlist,
+    tidal_liked_membership_ids,
     tidal_playlists_for_tracks,
-    tidal_track_by_id,
+    tidal_tracks_by_ids,
 )
 
 
@@ -37,14 +36,15 @@ def like_tidal_tracks(track_ids: list[str]) -> dict[str, object]:
     try:
         session = engine.tidal_client(interactive=False)
         user_id = str(session.user.id)
-        already_liked = set(tidal_liked_track_ids(user_id))
-        changed = skipped = failed = 0
+        already_liked = tidal_liked_membership_ids(user_id, unique_ids)
+        cached_tracks = tidal_tracks_by_ids(unique_ids)
+        succeeded: list[str] = []
+        skipped = failed = 0
         for track_id in unique_ids:
             if track_id in already_liked:
                 skipped += 1
                 continue
-            record = tidal_track_by_id(track_id)
-            if record is None:
+            if track_id not in cached_tracks:
                 failed += 1
                 continue
             try:
@@ -54,15 +54,16 @@ def like_tidal_tracks(track_ids: list[str]) -> dict[str, object]:
                     lambda current=track_id: session.user.favorites.add_track(current),
                     track_id=track_id,
                 )
-                add_tidal_liked_track(user_id, record)
-                changed += 1
+                succeeded.append(track_id)
             except Exception:
                 failed += 1
                 LOGGER.exception("react.track_like track_failed track_id=%s", track_id)
+        add_tidal_liked_memberships(user_id, succeeded)
     except Exception as exc:
         LOGGER.exception("react.track_like failed tracks=%d", len(unique_ids))
         raise TrackActionError("TIDAL could not like the selected tracks. Check the log for details.") from exc
 
+    changed = len(succeeded)
     message = f"Liked {changed} track{'s' if changed != 1 else ''} in TIDAL."
     if skipped:
         message += f" {skipped} already liked."
@@ -73,10 +74,7 @@ def like_tidal_tracks(track_ids: list[str]) -> dict[str, object]:
 
 
 def _indexed_playlist(playlist_id: str) -> dict[str, object]:
-    playlist = next(
-        (item for item in tidal_indexed_playlists() if str(item.get("id") or "") == playlist_id),
-        None,
-    )
+    playlist = tidal_indexed_playlist(playlist_id)
     if playlist is None:
         raise TrackActionError("That destination is not an indexed TIDAL playlist.")
     return playlist
@@ -145,7 +143,7 @@ def mutate_playlist_tracks(
             if not hasattr(source, "remove_by_id"):
                 raise TrackActionError("The source playlist is not writable by the connected TIDAL account.")
 
-        changed = 0
+        succeeded: list[str] = []
         failed = 0
         for track_id in actionable:
             try:
@@ -157,7 +155,6 @@ def mutate_playlist_tracks(
                         playlist_id=playlist_id,
                         track_id=track_id,
                     )
-                    add_tidal_playlist_membership(playlist_id, track_id)
                 elif action == "remove":
                     removed = engine._call(
                         "tidal",
@@ -168,7 +165,6 @@ def mutate_playlist_tracks(
                     )
                     if not removed:
                         raise TrackActionError("TIDAL did not find a selected track in that playlist.")
-                    remove_tidal_playlist_membership(playlist_id, track_id)
                 else:
                     added = engine._call(
                         "tidal",
@@ -204,9 +200,7 @@ def mutate_playlist_tracks(
                                     playlist_id,
                                 )
                         raise
-                    add_tidal_playlist_membership(playlist_id, track_id)
-                    remove_tidal_playlist_membership(str(source_playlist_id), track_id)
-                changed += 1
+                succeeded.append(track_id)
             except Exception:
                 failed += 1
                 LOGGER.exception(
@@ -226,6 +220,24 @@ def mutate_playlist_tracks(
         )
         raise TrackActionError("TIDAL could not complete the playlist action. Check the log for details.") from exc
 
+    if succeeded:
+        try:
+            apply_tidal_playlist_membership_changes(
+                action, playlist_id, succeeded, source_playlist_id,
+            )
+        except Exception as exc:
+            LOGGER.exception(
+                "react.track_action cache_update_failed action=%s playlist_id=%s tracks=%d",
+                action,
+                playlist_id,
+                len(succeeded),
+            )
+            raise TrackActionError(
+                "TIDAL was updated, but the local cache could not be updated. "
+                "Refresh the playlist from TIDAL."
+            ) from exc
+
+    changed = len(succeeded)
     skipped = len(unique_ids) - changed - failed
     destination_name = str(destination_record.get("name") or playlist_id)
     past = {"add": "Added", "remove": "Removed", "move": "Moved"}[action]

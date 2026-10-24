@@ -21,22 +21,21 @@ from music_library.database import (
     pending_track,
     delete_pending_track,
     delete_watched_mix,
-    event_links,
     lastfm_history_navigation,
     tidal_artist_overview_page,
-    save_event_links,
+    save_tidal_event_links,
     resolve_pending_track,
-    replace_tidal_track_dimensions,
+    replace_tidal_tracks_dimension,
     tidal_dimensions_for_tracks,
     tidal_tags_for_tracks,
     tidal_indexed_playlists,
+    tidal_event_with_links,
     save_watched_mix,
     set_watched_mix_rating,
-    save_setlist_tidal_url,
-    save_setlist_youtube_url,
+    save_setlist_urls,
     watched_mix,
     watched_mixes,
-    toggle_tidal_track_dimension,
+    set_tidal_tracks_dimension_value,
     youtube_video_metadata,
 )
 from music_library.dimensions import DIMENSION_LABELS, DIMENSION_MAX_VALUES, DIMENSION_VALUES
@@ -44,6 +43,7 @@ from music_tools.mixes.service import (
     cover_for,
     discover_mixes,
     fetch_youtube_metadata,
+    invalidate_mix_snapshot,
     mix_for,
     youtube_thumbnail_url,
     youtube_video_id,
@@ -77,6 +77,11 @@ from ..schemas import (
 )
 from ..services.library import CollectionNotFound, collection_page, descriptor
 from ..services.actions import TrackActionError, like_tidal_tracks, mutate_playlist_tracks
+from ..services.navigation_cache import (
+    get_navigation_snapshot,
+    invalidate_navigation_snapshot,
+    store_navigation_snapshot,
+)
 from music_tools.watched_mixes.tracklist import parse_tracklist
 
 
@@ -113,6 +118,14 @@ def _watched_mix_cover_path(video_id: str) -> Path:
     return WATCHED_MIX_COVER_ROOT / f"{safe_id}.jpg"
 
 
+def _local_file_cache_headers(path: Path) -> dict[str, str]:
+    stat = path.stat()
+    return {
+        "Cache-Control": "public, max-age=86400, must-revalidate",
+        "ETag": f'W/"{stat.st_mtime_ns:x}-{stat.st_size:x}"',
+    }
+
+
 def _cache_watched_mix_cover(video_id: str) -> Path | None:
     path = _watched_mix_cover_path(video_id)
     if path.is_file():
@@ -136,6 +149,9 @@ def _cache_watched_mix_cover(video_id: str) -> Path | None:
 
 @router.get("/navigation", response_model=NavigationResponse)
 def navigation() -> NavigationResponse:
+    cached = get_navigation_snapshot()
+    if cached is not None:
+        return NavigationResponse.model_validate(cached)
     tools = [
         NavigationItem(id="playlist-sync", label="Playlist sync", path="/", kind="tool", icon="⇄"),
         NavigationItem(id="liked", label="Liked tracks", path="/liked-tracks", kind="tool", icon="♥"),
@@ -264,7 +280,9 @@ def navigation() -> NavigationResponse:
         for item in watched_mixes()
     )
     groups.append(NavigationGroup(id="watched-mixes", label="Watched mixes", items=watched_items))
-    return NavigationResponse(tools=tools, groups=groups)
+    response = NavigationResponse(tools=tools, groups=groups)
+    store_navigation_snapshot(response.model_dump(mode="json"))
+    return response
 
 
 @router.get("/artists", response_model=ArtistOverviewPage)
@@ -304,28 +322,22 @@ def collection(kind: str, collection_id: str) -> CollectionDescriptor:
 @router.get("/events/{playlist_id}/media")
 def event_media(playlist_id: str) -> dict[str, str]:
     """Read locally stored event links; never fetch Concert Archives here."""
-    try:
-        event = descriptor("event", playlist_id)
-    except CollectionNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    links = event_links(playlist_id)
-    youtube_url = str(links.get("youtube_url") or "")
+    event = tidal_event_with_links(playlist_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event was not found")
+    youtube_url = str(event.get("youtube_url") or "")
     return {
-        "event_name": event["name"],
+        "event_name": str(event["event_name"]),
         "youtube_url": youtube_url,
-        "concert_archives_url": str(links.get("concert_archives_url") or ""),
+        "concert_archives_url": str(event.get("concert_archives_url") or ""),
         "thumbnail_url": youtube_thumbnail_url(youtube_url),
-        "updated_at": str(links.get("updated_at") or ""),
+        "updated_at": str(event.get("updated_at") or ""),
     }
 
 
 @router.put("/events/{playlist_id}/media")
 def save_event_media(playlist_id: str, body: EventMediaUpdate) -> dict[str, str]:
     """Save user-provided event references without fetching either site."""
-    try:
-        event = descriptor("event", playlist_id)
-    except CollectionNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
     youtube_url = _web_url(body.youtube_url)
     concert_url = _web_url(body.concert_archives_url)
     if body.youtube_url.strip() and not youtube_url:
@@ -334,14 +346,15 @@ def save_event_media(playlist_id: str, body: EventMediaUpdate) -> dict[str, str]
         raise HTTPException(status_code=422, detail="Concert Archives must be a valid http(s) URL")
     if youtube_url and not youtube_video_id(youtube_url):
         raise HTTPException(status_code=422, detail="Enter a valid YouTube video URL")
-    save_event_links(playlist_id, youtube_url, concert_url)
-    links = event_links(playlist_id)
+    event = save_tidal_event_links(playlist_id, youtube_url, concert_url)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event was not found")
     return {
-        "event_name": event["name"],
-        "youtube_url": str(links.get("youtube_url") or ""),
-        "concert_archives_url": str(links.get("concert_archives_url") or ""),
-        "thumbnail_url": youtube_thumbnail_url(str(links.get("youtube_url") or "")),
-        "updated_at": str(links.get("updated_at") or ""),
+        "event_name": str(event["event_name"]),
+        "youtube_url": str(event.get("youtube_url") or ""),
+        "concert_archives_url": str(event.get("concert_archives_url") or ""),
+        "thumbnail_url": youtube_thumbnail_url(str(event.get("youtube_url") or "")),
+        "updated_at": str(event.get("updated_at") or ""),
     }
 
 
@@ -462,9 +475,9 @@ def update_dimensions(body: DimensionUpdate) -> DimensionUpdateResponse:
     maximum = DIMENSION_MAX_VALUES.get(body.dimension)
     if maximum and len(dict.fromkeys(body.values)) > maximum:
         raise HTTPException(status_code=422, detail=f"This dimension allows at most {maximum} value(s)")
-    for track_id in dict.fromkeys(body.track_ids):
-        replace_tidal_track_dimensions(track_id, {body.dimension: body.values})
-    stored = tidal_dimensions_for_tracks(body.track_ids)
+    stored = replace_tidal_tracks_dimension(
+        body.track_ids, body.dimension, body.values,
+    )
     return DimensionUpdateResponse(updated=stored)
 
 
@@ -472,14 +485,10 @@ def update_dimensions(body: DimensionUpdate) -> DimensionUpdateResponse:
 def toggle_dimensions(body: DimensionToggle) -> DimensionUpdateResponse:
     if body.dimension not in DIMENSION_VALUES or body.value not in DIMENSION_VALUES[body.dimension]:
         raise HTTPException(status_code=422, detail="Invalid dimension value")
-    current = tidal_dimensions_for_tracks(body.track_ids)
-    multiple = DIMENSION_MAX_VALUES.get(body.dimension, 999) != 1
-    for track_id in dict.fromkeys(body.track_ids):
-        values = current.get(track_id, {}).get(body.dimension, [])
-        should_toggle = (body.enable and body.value not in values) or (not body.enable and body.value in values)
-        if should_toggle:
-            toggle_tidal_track_dimension(track_id, body.dimension, body.value, multiple=multiple)
-    return DimensionUpdateResponse(updated=tidal_dimensions_for_tracks(body.track_ids))
+    stored = set_tidal_tracks_dimension_value(
+        body.track_ids, body.dimension, body.value, body.enable,
+    )
+    return DimensionUpdateResponse(updated=stored)
 
 
 @router.get("/playlist-options")
@@ -548,6 +557,7 @@ def create_watched_mix(body: WatchedMixCreate) -> dict[str, object]:
         upload_date=metadata.upload_date,
     )
     _cache_watched_mix_cover(video_id)
+    invalidate_navigation_snapshot()
     return {**saved, "cover_url": f"/api/v1/watched-mixes/{quote(video_id, safe='')}/cover"}
 
 
@@ -581,7 +591,7 @@ def watched_mix_cover(video_id: str) -> FileResponse:
     path = _cache_watched_mix_cover(video_id)
     if path is None:
         raise HTTPException(status_code=404, detail="YouTube cover is unavailable")
-    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+    return FileResponse(path, media_type="image/jpeg", headers=_local_file_cache_headers(path))
 
 
 @router.patch("/watched-mixes/{video_id}")
@@ -589,13 +599,15 @@ def update_watched_mix(video_id: str, body: WatchedMixUpdate) -> dict[str, objec
     record = watched_mix(video_id)
     if not record:
         raise HTTPException(status_code=404, detail="Watched mix was not found")
-    return save_watched_mix(
+    saved = save_watched_mix(
         video_id,
         str(record["youtube_url"]),
         title=body.title,
         channel_name=body.channel_name,
         upload_date=body.upload_date,
     )
+    invalidate_navigation_snapshot()
+    return saved
 
 
 @router.put("/watched-mixes/{video_id}/rating")
@@ -616,6 +628,7 @@ def remove_watched_mix(video_id: str) -> None:
         _watched_mix_cover_path(video_id).unlink(missing_ok=True)
     except OSError:
         engine.LOGGER.warning("watched_mix.cover_delete_failed video_id=%s", video_id, exc_info=True)
+    invalidate_navigation_snapshot()
 
 
 @router.post("/watched-mixes/{video_id}/tracklist/parse")
@@ -794,8 +807,9 @@ def save_mix_urls(folder_name: str, body: MixUrlsUpdate) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Mix was not found")
     if body.youtube_url.strip() and not youtube_video_id(body.youtube_url):
         raise HTTPException(status_code=422, detail="Enter a valid YouTube video URL")
-    save_setlist_youtube_url(folder_name, body.youtube_url)
-    save_setlist_tidal_url(folder_name, body.tidal_url)
+    save_setlist_urls(folder_name, body.youtube_url, body.tidal_url)
+    invalidate_mix_snapshot()
+    invalidate_navigation_snapshot()
     return mix_detail(folder_name)
 
 
@@ -804,4 +818,4 @@ def mix_cover(folder_name: str):
     path: Path | None = cover_for(folder_name)
     if path is None:
         raise HTTPException(status_code=404, detail="Mix cover was not found")
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(path, media_type="image/png", headers=_local_file_cache_headers(path))

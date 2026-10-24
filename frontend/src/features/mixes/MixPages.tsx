@@ -200,9 +200,9 @@ export function WatchedMixDetailPage() {
   })
   const searchJob = useQuery({
     queryKey: ['job', searchJobId],
-    queryFn: () => api<Job>(`/jobs/${searchJobId}`),
+    queryFn: ({ signal }) => api<Job>(`/jobs/${searchJobId}`, { signal }),
     enabled: Boolean(searchJobId),
-    refetchInterval: (query) => ['queued', 'running'].includes(query.state.data?.state ?? '') ? 750 : false,
+    refetchInterval: (query) => ['queued', 'running'].includes(query.state.data?.state ?? '') ? 1_500 : false,
   })
   useEffect(() => {
     const result = searchJob.data?.state === 'succeeded' ? searchJob.data.result as { rows?: StagingRow[]; searched?: number } : null

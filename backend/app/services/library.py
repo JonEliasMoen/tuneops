@@ -10,6 +10,11 @@ from typing import Any
 
 import main as engine
 from backend.app.config import integer_setting
+from music_library.collection_query import (
+    collection_relationships,
+    collection_track_page,
+    collection_track_page_with_stats,
+)
 from music_library.database import (
     lastfm_track_stats,
     lastfm_month_top_tracks,
@@ -19,7 +24,7 @@ from music_library.database import (
     tidal_artist,
     tidal_artists_for_tracks,
     tidal_dimensions_for_tracks,
-    tidal_indexed_playlists,
+    tidal_indexed_playlist,
     tidal_playlists_for_tracks,
     tidal_setlists_for_tracks,
     tidal_watched_mixes_for_tracks,
@@ -64,10 +69,7 @@ def descriptor(kind: str, collection_id: str = "") -> dict[str, str]:
         name = f"{year} Overall" if period == "overall" else f"{month_name[int(period)]} {year}"
         return {"type": "history", "id": collection_id, "name": name, "collection_type": ""}
     if kind in {"playlist", "event", "source"}:
-        item = next(
-            (row for row in tidal_indexed_playlists() if str(row.get("id")) == collection_id),
-            None,
-        )
+        item = tidal_indexed_playlist(collection_id)
         if not item or str(item.get("collection_type") or "playlist") != kind:
             raise CollectionNotFound("Indexed playlist was not found in that section")
         return {
@@ -300,6 +302,111 @@ def collection_page(
     collection_types: list[str] | None = None,
 ) -> dict[str, Any]:
     collection = descriptor(kind, collection_id)
+    if kind != "history":
+        settings = engine.load_runtime_settings()
+        username = str(settings.get("lastfm_username", "") or "").strip()
+        sql_filters = {
+            "query": query,
+            "artists": artists or [],
+            "keys": keys or [],
+            "ratings": ratings or [],
+            "tags": tags or [],
+            "bpm_min": bpm_min,
+            "bpm_max": bpm_max,
+            "collection_types": collection_types or [],
+        }
+        if offset == 0:
+            records, total, stats = collection_track_page_with_stats(
+                kind,
+                collection_id,
+                username,
+                offset=offset,
+                limit=limit,
+                sort_field=sort_field,
+                sort_direction=sort_direction,
+                **sql_filters,
+            )
+        else:
+            records, total = collection_track_page(
+                kind,
+                collection_id,
+                username,
+                offset=offset,
+                limit=limit,
+                sort_field=sort_field,
+                sort_direction=sort_direction,
+                **sql_filters,
+            )
+            stats = {
+                "top_artists": [], "artist_options": [],
+                "bpm_min": None, "bpm_max": None,
+                "vibe": "", "vibe_count": 0,
+            }
+        rows = cached_track_rows(records)
+        related = collection_relationships(
+            [str(record.get("id") or "") for record in records]
+        )
+        current_type = collection["type"]
+        current_id = collection["id"]
+        for row, record in zip(rows, records):
+            track_id = str(row.get("id") or "")
+            relationships = related.get(track_id, {})
+            row["playlists"] = [
+                item for item in relationships.get("playlists", [])
+                if not (
+                    current_type == "playlist"
+                    and str(item.get("id") or "") == current_id
+                )
+            ]
+            row["events"] = [
+                item for item in relationships.get("events", [])
+                if not (
+                    current_type == "event"
+                    and str(item.get("id") or "") == current_id
+                )
+            ]
+            row["sources"] = [
+                item for item in relationships.get("sources", [])
+                if not (
+                    current_type == "source"
+                    and str(item.get("id") or "") == current_id
+                )
+            ]
+            row["mixes"] = [
+                item for item in relationships.get("mixes", [])
+                if not (
+                    current_type == "setlist"
+                    and str(item.get("id") or "") == current_id
+                )
+            ]
+            row["djmi"] = [
+                item for item in relationships.get("djmi", [])
+                if not (
+                    current_type == "watched_mix"
+                    and str(item.get("id") or "") == current_id
+                )
+            ]
+            row["artists"] = relationships.get("artists", [])
+            row["dimensions"] = relationships.get("dimensions", {})
+            played_at = record.get("last_played")
+            row["last_played"] = (
+                datetime.fromtimestamp(int(played_at)).strftime("%Y-%m-%d %H:%M")
+                if played_at else ""
+            )
+            row["tidal_uri"] = f"tidal://track/{track_id}"
+            row["_source_order"] = int(record.get("source_order") or 0)
+        return {
+            "collection": collection,
+            "items": rows,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + len(rows) < total,
+            "stats": stats,
+        }
+
+    # History collections are already capped to the configured top-X (at most
+    # 100 rows), so retain their specialized aggregate path.
     rows = _base_rows(kind, collection_id)
     _attach_related(rows, collection)
     filters = {

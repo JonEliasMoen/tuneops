@@ -9,15 +9,46 @@ wheel is not currently available.
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import sqlite3
 import sys
+import time
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
 import requests
+
+from music_library.telemetry import record_connection, record_database_call
+
+
+LOGGER = logging.getLogger("musicsync")
+SLOW_DATABASE_MS = 250.0
+
+
+def _record_timing(
+    elapsed_ms: float,
+    *,
+    backend: str,
+    operation: str,
+    statements: int = 0,
+    pipeline_calls: int = 0,
+) -> None:
+    record_database_call(
+        elapsed_ms,
+        statements=statements,
+        pipeline_calls=pipeline_calls,
+    )
+    if elapsed_ms >= SLOW_DATABASE_MS:
+        LOGGER.warning(
+            "database.slow backend=%s operation=%s statements=%d duration_ms=%d",
+            backend,
+            operation,
+            statements,
+            round(elapsed_ms),
+        )
 
 
 class DatabaseConfigurationError(RuntimeError):
@@ -167,6 +198,81 @@ class RemoteCursor(Iterable[RemoteRow]):
         return rows
 
 
+class MeasuredSQLiteCursor(Iterable[Any]):
+    """Transparent cursor proxy that counts rows decoded from local SQLite."""
+
+    def __init__(self, cursor: sqlite3.Cursor):
+        self._cursor = cursor
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cursor, name)
+
+    def __iter__(self) -> Iterator[Any]:
+        while True:
+            row = self.fetchone()
+            if row is None:
+                return
+            yield row
+
+    def fetchone(self) -> Any:
+        started = time.perf_counter()
+        row = self._cursor.fetchone()
+        record_database_call(
+            (time.perf_counter() - started) * 1000,
+            rows=1 if row is not None else 0,
+        )
+        return row
+
+    def fetchall(self) -> list[Any]:
+        started = time.perf_counter()
+        rows = self._cursor.fetchall()
+        record_database_call(
+            (time.perf_counter() - started) * 1000,
+            rows=len(rows),
+        )
+        return rows
+
+
+class MeasuredSQLiteConnection(sqlite3.Connection):
+    """SQLite connection subclass exposing the same request counters as Turso."""
+
+    def execute(self, sql: str, parameters: Any = ()) -> MeasuredSQLiteCursor:
+        started = time.perf_counter()
+        try:
+            cursor = super().execute(sql, parameters)
+        finally:
+            _record_timing(
+                (time.perf_counter() - started) * 1000,
+                backend="sqlite", operation="execute", statements=1,
+            )
+        return MeasuredSQLiteCursor(cursor)
+
+    def executemany(self, sql: str, parameter_rows: Iterable[Any]) -> MeasuredSQLiteCursor:
+        rows = list(parameter_rows)
+        started = time.perf_counter()
+        try:
+            cursor = super().executemany(sql, rows)
+        finally:
+            _record_timing(
+                (time.perf_counter() - started) * 1000,
+                backend="sqlite", operation="executemany",
+                statements=len(rows),
+            )
+        return MeasuredSQLiteCursor(cursor)
+
+    def executescript(self, script: str) -> MeasuredSQLiteCursor:
+        started = time.perf_counter()
+        try:
+            cursor = super().executescript(script)
+        finally:
+            _record_timing(
+                (time.perf_counter() - started) * 1000,
+                backend="sqlite", operation="executescript",
+                statements=len(_split_script(script)),
+            )
+        return MeasuredSQLiteCursor(cursor)
+
+
 def _split_script(script: str) -> list[str]:
     statements: list[str] = []
     pending = ""
@@ -214,6 +320,7 @@ class TursoConnection:
     def _pipeline(self, operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if self._closed:
             raise TursoDatabaseError("The Turso connection is closed")
+        started = time.perf_counter()
         try:
             response = self._session.post(
                 urljoin(self._base_url, "v3/pipeline"),
@@ -224,6 +331,13 @@ class TursoConnection:
             payload = response.json()
         except (requests.RequestException, ValueError) as exc:
             raise TursoDatabaseError("The Turso database request failed") from exc
+        finally:
+            _record_timing(
+                (time.perf_counter() - started) * 1000,
+                backend="turso", operation="pipeline",
+                statements=sum(operation.get("type") == "execute" for operation in operations),
+                pipeline_calls=1,
+            )
         self._baton = payload.get("baton")
         if payload.get("base_url"):
             self._base_url = str(payload["base_url"]).rstrip("/") + "/"
@@ -247,6 +361,7 @@ class TursoConnection:
             RemoteRow(columns, [_decode_value(value) for value in values])
             for values in raw.get("rows", [])
         ]
+        record_database_call(0, rows=len(rows))
         rowcount = int(raw.get("affected_row_count", -1))
         last = raw.get("last_insert_rowid")
         return RemoteCursor(
@@ -274,6 +389,29 @@ class TursoConnection:
         if cursor.rowcount > 0:
             self.total_changes += cursor.rowcount
         return cursor
+
+    def execute_batch(
+        self,
+        statements: Sequence[
+            tuple[str, Sequence[Any] | Mapping[str, Any]]
+        ],
+    ) -> list[RemoteCursor]:
+        """Execute heterogeneous statements in one remote pipeline call."""
+        if not statements:
+            return []
+        operations = [
+            {"type": "execute", "stmt": _statement(sql, parameters)}
+            for sql, parameters in statements
+        ]
+        if self._read_only:
+            operations.append({"type": "close"})
+        try:
+            results = self._pipeline(operations)
+        finally:
+            if self._read_only:
+                self._closed = True
+                self._session.close()
+        return [self._cursor(result) for result in results[:len(statements)]]
 
     def executemany(
         self, sql: str, parameter_rows: Iterable[Sequence[Any] | Mapping[str, Any]]
@@ -351,13 +489,28 @@ class TursoConnection:
 def open_connection(
     path: Path, *, remote: bool, read_only: bool = False,
 ) -> sqlite3.Connection | TursoConnection:
+    record_connection()
     if remote:
         url, token = turso_configuration()
         return TursoConnection(url, token, read_only=read_only)
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path, timeout=10)
+    connection = sqlite3.connect(
+        path,
+        timeout=10,
+        factory=MeasuredSQLiteConnection,
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 10000")
     return connection
+
+
+def execute_batch(
+    connection: sqlite3.Connection | TursoConnection,
+    statements: Sequence[tuple[str, Sequence[Any] | Mapping[str, Any]]],
+) -> list[Any]:
+    """Backend-neutral heterogeneous statement batch."""
+    if isinstance(connection, TursoConnection):
+        return connection.execute_batch(statements)
+    return [connection.execute(sql, parameters) for sql, parameters in statements]
 

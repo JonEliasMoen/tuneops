@@ -11,6 +11,9 @@ const queryClient = new QueryClient({
   },
 })
 queryClient.setQueryDefaults(['settings'], { staleTime: 5 * 60_000 })
+queryClient.setQueryDefaults(['dimensions'], { staleTime: Infinity, gcTime: Infinity })
+queryClient.setQueryDefaults(['playlist-options'], { staleTime: 5 * 60_000 })
+queryClient.setQueryDefaults(['watched-mixes'], { staleTime: 5 * 60_000 })
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

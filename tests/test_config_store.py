@@ -153,3 +153,55 @@ def test_empty_unmatched_direction_round_trips(tmp_path, sample_config):
     assert config_store.export(database)["playlists"][0]["unmatched"] == {
         "tidal_to_spotify": []
     }
+
+
+def test_sync_mapping_read_includes_runtime_state_in_one_bundle(tmp_path, sample_config):
+    database = tmp_path / "library.sqlite3"
+    config_store.replace(sample_config, database)
+
+    mappings = config_store.load_sync_mappings(database)
+
+    assert mappings is not None
+    assert mappings[0]["_mapping_id"]
+    assert mappings[0]["future_mapping_value"] == {"keep": True}
+    assert mappings[0]["unmatched"] == sample_config["playlists"][0]["unmatched"]
+
+
+def test_settings_save_does_not_rewrite_mappings_or_top_level_extras(
+    tmp_path, sample_config,
+):
+    database = tmp_path / "library.sqlite3"
+    config_store.replace(sample_config, database)
+    original_mappings = config_store.load_sync_mappings(database)
+
+    config_store.save_settings_bundle(
+        {"dark_mode": False, "country_code": "NO"},
+        [{"id": "compact", "name": "Compact", "fields": ["title"], "future": 1}],
+        sample_config["mix_quick_views"],
+        database,
+    )
+
+    exported = config_store.export(database)
+    assert exported["future_top_level"] == {"keep": True}
+    assert exported["playlists"] == sample_config["playlists"]
+    assert exported["settings"]["dark_mode"] is False
+    assert exported["quick_views"][0]["future"] == 1
+    assert config_store.load_sync_mappings(database) == original_mappings
+
+
+def test_mapping_save_does_not_rewrite_settings_or_views(tmp_path, sample_config):
+    database = tmp_path / "library.sqlite3"
+    config_store.replace(sample_config, database)
+    mappings = config_store.load_sync_mappings(database)
+    assert mappings is not None
+    mappings[0]["name"] = "Renamed"
+
+    config_store.replace_sync_mappings(mappings, database)
+
+    exported = config_store.export(database)
+    assert exported["settings"] == sample_config["settings"]
+    assert exported["quick_views"] == sample_config["quick_views"]
+    assert exported["mix_quick_views"] == sample_config["mix_quick_views"]
+    assert exported["future_top_level"] == sample_config["future_top_level"]
+    assert exported["playlists"][0]["name"] == "Renamed"
+    assert config_store.load_sync_mappings(database)[0]["_mapping_id"] == mappings[0]["_mapping_id"]

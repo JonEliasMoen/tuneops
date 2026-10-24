@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, queryString } from '../../api/client'
@@ -10,6 +10,7 @@ import { MixStopwatch } from './MixStopwatch'
 import { EventMedia } from './EventMedia'
 import { nextSort, normalizeQuickViewFields, selectTrackRange } from './browserLogic'
 import { loadBrowserState, saveBrowserState, type BrowserFilters, type SortState } from './viewState'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 
 const PAGE_SIZE = 200
 const checkedCollections = new Set<string>()
@@ -61,7 +62,7 @@ export function TrackBrowser({ collectionType, collectionId, hideCollectionHeadi
   const [loaded, setLoaded] = useState(PAGE_SIZE)
   const [fieldsOpen, setFieldsOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const deferredQuery = useDeferredValue(query)
+  const deferredQuery = useDebouncedValue(query)
   const [artist, setArtist] = useState('')
   const [keyFilter, setKeyFilter] = useState('')
   const [rating, setRating] = useState('')
@@ -119,7 +120,7 @@ export function TrackBrowser({ collectionType, collectionId, hideCollectionHeadi
   const trackQueryKey = ['tracks', collectionType, collectionId, params] as const
   const tracks = useInfiniteQuery({
     queryKey: trackQueryKey,
-    queryFn: ({ pageParam }) => api<TrackPage>(`/collections/${collectionType}/${encodeURIComponent(collectionId)}/tracks${queryString({ ...params, offset: pageParam, limit: PAGE_SIZE })}`),
+    queryFn: ({ pageParam, signal }) => api<TrackPage>(`/collections/${collectionType}/${encodeURIComponent(collectionId)}/tracks${queryString({ ...params, offset: pageParam, limit: PAGE_SIZE })}`, { signal }),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => lastPage.has_more ? lastPage.offset + lastPage.limit : undefined,
     enabled: initializedKey === collectionKey,

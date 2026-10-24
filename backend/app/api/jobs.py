@@ -10,13 +10,14 @@ import main as engine
 from music_library.database import lastfm_import_summary
 from music_library.database import pending_track, pending_tracks, update_pending_track_candidates, watched_mix
 from music_tools.lastfm import import_scrobbles, reconcile_track_matches
-from music_tools.mixes.service import import_tidal_setlist, mix_for
+from music_tools.mixes.service import import_tidal_setlist, invalidate_mix_snapshot, mix_for
 from music_tools.watched_mixes.tracklist import find_tidal_matches
 
 from ..config import number_setting
 from ..jobs import JOBS
 from ..schemas import JobResponse, MixTidalImportRequest, TracklistSearchRequest
 from ..services.library import CollectionNotFound, descriptor
+from ..services.navigation_cache import invalidate_navigation_snapshot
 
 
 router = APIRouter(tags=["jobs"])
@@ -39,7 +40,9 @@ def job(job_id: str) -> JobResponse:
 @router.post("/sync/run", response_model=JobResponse, status_code=202)
 def run_sync() -> JobResponse:
     def execute(progress):
-        return [asdict(result) for result in engine.run_all_syncs(progress=progress)]
+        result = [asdict(item) for item in engine.run_all_syncs(progress=progress)]
+        invalidate_navigation_snapshot()
+        return result
 
     return JobResponse.model_validate(JOBS.snapshot(JOBS.submit("playlist-sync", execute)))
 
@@ -61,7 +64,7 @@ def run_lastfm_import() -> JobResponse:
     api_key = os.getenv("LASTFM_API_KEY", "")
 
     def execute(progress):
-        return import_scrobbles(
+        result = import_scrobbles(
             username,
             api_key,
             delay_seconds=number_setting(
@@ -69,6 +72,8 @@ def run_lastfm_import() -> JobResponse:
             ),
             progress=progress,
         )
+        invalidate_navigation_snapshot()
+        return result
 
     return JobResponse.model_validate(JOBS.snapshot(JOBS.submit("lastfm-import", execute)))
 
@@ -79,7 +84,9 @@ def run_lastfm_reconcile() -> JobResponse:
 
     def execute(progress):
         progress("Matching cached Last.fm identities to the TIDAL library")
-        return reconcile_track_matches(username)
+        result = reconcile_track_matches(username)
+        invalidate_navigation_snapshot()
+        return result
 
     return JobResponse.model_validate(JOBS.snapshot(JOBS.submit("lastfm-reconcile", execute)))
 
@@ -102,13 +109,16 @@ def refresh_collection(kind: str, collection_id: str, force: bool = False) -> Jo
         if kind == "liked":
             progress("Checking recent TIDAL likes")
             tidal = engine.tidal_client(interactive=False)
-            return engine.maintain_tidal_liked_tracks(
+            result = engine.maintain_tidal_liked_tracks(
                 tidal,
                 engine.load_runtime_settings(),
                 progress=progress,
             )
-        progress(f"Checking {collection['name']} on TIDAL")
-        return engine.refresh_tidal_playlist_cache(collection_id, force=force)
+        else:
+            progress(f"Checking {collection['name']} on TIDAL")
+            result = engine.refresh_tidal_playlist_cache(collection_id, force=force)
+        invalidate_navigation_snapshot()
+        return result
 
     job_kind = f"collection-refresh:{kind}:{collection_id}"
     return JobResponse.model_validate(JOBS.snapshot(JOBS.submit(job_kind, execute)))
@@ -125,6 +135,8 @@ def import_mix_tidal_setlist(folder_name: str, body: MixTidalImportRequest) -> J
         playlist, tracks = import_tidal_setlist(engine, mix, body.tidal_url)
         playlist_name = str(getattr(playlist, "name", "") or "")
         progress(f"Stored {len(tracks)} tracks from {playlist_name or 'the TIDAL playlist'}")
+        invalidate_mix_snapshot()
+        invalidate_navigation_snapshot()
         return {"playlist_name": playlist_name, "tracks": len(tracks)}
 
     return JobResponse.model_validate(

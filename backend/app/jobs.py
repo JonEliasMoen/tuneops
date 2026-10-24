@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -172,12 +173,17 @@ class JobRegistry:
             job.started_at = _now()
             self._persist(job)
         LOGGER.info("job.start id=%s kind=%s", job_id, job.kind)
+        last_progress_persisted = time.monotonic()
 
         def progress(message: str) -> None:
+            nonlocal last_progress_persisted
             with self._lock:
                 job.message = str(message)
                 job.current += 1
-                self._persist(job)
+                now = time.monotonic()
+                if now - last_progress_persisted >= 1.0:
+                    self._persist(job)
+                    last_progress_persisted = now
             LOGGER.info("job.progress id=%s kind=%s message=%r", job_id, job.kind, message)
 
         try:

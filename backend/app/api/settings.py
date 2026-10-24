@@ -17,6 +17,7 @@ from music_library.database import (
 )
 
 from ..schemas import PublicSettings, SettingsPatch, SyncMappings
+from ..services.navigation_cache import invalidate_navigation_snapshot
 
 
 router = APIRouter(tags=["settings"])
@@ -53,7 +54,7 @@ def settings() -> PublicSettings:
 
 @router.patch("/settings", response_model=PublicSettings)
 def patch_settings(body: SettingsPatch) -> PublicSettings:
-    config = engine.load_config()
+    config = engine.load_settings_config()
     values = body.model_dump(exclude_unset=True)
     quick_views = values.pop("quick_views", None)
     mix_quick_views = values.pop("mix_quick_views", None)
@@ -68,13 +69,14 @@ def patch_settings(body: SettingsPatch) -> PublicSettings:
         if defaults > 1:
             raise HTTPException(status_code=422, detail="Only one My Mixes Quick View can be the default")
         config["mix_quick_views"] = mix_quick_views
-    engine.save_config(config)
+    engine.save_settings_config(config)
+    invalidate_navigation_snapshot()
     return _public(config)
 
 
 @router.get("/sync/mappings", response_model=SyncMappings)
 def sync_mappings() -> SyncMappings:
-    return SyncMappings(playlists=engine.load_config().get("playlists", []))
+    return SyncMappings(playlists=engine.load_sync_mappings())
 
 
 @router.get("/settings/orphaned-tracks")
@@ -87,7 +89,9 @@ def get_orphaned_tracks(
 
 @router.delete("/settings/orphaned-tracks")
 def delete_orphaned_tracks() -> dict[str, int]:
-    return clear_orphaned_tidal_tracks()
+    result = clear_orphaned_tidal_tracks()
+    invalidate_navigation_snapshot()
+    return result
 
 
 @router.delete("/settings/orphaned-tracks/{track_id}")
@@ -98,6 +102,7 @@ def delete_orphaned_track(track_id: str) -> dict[str, int]:
             status_code=409,
             detail="The track no longer exists or is no longer orphaned.",
         )
+    invalidate_navigation_snapshot()
     return result
 
 
@@ -156,8 +161,7 @@ def search_sync_playlists(
 
 @router.put("/sync/mappings", response_model=SyncMappings)
 def save_sync_mappings(body: SyncMappings) -> SyncMappings:
-    config = engine.load_config()
-    existing = list(config.get("playlists") or [])
+    existing = engine.load_sync_mappings()
     existing_by_id = {
         str(row.get("_mapping_id")): row
         for row in existing if row.get("_mapping_id")
@@ -185,8 +189,7 @@ def save_sync_mappings(body: SyncMappings) -> SyncMappings:
         row for row in existing
         if row.get("_mapping_id") and str(row.get("_mapping_id")) not in retained_ids
     ]
-    config["playlists"] = merged
-    engine.save_config(config)
+    engine.save_sync_mappings(merged)
     retained_tidal_ids = {
         engine._id(str(row.get("tidal") or ""))
         for row in merged if row.get("tidal")
@@ -199,4 +202,5 @@ def save_sync_mappings(body: SyncMappings) -> SyncMappings:
                 "sync.mapping_removed local_playlist_cache_deleted playlist_id=%s",
                 playlist_id,
             )
+    invalidate_navigation_snapshot()
     return SyncMappings(playlists=merged)

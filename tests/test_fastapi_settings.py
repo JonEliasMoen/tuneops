@@ -29,8 +29,8 @@ def test_public_settings_never_exposes_private_config_values(monkeypatch):
 def test_settings_patch_persists_only_submitted_public_values(monkeypatch):
     config = {"settings": {"dark_mode": True, "provider_secret": "keep"}, "quick_views": []}
     saved: list[dict[str, object]] = []
-    monkeypatch.setattr(settings.engine, "load_config", lambda: config)
-    monkeypatch.setattr(settings.engine, "save_config", lambda value: saved.append(value.copy()))
+    monkeypatch.setattr(settings.engine, "load_settings_config", lambda: config)
+    monkeypatch.setattr(settings.engine, "save_settings_config", lambda value: saved.append(value.copy()))
 
     result = settings.patch_settings(SettingsPatch(dark_mode=False, lastfm_username="Aruzhu"))
 
@@ -42,8 +42,8 @@ def test_settings_patch_persists_only_submitted_public_values(monkeypatch):
 
 def test_settings_patch_persists_default_sort_direction(monkeypatch):
     config = {"settings": {}, "quick_views": []}
-    monkeypatch.setattr(settings.engine, "load_config", lambda: config)
-    monkeypatch.setattr(settings.engine, "save_config", lambda _value: None)
+    monkeypatch.setattr(settings.engine, "load_settings_config", lambda: config)
+    monkeypatch.setattr(settings.engine, "save_settings_config", lambda _value: None)
 
     result = settings.patch_settings(SettingsPatch(default_sort_direction="desc"))
 
@@ -53,8 +53,8 @@ def test_settings_patch_persists_default_sort_direction(monkeypatch):
 
 def test_settings_rejects_multiple_default_quick_views_without_saving(monkeypatch):
     config = {"settings": {}, "quick_views": []}
-    monkeypatch.setattr(settings.engine, "load_config", lambda: config)
-    monkeypatch.setattr(settings.engine, "save_config", lambda _value: pytest.fail("invalid configuration must not save"))
+    monkeypatch.setattr(settings.engine, "load_settings_config", lambda: config)
+    monkeypatch.setattr(settings.engine, "save_settings_config", lambda _value: pytest.fail("invalid configuration must not save"))
 
     with pytest.raises(HTTPException) as raised:
         settings.patch_settings(SettingsPatch(quick_views=[
@@ -67,8 +67,8 @@ def test_settings_rejects_multiple_default_quick_views_without_saving(monkeypatc
 
 def test_settings_rejects_multiple_default_mix_quick_views_without_saving(monkeypatch):
     config = {"settings": {}, "quick_views": [], "mix_quick_views": []}
-    monkeypatch.setattr(settings.engine, "load_config", lambda: config)
-    monkeypatch.setattr(settings.engine, "save_config", lambda _value: pytest.fail("invalid configuration must not save"))
+    monkeypatch.setattr(settings.engine, "load_settings_config", lambda: config)
+    monkeypatch.setattr(settings.engine, "save_settings_config", lambda _value: pytest.fail("invalid configuration must not save"))
 
     with pytest.raises(HTTPException) as raised:
         settings.patch_settings(SettingsPatch(mix_quick_views=[
@@ -90,8 +90,8 @@ def test_mapping_save_preserves_existing_sync_state(monkeypatch):
         }]
     }
     saved: list[dict[str, object]] = []
-    monkeypatch.setattr(settings.engine, "load_config", lambda: config)
-    monkeypatch.setattr(settings.engine, "save_config", lambda value: saved.append(value.copy()))
+    monkeypatch.setattr(settings.engine, "load_sync_mappings", lambda: config["playlists"])
+    monkeypatch.setattr(settings.engine, "save_sync_mappings", lambda value: saved.extend(value))
 
     result = settings.save_sync_mappings(SyncMappings(playlists=[{
         "name": "Renamed playlist", "direction": "tidal_cache", "collection_type": "event",
@@ -107,8 +107,8 @@ def test_mapping_save_preserves_existing_sync_state(monkeypatch):
 
 
 def test_mapping_save_rejects_invalid_direction_without_saving(monkeypatch):
-    monkeypatch.setattr(settings.engine, "load_config", lambda: {"playlists": []})
-    monkeypatch.setattr(settings.engine, "save_config", lambda _value: pytest.fail("invalid mapping must not save"))
+    monkeypatch.setattr(settings.engine, "load_sync_mappings", lambda: [])
+    monkeypatch.setattr(settings.engine, "save_sync_mappings", lambda _value: pytest.fail("invalid mapping must not save"))
 
     with pytest.raises(HTTPException) as raised:
         settings.save_sync_mappings(SyncMappings(playlists=[{
@@ -125,8 +125,8 @@ def test_mapping_removal_deletes_only_unreferenced_local_tidal_cache(monkeypatch
         {"_mapping_id": "three", "name": "Gone", "direction": "tidal_cache", "collection_type": "source", "tidal": "https://tidal.com/playlist/remove-me"},
     ]}
     deleted: list[str] = []
-    monkeypatch.setattr(settings.engine, "load_config", lambda: config)
-    monkeypatch.setattr(settings.engine, "save_config", lambda _value: None)
+    monkeypatch.setattr(settings.engine, "load_sync_mappings", lambda: config["playlists"])
+    monkeypatch.setattr(settings.engine, "save_sync_mappings", lambda _value: None)
     monkeypatch.setattr(settings, "delete_tidal_playlist_cache", deleted.append)
 
     settings.save_sync_mappings(SyncMappings(playlists=[

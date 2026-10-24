@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import secrets
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,11 +16,17 @@ from typing import Any
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from spotipy.cache_handler import CacheHandler
 
-from music_library.database import DATABASE_PATH, connect, initialize
+from music_library.database import DATABASE_PATH, connect, connect_readonly, initialize
 
 
 SUPPORTED_PROVIDERS = frozenset({"spotify", "tidal", "youtube"})
 CREDENTIAL_SCHEMA_VERSION = 1
+CONNECTION_METADATA_CACHE_SECONDS = 15.0
+
+
+_CONNECTION_METADATA_CACHE: dict[
+    tuple[str, str], tuple[float, dict[str, dict[str, Any]]]
+] = {}
 
 
 class CredentialConfigurationError(RuntimeError):
@@ -60,20 +67,29 @@ def ensure_user(
     now = _now()
     initialize(path)
     with connect(path) as connection:
-        connection.execute(
-            """
-            INSERT INTO app_users(id, display_name, status, created_at, updated_at)
-            VALUES(?, ?, 'active', ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                display_name=CASE
-                    WHEN excluded.display_name != '' THEN excluded.display_name
-                    ELSE app_users.display_name
-                END,
-                updated_at=excluded.updated_at
-            """,
-            (resolved, str(display_name or ""), now, now),
-        )
+        _ensure_user(connection, resolved, display_name, now)
     return resolved
+
+
+def _ensure_user(
+    connection: Any,
+    user_id: str,
+    display_name: str,
+    now: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO app_users(id, display_name, status, created_at, updated_at)
+        VALUES(?, ?, 'active', ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            display_name=CASE
+                WHEN excluded.display_name != '' THEN excluded.display_name
+                ELSE app_users.display_name
+            END,
+            updated_at=excluded.updated_at
+        """,
+        (user_id, str(display_name or ""), now, now),
+    )
 
 
 def _provider(value: str) -> str:
@@ -85,6 +101,18 @@ def _provider(value: str) -> str:
 
 def _connection_id(user_id: str, provider: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"tuneops:{user_id}:{provider}"))
+
+
+def _metadata_cache_key(path: Path, user_id: str) -> tuple[str, str]:
+    return str(Path(path).resolve()), user_id
+
+
+def _invalidate_connection_metadata(
+    user_id: str,
+    *,
+    path: Path = DATABASE_PATH,
+) -> None:
+    _CONNECTION_METADATA_CACHE.pop(_metadata_cache_key(path, user_id), None)
 
 
 class CredentialCipher:
@@ -140,10 +168,38 @@ def connection_metadata(
     path: Path = DATABASE_PATH,
 ) -> dict[str, Any] | None:
     provider = _provider(provider)
+    return connection_metadata_for_providers(
+        (provider,), user_id=user_id, path=path
+    ).get(provider)
+
+
+def connection_metadata_for_providers(
+    providers: tuple[str, ...] | list[str] | frozenset[str] = tuple(SUPPORTED_PROVIDERS),
+    *,
+    user_id: str | None = None,
+    path: Path = DATABASE_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Return non-secret provider metadata using one read-only query.
+
+    The short process-local cache contains connection status only. Decrypted
+    credential payloads never enter it.
+    """
+    requested = tuple(dict.fromkeys(_provider(item) for item in providers))
+    if not requested:
+        return {}
     resolved = user_id or current_user_id()
+    cache_key = _metadata_cache_key(path, resolved)
+    cached = _CONNECTION_METADATA_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] < CONNECTION_METADATA_CACHE_SECONDS:
+        return {
+            provider: dict(cached[1][provider])
+            for provider in requested
+            if provider in cached[1]
+        }
     initialize(path)
-    with connect(path) as connection:
-        row = connection.execute(
+    with connect_readonly(path) as connection:
+        rows = connection.execute(
             """
             SELECT id, user_id, provider, provider_account_id, display_label,
                    status, scopes_json, expires_at, last_refreshed_at,
@@ -151,11 +207,36 @@ def connection_metadata(
                    credential_schema_version, credential_version,
                    created_at, updated_at
             FROM provider_connections
-            WHERE user_id=? AND provider=?
+            WHERE user_id=?
             """,
-            (resolved, provider),
-        ).fetchone()
-    return dict(row) if row else None
+            (resolved,),
+        ).fetchall()
+    all_metadata = {str(row["provider"]): dict(row) for row in rows}
+    _CONNECTION_METADATA_CACHE[cache_key] = (now, all_metadata)
+    return {
+        provider: dict(all_metadata[provider])
+        for provider in requested
+        if provider in all_metadata
+    }
+
+
+def credential_availability(
+    providers: dict[str, Path | None],
+    *,
+    user_id: str | None = None,
+    path: Path = DATABASE_PATH,
+) -> dict[str, bool]:
+    """Check several providers without multiplying database transactions."""
+    normalized = {_provider(provider): legacy for provider, legacy in providers.items()}
+    if not storage_enabled():
+        return {
+            provider: bool(legacy_file and legacy_file.exists())
+            for provider, legacy_file in normalized.items()
+        }
+    metadata = connection_metadata_for_providers(
+        tuple(normalized), user_id=user_id, path=path
+    )
+    return {provider: provider in metadata for provider in normalized}
 
 
 def credentials_available(
@@ -214,14 +295,16 @@ def save_credentials(
     if not isinstance(payload, dict) or not payload:
         raise ValueError("Credential payload must be a non-empty object")
     provider = _provider(provider)
-    resolved = ensure_user(user_id, path=path)
+    resolved = str(uuid.UUID(user_id or current_user_id()))
     connection_id = _connection_id(resolved, provider)
     credential_cipher = cipher or CredentialCipher()
     ciphertext = credential_cipher.encrypt(resolved, provider, connection_id, payload)
     now = _now()
     expiry = str(expires_at) if expires_at not in (None, "") else None
+    initialize(path)
     with connect(path) as connection:
-        connection.execute(
+        _ensure_user(connection, resolved, "Jon", now)
+        metadata = connection.execute(
             """
             INSERT INTO provider_connections(
                 id, user_id, provider, provider_account_id, display_label,
@@ -248,6 +331,11 @@ def save_credentials(
                 credential_schema_version=excluded.credential_schema_version,
                 credential_version=provider_connections.credential_version + 1,
                 updated_at=excluded.updated_at
+            RETURNING id, user_id, provider, provider_account_id, display_label,
+                      status, scopes_json, expires_at, last_refreshed_at,
+                      last_verified_at, credential_key_id,
+                      credential_schema_version, credential_version,
+                      created_at, updated_at
             """,
             (
                 connection_id, resolved, provider, provider_account_id,
@@ -255,7 +343,7 @@ def save_credentials(
                 expiry, now, ciphertext, credential_cipher.key_id,
                 CREDENTIAL_SCHEMA_VERSION, now, now,
             ),
-        )
+        ).fetchone()
         connection.execute(
             """
             INSERT INTO credential_audit_events(
@@ -264,7 +352,8 @@ def save_credentials(
             """,
             (str(uuid.uuid4()), resolved, provider, event_type, now),
         )
-    return connection_metadata(provider, user_id=resolved, path=path) or {}
+    _invalidate_connection_metadata(resolved, path=path)
+    return dict(metadata) if metadata else {}
 
 
 def read_json_file(path: Path) -> dict[str, Any]:

@@ -38,7 +38,11 @@ def _setup(monkeypatch, memberships, playlists):
         {"id": playlist_id, "name": playlist_id, "collection_type": "playlist"}
         for playlist_id in playlists
     ]
-    monkeypatch.setattr(actions, "tidal_indexed_playlists", lambda: indexed)
+    monkeypatch.setattr(
+        actions,
+        "tidal_indexed_playlist",
+        lambda playlist_id: next((item for item in indexed if item["id"] == playlist_id), None),
+    )
     monkeypatch.setattr(actions, "tidal_playlists_for_tracks", lambda ids: {track_id: memberships.get(track_id, []) for track_id in ids})
     monkeypatch.setattr(actions.engine, "tidal_client", lambda interactive=False: FakeSession(playlists))
     monkeypatch.setattr(actions.engine, "_call", lambda _provider, _action, callback, **_context: callback())
@@ -48,7 +52,13 @@ def test_add_skips_existing_membership_and_updates_cache_after_provider(monkeypa
     destination = FakePlaylist("destination")
     _setup(monkeypatch, {"one": [{"id": "destination"}], "two": []}, {"destination": destination})
     cached: list[tuple[str, str]] = []
-    monkeypatch.setattr(actions, "add_tidal_playlist_membership", lambda playlist_id, track_id: cached.append((playlist_id, track_id)))
+    monkeypatch.setattr(
+        actions,
+        "apply_tidal_playlist_membership_changes",
+        lambda _action, playlist_id, track_ids, _source=None: cached.extend(
+            (playlist_id, track_id) for track_id in track_ids
+        ),
+    )
 
     result = actions.mutate_playlist_tracks("add", ["one", "two"], "destination")
 
@@ -62,8 +72,7 @@ def test_move_rolls_back_destination_when_source_remove_fails(monkeypatch):
     destination = FakePlaylist("destination")
     source = FakePlaylist("source", fail_remove=True)
     _setup(monkeypatch, {"track": [{"id": "source"}]}, {"destination": destination, "source": source})
-    monkeypatch.setattr(actions, "add_tidal_playlist_membership", lambda *_: pytest.fail("cache must not update"))
-    monkeypatch.setattr(actions, "remove_tidal_playlist_membership", lambda *_: pytest.fail("cache must not update"))
+    monkeypatch.setattr(actions, "apply_tidal_playlist_membership_changes", lambda *_: pytest.fail("cache must not update"))
 
     result = actions.mutate_playlist_tracks("move", ["track"], "destination", "source")
 
@@ -78,7 +87,13 @@ def test_bulk_action_reports_partial_failures_and_keeps_successful_cache_updates
     destination = FakePlaylist("destination")
     _setup(monkeypatch, {"one": [], "two": []}, {"destination": destination})
     cached: list[tuple[str, str]] = []
-    monkeypatch.setattr(actions, "add_tidal_playlist_membership", lambda playlist_id, track_id: cached.append((playlist_id, track_id)))
+    monkeypatch.setattr(
+        actions,
+        "apply_tidal_playlist_membership_changes",
+        lambda _action, playlist_id, track_ids, _source=None: cached.extend(
+            (playlist_id, track_id) for track_id in track_ids
+        ),
+    )
     original_add = destination.add
 
     def add(track_ids, allow_duplicates=False):
@@ -100,10 +115,10 @@ def test_like_tracks_skips_cached_likes_and_mirrors_provider_success(monkeypatch
     session = FakeSession({})
     monkeypatch.setattr(actions.engine, "tidal_client", lambda interactive=False: session)
     monkeypatch.setattr(actions.engine, "_call", lambda _provider, _action, callback, **_context: callback())
-    monkeypatch.setattr(actions, "tidal_liked_track_ids", lambda user_id: ["already"])
-    monkeypatch.setattr(actions, "tidal_track_by_id", lambda track_id: {"id": track_id, "title": "Track", "artist": "Artist"})
+    monkeypatch.setattr(actions, "tidal_liked_membership_ids", lambda user_id, ids: {"already"})
+    monkeypatch.setattr(actions, "tidal_tracks_by_ids", lambda ids: {track_id: {"id": track_id} for track_id in ids})
     cached = []
-    monkeypatch.setattr(actions, "add_tidal_liked_track", lambda user_id, record: cached.append((user_id, record["id"])))
+    monkeypatch.setattr(actions, "add_tidal_liked_memberships", lambda user_id, ids: cached.extend((user_id, track_id) for track_id in ids))
 
     result = actions.like_tidal_tracks(["already", "new", "new"])
 

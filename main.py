@@ -262,6 +262,17 @@ def load_runtime_settings(path: Path = CONFIG_PATH) -> dict[str, Any]:
     return config_store.load_runtime_settings() or {}
 
 
+def load_sync_mappings(path: Path = CONFIG_PATH) -> list[dict[str, Any]]:
+    """Load mapping state without settings or Quick Views."""
+    if not _uses_sqlite_config(path):
+        return list(_load_json_config(path).get("playlists") or [])
+    stored = config_store.load_sync_mappings()
+    if stored is not None:
+        return stored
+    load_config(path)
+    return config_store.load_sync_mappings() or []
+
+
 def save_config(data: dict[str, Any], path: Path = CONFIG_PATH) -> None:
     if _uses_sqlite_config(path):
         config_store.replace(data)
@@ -270,6 +281,33 @@ def save_config(data: dict[str, Any], path: Path = CONFIG_PATH) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     temporary.replace(path)
+
+
+def save_settings_config(data: dict[str, Any], path: Path = CONFIG_PATH) -> None:
+    """Persist only settings and Quick Views, preserving all other config."""
+    if _uses_sqlite_config(path):
+        config_store.save_settings_bundle(
+            dict(data.get("settings") or {}),
+            list(data.get("quick_views") or []),
+            list(data.get("mix_quick_views") or []),
+        )
+        return
+    config = _load_json_config(path)
+    for key in ("settings", "quick_views", "mix_quick_views"):
+        config[key] = data.get(key, {} if key == "settings" else [])
+    save_config(config, path)
+
+
+def save_sync_mappings(
+    mappings: list[dict[str, Any]], path: Path = CONFIG_PATH,
+) -> None:
+    """Persist only playlist-sync mappings and their runtime state."""
+    if _uses_sqlite_config(path):
+        config_store.replace_sync_mappings(mappings)
+        return
+    config = _load_json_config(path)
+    config["playlists"] = mappings
+    save_config(config, path)
 
 
 def _connection_state() -> dict[str, str]:
@@ -1119,7 +1157,10 @@ def maintain_tidal_liked_tracks(
 
 def run_all_syncs(path: Path = CONFIG_PATH, progress: Callable[[str], None] | None = None) -> list[SyncResult]:
     progress = progress or (lambda _: None)
-    config = load_config(path)
+    config = {
+        "settings": load_runtime_settings(path),
+        "playlists": load_sync_mappings(path),
+    }
     enabled = [item for item in config["playlists"] if item.get("enabled", True)]
     maintain_liked = config["settings"].get("maintain_liked_tracks_cache", True)
     LOGGER.info("sync.run start config=%s enabled_playlists=%d", path, len(enabled))
@@ -1179,7 +1220,7 @@ def run_all_syncs(path: Path = CONFIG_PATH, progress: Callable[[str], None] | No
             results.append(SyncResult(entry.get("spotify", ""), entry.get("tidal", ""), error=str(exc), label=entry.get("name", "")))
         finally:
             CURRENT_MAPPING.reset(mapping_token)
-    save_config(config, path)  # Stores IDs of playlists created during this run.
+    save_sync_mappings(config["playlists"], path)  # Stores IDs created during this run.
     LOGGER.info("sync.run complete playlists=%d failures=%d", len(results), sum(bool(item.error) for item in results))
     return results
 

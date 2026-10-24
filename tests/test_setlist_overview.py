@@ -4,6 +4,8 @@ from music_library.database import (
     connect,
     initialize,
     setlist_metadata,
+    setlist_metadata_for,
+    save_setlist_urls,
     store_youtube_mix_analytics,
     store_youtube_reach_reports,
 )
@@ -34,8 +36,24 @@ def test_setlist_metadata_includes_track_count_and_updated_timestamp(tmp_path):
     result = setlist_metadata(database)["darkprog"]
 
     assert result["track_count"] == 2
+    assert setlist_metadata_for("darkprog", database) == result
     assert result["updated_at"] == "2026-10-02T12:30:00"
     assert result["tidal_playlist_name"] == "DJ Set Darkprog"
+
+
+def test_save_setlist_urls_updates_both_fields_together(tmp_path):
+    database = tmp_path / "library.sqlite3"
+
+    save_setlist_urls(
+        "darkprog",
+        "https://youtu.be/abc123",
+        "https://tidal.com/playlist/playlist-id",
+        database,
+    )
+
+    result = setlist_metadata_for("darkprog", database)
+    assert result["youtube_url"] == "https://youtu.be/abc123"
+    assert result["tidal_url"] == "https://tidal.com/playlist/playlist-id"
 
 
 def test_setlist_metadata_includes_independent_cached_youtube_analytics(tmp_path):

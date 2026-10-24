@@ -3,10 +3,20 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from backend.app.services import library
 from backend.app.api import library as library_api
 from backend.app.schemas import EventMediaUpdate
 from backend.app.schemas import MixUrlsUpdate, WatchedMixRatingUpdate, WatchedMixUpdate
+from backend.app.services.navigation_cache import invalidate_navigation_snapshot
+
+
+@pytest.fixture(autouse=True)
+def _clear_navigation_cache():
+    invalidate_navigation_snapshot()
+    yield
+    invalidate_navigation_snapshot()
 
 
 def _row(track_id: str, title: str, timestamp: float | None, bpm: str = ""):
@@ -33,8 +43,24 @@ def test_collection_sort_is_global_and_keeps_missing_dates_last(monkeypatch):
         _row("middle", "Middle", 20),
     ]
     monkeypatch.setattr(library, "descriptor", lambda *_: {"type": "liked", "id": "liked", "name": "Liked", "collection_type": ""})
-    monkeypatch.setattr(library, "_base_rows", lambda *_: rows)
-    monkeypatch.setattr(library, "_attach_related", lambda *_: None)
+    monkeypatch.setattr(library.engine, "load_runtime_settings", lambda: {})
+    monkeypatch.setattr(library, "cached_track_rows", lambda records: [dict(row) for row in records])
+    monkeypatch.setattr(library, "collection_relationships", lambda ids: {track_id: {} for track_id in ids})
+    stats = {
+        "top_artists": [], "artist_options": [], "bpm_min": None,
+        "bpm_max": None, "vibe": "", "vibe_count": 0,
+    }
+    ordered = library._sort(rows, "date_added", "desc")
+    monkeypatch.setattr(
+        library, "collection_track_page",
+        lambda *_args, offset, limit, **_kwargs: (ordered[offset:offset + limit], len(ordered)),
+    )
+    monkeypatch.setattr(
+        library, "collection_track_page_with_stats",
+        lambda *_args, offset, limit, **_kwargs: (
+            ordered[offset:offset + limit], len(ordered), stats,
+        ),
+    )
 
     page = library.collection_page("liked", "liked", offset=0, limit=2, sort_field="date_added", sort_direction="desc")
 
@@ -48,8 +74,20 @@ def test_collection_sort_is_global_and_keeps_missing_dates_last(monkeypatch):
 def test_collection_filters_before_pagination(monkeypatch):
     rows = [_row(str(index), f"Track {index}", float(index), bpm=str(100 + index)) for index in range(20)]
     monkeypatch.setattr(library, "descriptor", lambda *_: {"type": "search", "id": "library", "name": "Search", "collection_type": ""})
-    monkeypatch.setattr(library, "_base_rows", lambda *_: rows)
-    monkeypatch.setattr(library, "_attach_related", lambda *_: None)
+    monkeypatch.setattr(library.engine, "load_runtime_settings", lambda: {})
+    monkeypatch.setattr(library, "cached_track_rows", lambda records: [dict(row) for row in records])
+    monkeypatch.setattr(library, "collection_relationships", lambda ids: {track_id: {} for track_id in ids})
+    stats = {
+        "top_artists": [], "artist_options": [], "bpm_min": None,
+        "bpm_max": None, "vibe": "", "vibe_count": 0,
+    }
+    filtered = [row for row in rows if int(row["id"]) >= 10 and "track 1" in row["title"].casefold()]
+    monkeypatch.setattr(
+        library, "collection_track_page_with_stats",
+        lambda *_args, offset, limit, **_kwargs: (
+            filtered[offset:offset + limit], len(filtered), stats,
+        ),
+    )
 
     page = library.collection_page("search", "library", offset=0, limit=3, query="track 1", bpm_min=110)
 
@@ -125,8 +163,18 @@ def test_collection_length_sort_uses_duration_not_display_text(monkeypatch):
         {**_row("short", "Short", 3), "length": "3:04"},
     ]
     monkeypatch.setattr(library, "descriptor", lambda *_: {"type": "liked", "id": "liked", "name": "Liked", "collection_type": ""})
-    monkeypatch.setattr(library, "_base_rows", lambda *_: rows)
-    monkeypatch.setattr(library, "_attach_related", lambda *_: None)
+    monkeypatch.setattr(library.engine, "load_runtime_settings", lambda: {})
+    monkeypatch.setattr(library, "cached_track_rows", lambda records: [dict(row) for row in records])
+    monkeypatch.setattr(library, "collection_relationships", lambda ids: {track_id: {} for track_id in ids})
+    stats = {
+        "top_artists": [], "artist_options": [], "bpm_min": None,
+        "bpm_max": None, "vibe": "", "vibe_count": 0,
+    }
+    ordered = [rows[2], rows[0], rows[1]]
+    monkeypatch.setattr(
+        library, "collection_track_page_with_stats",
+        lambda *_args, **_kwargs: (ordered, len(ordered), stats),
+    )
 
     page = library.collection_page("liked", "liked", offset=0, limit=10, sort_field="length", sort_direction="asc")
 
@@ -218,6 +266,29 @@ def test_navigation_puts_overview_first_in_my_mixes(monkeypatch):
     ]
 
 
+def test_navigation_reuses_short_lived_snapshot(monkeypatch):
+    calls = {"playlists": 0}
+
+    def playlists():
+        calls["playlists"] += 1
+        return []
+
+    monkeypatch.setattr(library_api.engine, "load_runtime_settings", lambda: {})
+    monkeypatch.setattr(library_api, "tidal_indexed_playlists", playlists)
+    monkeypatch.setattr(
+        library_api, "lastfm_history_navigation",
+        lambda *_: {"years": [], "months": []},
+    )
+    monkeypatch.setattr(library_api, "watched_mixes", lambda: [])
+    monkeypatch.setattr(library_api, "discover_mixes", lambda: [])
+
+    first = library_api.navigation()
+    second = library_api.navigation()
+
+    assert first == second
+    assert calls["playlists"] == 1
+
+
 def test_history_overall_uses_the_configured_yearly_top_tracks(monkeypatch):
     monkeypatch.setattr(library.engine, "load_runtime_settings", lambda: {"lastfm_username": "Aruzhu", "history_top_tracks": 20})
     monkeypatch.setattr(library, "lastfm_year_top_tracks", lambda username, year, limit: [{
@@ -245,13 +316,9 @@ def test_history_root_overall_uses_all_cached_scrobbles(monkeypatch):
 def test_event_media_reads_stored_links_without_fetching_concert_archives(monkeypatch):
     monkeypatch.setattr(
         library_api,
-        "descriptor",
-        lambda *_: {"type": "event", "id": "event-id", "name": "ARTBAT Oslo", "collection_type": "event"},
-    )
-    monkeypatch.setattr(
-        library_api,
-        "event_links",
+        "tidal_event_with_links",
         lambda *_: {
+            "event_name": "ARTBAT Oslo",
             "youtube_url": "https://youtube.com/watch?v=abc",
             "concert_archives_url": "https://concertarchives.org/example",
             "updated_at": "2026-09-24T00:00:00+00:00",
@@ -270,18 +337,16 @@ def test_event_media_save_validates_and_persists_only_user_links(monkeypatch):
     saved: dict[str, str] = {}
     monkeypatch.setattr(
         library_api,
-        "descriptor",
-        lambda *_: {"type": "event", "id": "event-id", "name": "ARTBAT Oslo", "collection_type": "event"},
-    )
-    monkeypatch.setattr(
-        library_api,
-        "save_event_links",
-        lambda playlist_id, youtube, concert: saved.update(id=playlist_id, youtube=youtube, concert=concert),
-    )
-    monkeypatch.setattr(
-        library_api,
-        "event_links",
-        lambda *_: {"youtube_url": saved["youtube"], "concert_archives_url": saved["concert"], "updated_at": "now"},
+        "save_tidal_event_links",
+        lambda playlist_id, youtube, concert: (
+            saved.update(id=playlist_id, youtube=youtube, concert=concert)
+            or {
+                "event_name": "ARTBAT Oslo",
+                "youtube_url": youtube,
+                "concert_archives_url": concert,
+                "updated_at": "now",
+            }
+        ),
     )
     monkeypatch.setattr(library_api, "youtube_video_id", lambda _url: "abc")
     monkeypatch.setattr(library_api, "youtube_thumbnail_url", lambda _url: "thumb")
@@ -303,13 +368,13 @@ def test_mix_url_editor_reuses_existing_setlist_storage(monkeypatch):
     saved: list[tuple[str, str, str]] = []
     monkeypatch.setattr(library_api, "mix_for", lambda _name: object())
     monkeypatch.setattr(library_api, "youtube_video_id", lambda _url: "video-id")
-    monkeypatch.setattr(library_api, "save_setlist_youtube_url", lambda name, url: saved.append(("youtube", name, url)))
-    monkeypatch.setattr(library_api, "save_setlist_tidal_url", lambda name, url: saved.append(("tidal", name, url)))
+    monkeypatch.setattr(library_api, "save_setlist_urls", lambda name, youtube, tidal: saved.append((name, youtube, tidal)))
+    monkeypatch.setattr(library_api, "invalidate_mix_snapshot", lambda: None)
     monkeypatch.setattr(library_api, "mix_detail", lambda name: {"folder_name": name})
 
     result = library_api.save_mix_urls("darkprog", MixUrlsUpdate(youtube_url="https://youtu.be/abc123", tidal_url="https://tidal.com/playlist/abc"))
 
-    assert saved == [("youtube", "darkprog", "https://youtu.be/abc123"), ("tidal", "darkprog", "https://tidal.com/playlist/abc")]
+    assert saved == [("darkprog", "https://youtu.be/abc123", "https://tidal.com/playlist/abc")]
     assert result == {"folder_name": "darkprog"}
 
 

@@ -1,9 +1,10 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, queryString } from '../../api/client'
 import type { ArtistOverviewPage, ArtistOverviewRow, PublicSettings } from '../../api/types'
 import { nextTableSort, usePersistentTableSort, useTableKeyboardNavigation } from '../../components/dataTableState'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 
 const PAGE_SIZE = 200
 const QUERY_STORAGE_KEY = 'musicsync.artist-overview-query'
@@ -16,18 +17,18 @@ export function ArtistsPage() {
   const sentinelRef = useRef<HTMLDivElement>(null)
   const restoredScroll = useRef(false)
   const [query, setQuery] = useState(() => sessionStorage.getItem(QUERY_STORAGE_KEY) || '')
-  const deferredQuery = useDeferredValue(query)
+  const deferredQuery = useDebouncedValue(query)
   const settings = useQuery({ queryKey: ['settings'], queryFn: () => api<PublicSettings>('/settings') })
   const [sort, setSort] = usePersistentTableSort<ArtistSortField>('musicsync.table-sort:artists', null)
   const pages = useInfiniteQuery({
     queryKey: ['artists', deferredQuery, sort],
-    queryFn: ({ pageParam }) => api<ArtistOverviewPage>(`/artists${queryString({
+    queryFn: ({ pageParam, signal }) => api<ArtistOverviewPage>(`/artists${queryString({
       offset: pageParam,
       limit: PAGE_SIZE,
       q: deferredQuery,
       sort_field: sort?.field || 'name',
       sort_direction: sort?.direction || 'asc',
-    })}`),
+    })}`, { signal }),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => lastPage.has_more ? lastPage.offset + lastPage.limit : undefined,
   })

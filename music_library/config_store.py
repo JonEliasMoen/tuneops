@@ -369,6 +369,239 @@ def load_runtime_settings(path: Path = DATABASE_PATH) -> dict[str, Any] | None:
     return settings if isinstance(settings, dict) else {}
 
 
+def load_sync_mappings(
+    path: Path = DATABASE_PATH, *, include_internal: bool = True,
+) -> list[dict[str, Any]] | None:
+    """Load mappings and unmatched state with one read-only SQL statement."""
+    initialize(path)
+    with connect_readonly(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                mapping.id AS mapping_id,
+                mapping.name,
+                mapping.enabled,
+                mapping.direction,
+                mapping.collection_type,
+                mapping.spotify_reference,
+                mapping.tidal_reference,
+                mapping.tidal_name,
+                mapping.last_sync,
+                mapping.source_version,
+                mapping.position AS mapping_position,
+                mapping.extra_json AS mapping_extra_json,
+                unmatched.sync_direction,
+                unmatched.position AS unmatched_position,
+                unmatched.metadata_json
+            FROM config_store_meta AS meta
+            LEFT JOIN sync_mappings AS mapping ON 1=1
+            LEFT JOIN sync_unmatched_tracks AS unmatched
+              ON unmatched.mapping_id=mapping.id
+            WHERE meta.profile_id=?
+            ORDER BY mapping.position, mapping.id,
+                     unmatched.sync_direction, unmatched.position
+            """,
+            (PROFILE_ID,),
+        ).fetchall()
+    if not rows:
+        return None
+
+    mappings: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    unmatched_by_id: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for row in rows:
+        mapping_id = str(row["mapping_id"] or "")
+        if not mapping_id:
+            continue
+        mapping = by_id.get(mapping_id)
+        if mapping is None:
+            mapping = _object(row["mapping_extra_json"], {})
+            if not isinstance(mapping, dict):
+                mapping = {}
+            unmatched_present = bool(mapping.pop("_config_unmatched_present", False))
+            empty_directions = mapping.pop("_config_empty_unmatched_directions", [])
+            mapping.update({
+                "enabled": bool(row["enabled"]),
+                "name": row["name"],
+                "direction": row["direction"],
+                "collection_type": row["collection_type"],
+                "spotify": row["spotify_reference"],
+                "tidal": row["tidal_reference"],
+                "tidal_name": row["tidal_name"],
+            })
+            if row["last_sync"] is not None:
+                mapping["last_sync"] = row["last_sync"]
+            if row["source_version"] is not None:
+                mapping["source_version"] = row["source_version"]
+            if include_internal:
+                mapping["_mapping_id"] = mapping_id
+            unmatched = {
+                str(direction): [] for direction in empty_directions
+            } if isinstance(empty_directions, list) else {}
+            if unmatched_present:
+                mapping["unmatched"] = unmatched
+            mappings.append(mapping)
+            by_id[mapping_id] = mapping
+            unmatched_by_id[mapping_id] = unmatched
+        if row["sync_direction"] is not None:
+            payload = _object(row["metadata_json"], {})
+            if isinstance(payload, dict):
+                unmatched_by_id[mapping_id].setdefault(
+                    str(row["sync_direction"]), []
+                ).append(payload)
+                mapping["unmatched"] = unmatched_by_id[mapping_id]
+    return mappings
+
+
+def _write_sync_mappings(
+    connection: Any, mappings: list[dict[str, Any]], now: str,
+) -> None:
+    connection.execute("DELETE FROM sync_mappings")
+    for position, raw_mapping in enumerate(mappings):
+        if not isinstance(raw_mapping, dict):
+            raise ValueError(f"Playlist mapping {position + 1} must be an object")
+        mapping = dict(raw_mapping)
+        direction = str(mapping.get("direction") or "spotify_to_tidal")
+        collection_type = str(mapping.get("collection_type") or "playlist")
+        if direction not in {"spotify_to_tidal", "tidal_to_spotify", "tidal_cache"}:
+            raise ValueError(f"Invalid sync direction at mapping {position + 1}")
+        if collection_type not in {"playlist", "event", "source"}:
+            raise ValueError(f"Invalid collection type at mapping {position + 1}")
+        mapping_id = _mapping_id(mapping, position)
+        extra = {key: value for key, value in mapping.items() if key not in _MAPPING_FIELDS}
+        extra["_config_unmatched_present"] = "unmatched" in mapping
+        raw_unmatched = mapping.get("unmatched")
+        extra["_config_empty_unmatched_directions"] = [
+            str(key) for key, value in raw_unmatched.items()
+            if isinstance(raw_unmatched, dict) and isinstance(value, list) and not value
+        ] if isinstance(raw_unmatched, dict) else []
+        connection.execute(
+            """
+            INSERT INTO sync_mappings(
+                id, name, enabled, direction, collection_type,
+                spotify_reference, tidal_reference, tidal_name,
+                last_sync, source_version, position, extra_json,
+                created_at, updated_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                mapping_id, str(mapping.get("name") or ""),
+                int(bool(mapping.get("enabled", True))), direction, collection_type,
+                str(mapping.get("spotify") or ""), str(mapping.get("tidal") or ""),
+                str(mapping.get("tidal_name") or ""),
+                mapping.get("last_sync") or None, mapping.get("source_version") or None,
+                position, _json(extra), now, now,
+            ),
+        )
+        unmatched = raw_unmatched if isinstance(raw_unmatched, dict) else {}
+        for sync_direction, records in unmatched.items():
+            if not isinstance(records, list):
+                continue
+            for item_position, raw_record in enumerate(records):
+                if not isinstance(raw_record, dict):
+                    continue
+                record = dict(raw_record)
+                connection.execute(
+                    """
+                    INSERT INTO sync_unmatched_tracks(
+                        mapping_id, sync_direction, source_track_key, position,
+                        metadata_json, first_seen_at, last_attempted_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        mapping_id, str(sync_direction),
+                        _unmatched_key(record, item_position), item_position,
+                        _json(record), record.get("first_seen_at"),
+                        record.get("last_attempted_at"),
+                    ),
+                )
+
+
+def replace_sync_mappings(
+    mappings: list[dict[str, Any]], path: Path = DATABASE_PATH,
+) -> None:
+    """Atomically replace mappings without rewriting settings or Quick Views."""
+    if not isinstance(mappings, list):
+        raise ValueError("The mappings value must be a list")
+    now = _now()
+    initialize(path)
+    with connect(path) as connection:
+        _write_sync_mappings(connection, mappings, now)
+
+
+def _validate_views(views: Any, config_key: str, view_type: str) -> list[dict[str, Any]]:
+    if not isinstance(views, list):
+        raise ValueError(f"The config '{config_key}' value must be a list")
+    if sum(bool(item.get("default")) for item in views if isinstance(item, dict)) > 1:
+        raise ValueError(f"Only one {view_type} Quick View can be the default")
+    result: list[dict[str, Any]] = []
+    for position, raw_view in enumerate(views):
+        if not isinstance(raw_view, dict):
+            raise ValueError(f"{config_key} item {position + 1} must be an object")
+        view = dict(raw_view)
+        fields = view.get("fields") or []
+        if not isinstance(fields, list):
+            raise ValueError(f"Quick View '{view.get('id') or ''}' fields must be a list")
+        result.append(view)
+    return result
+
+
+def save_settings_bundle(
+    settings: dict[str, Any],
+    quick_views: list[dict[str, Any]],
+    mix_quick_views: list[dict[str, Any]],
+    path: Path = DATABASE_PATH,
+) -> None:
+    """Save settings and views without hydrating or rewriting sync mappings."""
+    if not isinstance(settings, dict):
+        raise ValueError("The config 'settings' value must be an object")
+    view_groups = (
+        ("track", "quick_views", _validate_views(quick_views, "quick_views", "track")),
+        ("mix", "mix_quick_views", _validate_views(mix_quick_views, "mix_quick_views", "mix")),
+    )
+    now = _now()
+    initialize(path)
+    with connect(path) as connection:
+        connection.execute("DELETE FROM quick_views")
+        for view_type, _config_key, views in view_groups:
+            for position, view in enumerate(views):
+                view_id = str(view.get("id") or uuid.uuid4())
+                fields = view.get("fields") or []
+                extra = {key: value for key, value in view.items() if key not in _VIEW_FIELDS}
+                connection.execute(
+                    """
+                    INSERT INTO quick_views(
+                        view_type, id, name, is_default, position,
+                        fields_json, extra_json, created_at, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        view_type, view_id, str(view.get("name") or ""),
+                        int(bool(view.get("default"))), position,
+                        _json([str(field) for field in fields]), _json(extra), now, now,
+                    ),
+                )
+        connection.execute(
+            """
+            INSERT INTO app_settings(profile_id, settings_json, schema_version, updated_at)
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(profile_id) DO UPDATE SET
+                settings_json=excluded.settings_json,
+                schema_version=excluded.schema_version,
+                updated_at=excluded.updated_at
+            """,
+            (PROFILE_ID, _json(settings), SCHEMA_VERSION, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO config_store_meta(profile_id, extra_json, imported_at, updated_at)
+            VALUES(?, '{}', ?, ?)
+            ON CONFLICT(profile_id) DO UPDATE SET updated_at=excluded.updated_at
+            """,
+            (PROFILE_ID, now, now),
+        )
+
+
 def export(path: Path = DATABASE_PATH) -> dict[str, Any] | None:
     """Return a portable document without internal SQLite-only identifiers."""
     return load(path, include_internal=False)

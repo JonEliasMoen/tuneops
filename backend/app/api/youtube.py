@@ -71,8 +71,9 @@ def refresh_youtube_analytics() -> JobResponse:
         raise HTTPException(status_code=409, detail="Connect YouTube Analytics first")
 
     def execute(progress):
+        mixes = discover_mixes()
         mix_by_video: dict[str, str] = {}
-        for mix in discover_mixes():
+        for mix in mixes:
             video_id = youtube_video_id(mix.youtube_url)
             if video_id:
                 mix_by_video[video_id] = mix.folder_name
@@ -82,7 +83,7 @@ def refresh_youtube_analytics() -> JobResponse:
         existing_metadata = youtube_video_metadata()
         urls_by_video = {
             video_id: mix.youtube_url
-            for mix in discover_mixes()
+            for mix in mixes
             if (video_id := youtube_video_id(mix.youtube_url))
         }
         missing_dates = [

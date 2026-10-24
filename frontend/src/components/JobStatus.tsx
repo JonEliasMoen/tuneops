@@ -8,9 +8,9 @@ export function JobStatus({ jobId, onComplete, onFailed }: { jobId: string | nul
   const failed = useRef<string | null>(null)
   const job = useQuery({
     queryKey: ['job', jobId],
-    queryFn: () => api<Job>(`/jobs/${jobId}`),
+    queryFn: ({ signal }) => api<Job>(`/jobs/${jobId}`, { signal }),
     enabled: Boolean(jobId),
-    refetchInterval: (query) => ['queued', 'running'].includes(query.state.data?.state ?? '') ? 750 : false,
+    refetchInterval: (query) => ['queued', 'running'].includes(query.state.data?.state ?? '') ? 1_500 : false,
   })
   const value = job.data
   useEffect(() => {

@@ -85,6 +85,33 @@ SQLite-only. TIDAL refreshes run as explicit background jobs.
 Persisted job-status polling is a one-statement read and must use
 `connect_readonly()`; progress/result writes retain explicit transactions.
 
+## Database performance contract
+
+- Treat Turso as a remote HTTP database, not as local SQLite. A helper that
+  opens several connections or executes one statement per row creates real
+  network round trips.
+- Every SELECT-only repository helper must use `connect_readonly()`. Use the
+  backend-neutral `execute_batch()` path when one response needs several
+  independent bounded SELECTs; Turso must send those statements in one
+  pipeline while local SQLite keeps identical behavior.
+- Shared track collections use `music_library.collection_query`. Apply
+  allowlisted filters and sorting in SQL, page before enriching relationships,
+  and return collection statistics only with the first page. Never restore the
+  old `limit=1_000_000` plus Python filtering path.
+- Provider imports may normalize rows in memory, but must batch canonical
+  tracks, artists, relationships, and memberships inside one atomic write
+  transaction. Do not open a transaction per provider track.
+- Navigation and local mix discovery have short process-local caches. Any
+  mutation that changes mappings, collection membership, watched mixes,
+  setlists, history visibility, or relevant settings must invalidate the
+  navigation cache explicitly.
+- Request telemetry may record connection, statement, pipeline, row, byte, and
+  duration counts. Never log SQL parameters, user-entered search text, tokens,
+  decrypted credentials, or authorization headers.
+- Performance tests use temporary SQLite databases or mocked Turso pipelines.
+  Do not contact live providers or the configured Turso database merely to run
+  the test suite.
+
 ## Track browser extension contract
 
 All present and future data tables should follow the shared track-table interaction

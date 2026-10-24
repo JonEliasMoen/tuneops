@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import main as engine
+from music_library.telemetry import begin_database_metrics, end_database_metrics
 
 from .api.router import api_router
 from . import auth
@@ -69,18 +71,36 @@ def create_app() -> FastAPI:
         request_id = uuid.uuid4().hex[:12]
         request.state.request_id = request_id
         started = time.perf_counter()
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request_id
-        if request.url.path != "/api/v1/health":
-            LOGGER.info(
-                "http.complete request_id=%s method=%s path=%s status=%d duration_ms=%d",
-                request_id,
-                request.method,
-                request.url.path,
-                response.status_code,
-                round((time.perf_counter() - started) * 1000),
-            )
-        return response
+        database_metrics, metrics_token = begin_database_metrics()
+        try:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request_id
+            if not os.getenv("VERCEL"):
+                response.headers["Server-Timing"] = (
+                    f"db;dur={database_metrics.database_ms:.1f}"
+                )
+            if request.url.path != "/api/v1/health":
+                content_length = response.headers.get("content-length", "")
+                response_bytes = int(content_length) if content_length.isdigit() else -1
+                LOGGER.info(
+                    "http.complete request_id=%s method=%s path=%s status=%d "
+                    "duration_ms=%d db_connections=%d db_statements=%d "
+                    "db_pipelines=%d db_ms=%d db_rows=%d response_bytes=%d",
+                    request_id,
+                    request.method,
+                    request.url.path,
+                    response.status_code,
+                    round((time.perf_counter() - started) * 1000),
+                    database_metrics.connections,
+                    database_metrics.statements,
+                    database_metrics.pipeline_calls,
+                    round(database_metrics.database_ms),
+                    database_metrics.rows_decoded,
+                    response_bytes,
+                )
+            return response
+        finally:
+            end_database_metrics(metrics_token)
 
     @app.middleware("http")
     async def require_google_login(request: Request, call_next):

@@ -162,3 +162,59 @@ def test_turso_read_only_connection_uses_one_http_pipeline(monkeypatch):
     assert calls[0]["baton"] is None
     assert calls[0]["requests"][0]["stmt"]["sql"] == "SELECT ? AS value"
     assert calls[0]["requests"][1] == {"type": "close"}
+
+
+def test_turso_read_only_batch_uses_one_http_pipeline(monkeypatch):
+    calls: list[dict] = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            requests = calls[-1]["requests"]
+            results = []
+            for request in requests:
+                if request["type"] == "close":
+                    results.append({"type": "ok", "response": {"type": "close"}})
+                else:
+                    results.append({
+                        "type": "ok",
+                        "response": {
+                            "type": "execute",
+                            "result": {
+                                "cols": [{"name": "value"}],
+                                "rows": [[request["stmt"]["args"][0]]],
+                                "affected_row_count": 0,
+                            },
+                        },
+                    })
+            return {"baton": None, "base_url": None, "results": results}
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+
+        def post(self, url, *, json, timeout):
+            calls.append(json)
+            return Response()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(connection.requests, "Session", Session)
+    monkeypatch.setattr(connection, "_enable_system_trust_store", lambda: None)
+    database = connection.TursoConnection(
+        "libsql://example.invalid", "token", read_only=True,
+    )
+
+    cursors = connection.execute_batch(database, [
+        ("SELECT ? AS value", (1,)),
+        ("SELECT ? AS value", (2,)),
+    ])
+
+    assert [cursor.fetchone()["value"] for cursor in cursors] == [1, 2]
+    assert len(calls) == 1
+    assert [request["type"] for request in calls[0]["requests"]] == [
+        "execute", "execute", "close",
+    ]
