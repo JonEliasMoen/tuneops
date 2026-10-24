@@ -204,7 +204,7 @@ dependency resolves the authenticated browser session or background-job owner.
 - [x] Enable `TUNEOPS_DATABASE_BACKEND=turso` locally, verify remote reads,
   writes, counts, and credential decryption, and configure the same database
   and credential settings for the Vercel Preview environment.
-- [ ] Add a validated Turso-to-local backup command and document manual
+- [x] Add a validated Turso-to-local backup command and document manual
   fallback/recovery, including credential changes made during fallback.
 
 ### Phase 1 — interfaces and shared ownership

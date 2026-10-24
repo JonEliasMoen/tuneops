@@ -14,6 +14,7 @@ commit or print secrets from `.env`, `.spotify_cache`, `.tidal_session.json`, or
 - FastAPI documentation: `http://127.0.0.1:8081/api/docs`
 - Headless configured sync: `python startup_sync.py`
 - Full TIDAL liked-track cache: `python cache_liked_tracks.py`
+- Verified Turso-to-SQLite backup: `python backup_turso.py --database <name>`
 - Direct headless sync: `python main.py --sync`
 - Dependencies are declared in the repository-level `../requirements.txt`.
 
@@ -554,6 +555,12 @@ revalidation on the following run.
 - `migrate_database.py`: protected SQLite-to-Turso copy/verification utility.
   It refuses to merge non-empty mismatched tables unless `--replace` is
   explicitly supplied, migrates table-by-table, and verifies every row count.
+- `backup_turso.py`: read-only Turso-to-local backup utility. It uses the
+  official CLI `.dump`, restores into a temporary SQLite file, verifies
+  integrity, foreign keys, stable remote counts, and every table count, then
+  atomically promotes a timestamped ignored `.sqlite3` file. Stop writers for
+  exact count verification, never overwrite an existing backup, and preserve
+  `TUNEOPS_CREDENTIAL_KEY` separately from encrypted credential rows.
 
 ## VirtualDJ companion
 

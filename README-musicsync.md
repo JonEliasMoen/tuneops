@@ -39,6 +39,22 @@ python profile_library.py --collection search --limit 5000
 The table keeps 200-row pages and restores at most 1,000 rows per view; this
 probe helps decide when browser-side virtualization would become worthwhile.
 
+## Turso backup
+
+Stop TuneOps writers for exact verification, make sure the Turso CLI is logged
+in, and run:
+
+```powershell
+python backup_turso.py --database <turso-database-name> --wsl
+```
+
+Omit `--wsl` when `turso` is installed natively. The default destination is a
+new timestamped file under `backups/database/`; existing files are never
+overwritten. The command uses Turso's `.dump`, restores it into a temporary
+SQLite database, verifies integrity, foreign keys, and stable table counts, and
+only then promotes the backup. Provider credentials remain encrypted in the
+backup, so keep `TUNEOPS_CREDENTIAL_KEY` separately.
+
 ## Project structure
 
 - `main.py` contains the reusable sync engine and provider authentication.
