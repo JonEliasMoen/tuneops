@@ -10,7 +10,7 @@ import main as engine
 from music_library.database import lastfm_import_summary
 from music_library.database import pending_track, pending_tracks, update_pending_track_candidates, watched_mix
 from music_tools.lastfm import import_scrobbles, reconcile_track_matches
-from music_tools.mixes.service import import_tidal_setlist, invalidate_mix_snapshot, mix_for
+from music_tools.mixes.service import discover_tidal_mixes, import_tidal_setlist, mix_for
 from music_tools.watched_mixes.tracklist import find_tidal_matches
 
 from ..config import number_setting
@@ -135,12 +135,33 @@ def import_mix_tidal_setlist(folder_name: str, body: MixTidalImportRequest) -> J
         playlist, tracks = import_tidal_setlist(engine, mix, body.tidal_url)
         playlist_name = str(getattr(playlist, "name", "") or "")
         progress(f"Stored {len(tracks)} tracks from {playlist_name or 'the TIDAL playlist'}")
-        invalidate_mix_snapshot()
         invalidate_navigation_snapshot()
         return {"playlist_name": playlist_name, "tracks": len(tracks)}
 
     return JobResponse.model_validate(
         JOBS.snapshot(JOBS.submit(f"mix-tidal-import:{folder_name}", execute))
+    )
+
+
+@router.post("/mixes/discover-tidal", response_model=JobResponse, status_code=202)
+def discover_tidal_mix_setlists() -> JobResponse:
+    def execute(progress):
+        result = discover_tidal_mixes(engine, progress=progress)
+        attention = sum(
+            row.get("status") in {"ambiguous", "name_conflict", "empty", "failed"}
+            for row in result["results"]
+        )
+        suffix = f"; {attention} need attention" if attention else ""
+        progress(
+            f"Discovery complete: {result['imported']} new of "
+            f"{result['candidates']} djset playlists imported{suffix}"
+        )
+        if result["imported"]:
+            invalidate_navigation_snapshot()
+        return result
+
+    return JobResponse.model_validate(
+        JOBS.snapshot(JOBS.submit("mix-tidal-discovery", execute))
     )
 
 

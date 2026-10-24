@@ -226,6 +226,9 @@ a { color: inherit; }
 .orphaned-track-table th, .orphaned-track-table td { padding: 9px 11px; border-bottom: 1px solid var(--line); }
 .orphaned-track-table tbody tr:last-child td { border-bottom: 0; }
 .orphaned-track-table .compact-button { min-height: 0; padding: 5px 9px; white-space: nowrap; }
+.my-mix-settings-page { display: grid; gap: 14px; }
+.my-mix-settings-page > header { margin-bottom: 0; }
+.my-mix-discovery-help, .my-mix-discovery-list { width: 100%; }
 .good { color: var(--accent); }
 .warning { color: #f3c96b; }
 .error-banner { margin: 10px 0; padding: 11px 13px; border: 1px solid var(--danger); border-radius: 8px; background: var(--danger-bg); color: var(--danger); }

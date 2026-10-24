@@ -7,6 +7,7 @@ import { Shell } from '../components/Shell'
 import { TrackBrowser } from '../features/track-browser/TrackBrowser'
 import { PlaylistSyncPage } from '../features/playlist-sync/PlaylistSyncPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
+import { MyMixSettingsPage } from '../features/settings/MyMixSettingsPage'
 import { MixDetailPage, MixesPage, PendingPage, WatchedMixDetailPage, WatchedMixesPage } from '../features/mixes/MixPages'
 import { ArtistsPage } from '../features/artists/ArtistsPage'
 
@@ -42,6 +43,7 @@ export function App() {
         <Route path="/watched-mixes/pending" element={<PendingPage />} />
         <Route path="/watched-mixes/:id" element={<WatchedMixDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/my-mixes" element={<MyMixSettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Shell>

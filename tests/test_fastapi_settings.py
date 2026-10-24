@@ -26,6 +26,39 @@ def test_public_settings_never_exposes_private_config_values(monkeypatch):
     assert result.mix_quick_views[0]["id"] == "performance"
 
 
+def test_my_mix_settings_are_database_only(monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "discover_mixes",
+        lambda: [
+            type("Mix", (), {
+                "folder_name": "darkprog",
+                "tidal_playlist_id": "playlist-id",
+                "tidal_playlist_name": "djset darkprog",
+                "track_count": 12,
+            })(),
+            type("Mix", (), {
+                "folder_name": "futurehouse",
+                "tidal_playlist_id": "",
+                "tidal_playlist_name": "",
+                "track_count": 0,
+            })(),
+        ],
+    )
+
+    result = settings.my_mix_settings()
+
+    assert result["items"][0] == {
+        "internal_name": "darkprog",
+        "expected_tidal_name": "djset darkprog",
+        "tidal_playlist_id": "playlist-id",
+        "tidal_playlist_name": "djset darkprog",
+        "track_count": 12,
+        "status": "connected",
+    }
+    assert result["items"][1]["status"] == "not_discovered"
+
+
 def test_settings_patch_persists_only_submitted_public_values(monkeypatch):
     config = {"settings": {"dark_mode": True, "provider_secret": "keep"}, "quick_views": []}
     saved: list[dict[str, object]] = []

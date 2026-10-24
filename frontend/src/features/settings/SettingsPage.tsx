@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { Job, OrphanedTracksClearResult, OrphanedTracksPage, PublicSettings, YouTubeStatus } from '../../api/types'
 import { JobStatus } from '../../components/JobStatus'
@@ -151,6 +152,10 @@ export function SettingsPage() {
       <section className="settings-card"><h2>YouTube Analytics</h2>
         <p>Connect the Google account that owns your My Mixes videos. Credentials and tokens stay in the Python backend. Cover click rate also requires the YouTube Reporting API to be enabled in Google Cloud.</p>
         {!youtube.data ? <p>Checking connection…</p> : !youtube.data.configured ? <p className="warning">Google OAuth credentials or the redirect URI are missing from .env.</p> : youtube.data.connected ? <><p className="good">YouTube is connected.</p><a className="button-link" href="/api/v1/youtube/connect">Reconnect YouTube</a></> : <a className="button-link primary" href="/api/v1/youtube/connect">Connect YouTube</a>}
+      </section>
+      <section className="settings-card"><h2>My Mixes</h2>
+        <p>Discover TIDAL playlists named <code>djset &lt;mix name&gt;</code> and import each new setlist once.</p>
+        <div><Link className="button-link" to="/settings/my-mixes">Open My Mixes settings</Link></div>
       </section>
       <section className="settings-card"><h2>Spotify matching</h2>
         <label>Search delay (seconds)<input type="number" min="0" step="0.05" value={draft.spotify_search_delay_seconds} onChange={(event) => setDraft({ ...draft, spotify_search_delay_seconds: Number(event.target.value) })} /></label>

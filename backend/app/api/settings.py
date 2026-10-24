@@ -15,6 +15,7 @@ from music_library.database import (
     delete_tidal_playlist_cache,
     orphaned_tidal_tracks,
 )
+from music_tools.mixes.service import discover_mixes
 
 from ..schemas import PublicSettings, SettingsPatch, SyncMappings
 from ..services.navigation_cache import invalidate_navigation_snapshot
@@ -50,6 +51,24 @@ def _public(config: dict[str, Any]) -> PublicSettings:
 @router.get("/settings", response_model=PublicSettings)
 def settings() -> PublicSettings:
     return _public(engine.load_settings_config())
+
+
+@router.get("/settings/my-mixes")
+def my_mix_settings() -> dict[str, Any]:
+    mixes = discover_mixes()
+    return {
+        "items": [
+            {
+                "internal_name": mix.folder_name,
+                "expected_tidal_name": f"djset {mix.folder_name}",
+                "tidal_playlist_id": mix.tidal_playlist_id,
+                "tidal_playlist_name": mix.tidal_playlist_name,
+                "track_count": mix.track_count,
+                "status": "connected" if mix.tidal_playlist_id else "not_discovered",
+            }
+            for mix in mixes
+        ]
+    }
 
 
 @router.patch("/settings", response_model=PublicSettings)

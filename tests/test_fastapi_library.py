@@ -369,7 +369,6 @@ def test_mix_url_editor_reuses_existing_setlist_storage(monkeypatch):
     monkeypatch.setattr(library_api, "mix_for", lambda _name: object())
     monkeypatch.setattr(library_api, "youtube_video_id", lambda _url: "video-id")
     monkeypatch.setattr(library_api, "save_setlist_urls", lambda name, youtube, tidal: saved.append((name, youtube, tidal)))
-    monkeypatch.setattr(library_api, "invalidate_mix_snapshot", lambda: None)
     monkeypatch.setattr(library_api, "mix_detail", lambda name: {"folder_name": name})
 
     result = library_api.save_mix_urls("darkprog", MixUrlsUpdate(youtube_url="https://youtu.be/abc123", tidal_url="https://tidal.com/playlist/abc"))
@@ -378,7 +377,7 @@ def test_mix_url_editor_reuses_existing_setlist_storage(monkeypatch):
     assert result == {"folder_name": "darkprog"}
 
 
-def test_mix_overview_exposes_cached_counts_and_local_availability(monkeypatch):
+def test_mix_overview_exposes_cached_counts_without_local_files(monkeypatch):
     monkeypatch.setattr(
         library_api,
         "discover_mixes",
@@ -390,9 +389,6 @@ def test_mix_overview_exposes_cached_counts_and_local_availability(monkeypatch):
             tidal_playlist_name="DJ Set Darkprog",
             track_count=12,
             updated_at="2026-10-02T12:30:00",
-            positions="[00:00] Intro\n[58:30] Last track",
-            audio_path=object(),
-            cover_path=None,
         )],
     )
     monkeypatch.setattr(library_api, "youtube_thumbnail_url", lambda _url: "thumbnail")
@@ -413,7 +409,7 @@ def test_mix_overview_exposes_cached_counts_and_local_availability(monkeypatch):
         "updated_at": "2026-10-02T12:30:00",
         "youtube_title": "Dark Progressive Mix",
         "youtube_upload_date": "2026-01-05",
-        "youtube_duration_seconds": 3510,
+        "youtube_duration_seconds": None,
         "youtube_views": None,
         "youtube_thumbnail_impressions": None,
         "youtube_thumbnail_ctr": None,
@@ -424,7 +420,6 @@ def test_mix_overview_exposes_cached_counts_and_local_availability(monkeypatch):
         "youtube_comments": None,
         "youtube_subscribers_gained": None,
         "youtube_analytics_fetched_at": "",
-        "has_cover": False,
         "cover_url": "thumbnail",
     }
 
@@ -435,8 +430,7 @@ def test_mix_detail_exposes_cached_owner_analytics(monkeypatch):
         "mix_for",
         lambda _name: SimpleNamespace(
             folder_name="darkprog", youtube_url="https://youtu.be/abc123",
-            tidal_url="", tidal_playlist_name="", cover_path=None,
-            positions="[00:00] Intro\n[59:00] Last",
+            tidal_url="", tidal_playlist_name="",
             youtube_views=123, youtube_thumbnail_impressions=1000,
             youtube_thumbnail_ctr=4.25, youtube_watch_minutes=600,
             youtube_average_view_duration=240,

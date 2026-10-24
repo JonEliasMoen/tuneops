@@ -1,14 +1,13 @@
-"""Read-only discovery of the user's local DJ mix folders."""
+"""Database-backed My Mix metadata and TIDAL setlist import."""
 
 from __future__ import annotations
 
-import os
+import logging
 import re
-import threading
-import time
+from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from html import unescape
-from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -22,31 +21,12 @@ from music_library.database import (
 )
 
 
-DEFAULT_MIX_ROOT = Path.home() / "Documents" / "djstuff"
-MIX_ROOT = Path(os.getenv("MUSICSYNC_MIX_ROOT", DEFAULT_MIX_ROOT)).resolve()
-EXCLUDED_FOLDERS = {"vis1tracktimer", "visv1tracktimer"}
-MIX_SNAPSHOT_SECONDS = 30.0
-
-
-@dataclass(frozen=True)
-class _MixFiles:
-    folder_name: str
-    positions: str
-    cover_path: Path | None
-    audio_path: Path | None
-
-
-_snapshot_lock = threading.Lock()
-_snapshot_at = 0.0
-_snapshot_files: tuple[_MixFiles, ...] = ()
+LOGGER = logging.getLogger("musicsync")
 
 
 @dataclass(frozen=True)
 class Mix:
     folder_name: str
-    positions: str
-    cover_path: Path | None
-    audio_path: Path | None
     youtube_url: str
     tidal_url: str
     tidal_playlist_id: str
@@ -108,7 +88,7 @@ def fetch_youtube_metadata(url: str) -> YouTubeMetadata:
     try:
         response = requests.get(
             f"https://www.youtube.com/watch?v={video_id}",
-            headers={"User-Agent": "Mozilla/5.0 (MusicSync local mix explorer)"},
+            headers={"User-Agent": "Mozilla/5.0 (TuneOps My Mixes)"},
             timeout=8,
         )
         response.raise_for_status()
@@ -164,81 +144,14 @@ def fetch_youtube_metadata(url: str) -> YouTubeMetadata:
     )
 
 
-def _is_excluded(name: str) -> bool:
-    return name.casefold() in EXCLUDED_FOLDERS
-
-
-def _read_positions(folder: Path) -> str:
-    positions_path = folder / "positions.txt"
-    if not positions_path.is_file():
-        return ""
-    try:
-        return positions_path.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        return positions_path.read_text(encoding="cp1252", errors="replace")
-
-
-def _safe_mix_folder(folder_name: str) -> Path | None:
-    """Resolve one immediate mix child without allowing path traversal."""
-    name = str(folder_name or "")
-    if not name or _is_excluded(name) or Path(name).name != name:
-        return None
-    candidate = (MIX_ROOT / name).resolve()
-    if candidate.parent != MIX_ROOT or not candidate.is_dir():
-        return None
-    return candidate
-
-
-def _files_for(folder: Path) -> _MixFiles:
-    cover_path = folder / "cover.png"
-    audio_path = folder / f"{folder.name}yt.wav"
-    return _MixFiles(
-        folder_name=folder.name,
-        positions=_read_positions(folder),
-        cover_path=cover_path.resolve() if cover_path.is_file() else None,
-        audio_path=audio_path.resolve() if audio_path.is_file() else None,
-    )
-
-
-def invalidate_mix_snapshot() -> None:
-    """Discard the short-lived local folder snapshot after a relevant change."""
-    global _snapshot_at, _snapshot_files
-    with _snapshot_lock:
-        _snapshot_at = 0.0
-        _snapshot_files = ()
-
-
-def _mix_files_snapshot() -> tuple[_MixFiles, ...]:
-    global _snapshot_at, _snapshot_files
-    now = time.monotonic()
-    with _snapshot_lock:
-        if _snapshot_at and now - _snapshot_at < MIX_SNAPSHOT_SECONDS:
-            return _snapshot_files
-    if not MIX_ROOT.is_dir():
-        files: tuple[_MixFiles, ...] = ()
-    else:
-        files = tuple(
-            _files_for(folder)
-            for folder in sorted(MIX_ROOT.iterdir(), key=lambda item: item.name.casefold())
-            if folder.is_dir() and not _is_excluded(folder.name)
-        )
-    with _snapshot_lock:
-        _snapshot_files = files
-        _snapshot_at = now
-    return files
-
-
-def _mix_from(files: _MixFiles, metadata: dict[str, Any]) -> Mix:
+def _mix_from(folder_name: str, metadata: dict[str, Any]) -> Mix:
     saved_youtube_url = str(metadata.get("youtube_url", "") or "")
     analytics_current = bool(
         youtube_video_id(saved_youtube_url)
         and youtube_video_id(saved_youtube_url) == metadata.get("youtube_video_id")
     )
     return Mix(
-        folder_name=files.folder_name,
-        positions=files.positions,
-        cover_path=files.cover_path,
-        audio_path=files.audio_path,
+        folder_name=folder_name,
         youtube_url=saved_youtube_url,
         tidal_url=str(metadata.get("tidal_url", "") or ""),
         tidal_playlist_id=str(metadata.get("tidal_playlist_id", "") or ""),
@@ -259,39 +172,129 @@ def _mix_from(files: _MixFiles, metadata: dict[str, Any]) -> Mix:
 
 
 def discover_mixes() -> list[Mix]:
-    """Discover immediate child folders without walking arbitrary paths."""
-    saved_metadata = setlist_metadata()
+    """Return every persisted My Mix without consulting the local filesystem."""
     return [
-        _mix_from(files, saved_metadata.get(files.folder_name, {}))
-        for files in _mix_files_snapshot()
+        _mix_from(folder_name, metadata)
+        for folder_name, metadata in setlist_metadata().items()
     ]
 
 
-def cover_for(folder_name: str) -> Path | None:
-    """Resolve one mix cover directly without scanning every folder."""
-    folder = _safe_mix_folder(folder_name)
-    if folder is None:
+def tidal_mix_name(playlist_name: str) -> str | None:
+    """Return the internal My Mix name for an exact ``djset <name>`` title."""
+    match = re.fullmatch(r"\s*djset\s+(.+?)\s*", str(playlist_name or ""), re.IGNORECASE)
+    if match is None:
         return None
-    cover = folder / "cover.png"
-    return cover.resolve() if cover.is_file() else None
+    name = " ".join(match.group(1).split())
+    return name or None
+
+
+def discover_tidal_mixes(
+    engine: Any,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """Import previously unseen owned TIDAL ``djset`` playlists exactly once.
+
+    Existing TIDAL mappings are deliberately immutable here. A manual import on
+    the individual mix remains the explicit way to replace an existing mapping.
+    """
+    report = progress or (lambda _message: None)
+    existing = discover_mixes()
+    existing_by_name = {mix.folder_name.casefold(): mix for mix in existing}
+    linked_playlist_ids = {
+        mix.tidal_playlist_id for mix in existing if mix.tidal_playlist_id
+    }
+
+    report("Loading your TIDAL playlists")
+    session = engine.tidal_client(interactive=False)
+    playlists = list(
+        engine._call(
+            "tidal",
+            "discover_mix_playlists",
+            session.user.playlists,
+        )
+    )
+    candidates: list[tuple[str, Any]] = []
+    for playlist in playlists:
+        internal_name = tidal_mix_name(getattr(playlist, "name", ""))
+        playlist_id = str(getattr(playlist, "id", "") or "")
+        if internal_name and playlist_id:
+            candidates.append((internal_name, playlist))
+
+    name_counts = Counter(name.casefold() for name, _playlist in candidates)
+    duplicate_names = {name for name, count in name_counts.items() if count > 1}
+    results: list[dict[str, Any]] = []
+    imported = 0
+    for index, (discovered_name, playlist) in enumerate(candidates, start=1):
+        playlist_id = str(playlist.id)
+        playlist_name = str(getattr(playlist, "name", "") or "")
+        existing_mix = existing_by_name.get(discovered_name.casefold())
+        internal_name = existing_mix.folder_name if existing_mix else discovered_name
+        base = {
+            "internal_name": internal_name,
+            "playlist_id": playlist_id,
+            "playlist_name": playlist_name,
+        }
+        if playlist_id in linked_playlist_ids:
+            results.append({**base, "status": "already_imported"})
+            continue
+        if discovered_name.casefold() in duplicate_names:
+            results.append({**base, "status": "ambiguous"})
+            continue
+        if existing_mix and existing_mix.tidal_playlist_id:
+            results.append({**base, "status": "name_conflict"})
+            continue
+
+        report(f"Importing {playlist_name}: {index}/{len(candidates)}")
+        try:
+            items = engine._call(
+                "tidal",
+                "discover_mix_tracks",
+                playlist.tracks,
+                playlist_id=playlist_id,
+                setlist=internal_name,
+            )
+            records = [tidal_track_record(track) for track in items]
+            if not records:
+                results.append({**base, "status": "empty"})
+                continue
+            tidal_url = f"https://tidal.com/playlist/{playlist_id}"
+            store_tidal_setlist(internal_name, tidal_url, playlist, records, [])
+        except Exception:
+            LOGGER.exception(
+                "mix.discovery_import_failed playlist_id=%s setlist=%s",
+                playlist_id,
+                internal_name,
+            )
+            results.append({**base, "status": "failed"})
+            continue
+        imported += 1
+        linked_playlist_ids.add(playlist_id)
+        existing_by_name[internal_name.casefold()] = _mix_from(
+            internal_name,
+            {
+                "tidal_url": tidal_url,
+                "tidal_playlist_id": playlist_id,
+                "tidal_playlist_name": playlist_name,
+                "track_count": len(records),
+            },
+        )
+        results.append({**base, "status": "imported", "tracks": len(records)})
+
+    return {
+        "scanned": len(playlists),
+        "candidates": len(candidates),
+        "imported": imported,
+        "results": results,
+    }
 
 
 def mix_for(folder_name: str) -> Mix | None:
-    """Return one exact mix without loading metadata or files for all mixes."""
-    folder = _safe_mix_folder(folder_name)
-    if folder is None:
+    """Return one persisted My Mix without consulting the local filesystem."""
+    name = str(folder_name or "").strip()
+    if not name:
         return None
-    return _mix_from(_files_for(folder), setlist_metadata_for(folder.name))
-
-
-def track_positions(positions_text: str) -> list[str]:
-    """Return display timestamps in the same order as positions.txt."""
-    positions: list[str] = []
-    for line in str(positions_text or "").splitlines():
-        match = re.match(r"^\s*\[([^\]]+)\]", line)
-        if match:
-            positions.append(match.group(1).strip())
-    return positions
+    metadata = setlist_metadata_for(name)
+    return _mix_from(name, metadata) if metadata else None
 
 
 def import_tidal_setlist(engine, mix: Mix, tidal_url: str) -> tuple[Any, list[dict[str, Any]]]:
@@ -324,6 +327,6 @@ def import_tidal_setlist(engine, mix: Mix, tidal_url: str) -> tuple[Any, list[di
         tidal_url,
         playlist,
         records,
-        track_positions(mix.positions),
+        [],
     )
     return playlist, records

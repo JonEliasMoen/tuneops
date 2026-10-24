@@ -50,8 +50,8 @@ The working interpreter is:
   URLs or API keys.
 - `music_tools/liked_tracks/`: provider-neutral TIDAL liked/indexed-playlist
   retrieval used by backend jobs and services.
-- `music_tools/mixes/`: read-only local mix-folder discovery, cover serving,
-  timestamp parsing, and locally persisted mix metadata.
+- `music_tools/mixes/`: database-backed My Mix metadata, YouTube presentation,
+  and explicit TIDAL setlist import. It has no local media-folder dependency.
 - `music_library/database.py`: shared SQLite schema, TIDAL playlist cache,
   liked-track cache, reverse playlist membership lookup, and future user
   metadata storage.
@@ -102,7 +102,7 @@ Persisted job-status polling is a one-statement read and must use
 - Provider imports may normalize rows in memory, but must batch canonical
   tracks, artists, relationships, and memberships inside one atomic write
   transaction. Do not open a transaction per provider track.
-- Navigation and local mix discovery have short process-local caches. Any
+- Navigation has a short process-local cache. Any
   mutation that changes mappings, collection membership, watched mixes,
   setlists, history visibility, or relevant settings must invalidate the
   navigation cache explicitly.
@@ -287,8 +287,8 @@ Core tables:
 - `liked_track_snapshots` and `liked_tracks`: per-user ordered liked-track cache.
 - `track_user_metadata`: reserved for star ratings and notes.
 - `tags` and `track_tags`: normalized future tagging support.
-- `setlists`: user-owned metadata for discovered local mix folders and their
-  YouTube/TIDAL import-source mappings.
+- `setlists`: user-owned My Mix metadata and YouTube/TIDAL import-source
+  mappings.
 - `setlist_tracks`: ordered many-to-many setlist membership with the timestamp
   where each TIDAL track begins. Its track index supports reverse lookup from a
   track to every mix/setlist containing it.
@@ -318,17 +318,13 @@ music provider or delete remote data.
 
 ## Mix explorer
 
-- Routes: `/mixes` and `/mixes/<folder>`; `MUSICSYNC_MIX_ROOT` overrides the default
-  `~/Documents/djstuff` directory.
-- Mix folders appear as children of a collapsible **My mixes** sidebar node; each
-  child route renders only that mix's cover, YouTube link, and positions.
-- Each immediate child folder is one mix. `cover.png` and `positions.txt` are
-  read when present; the conventional final audio filename is
-  `<foldername>yt.wav`.
-- Mix `cover.png` artwork uses a 16:9 landscape aspect ratio in the UI.
-- Prefer a local `cover.png`; when it is absent and the saved YouTube URL is
-  valid, show the video's YouTube thumbnail as the mix cover. Saving a new URL
-  updates this fallback immediately and must never replace a local cover.
+- Routes: `/mixes` and `/mixes/<id>`. Persisted `setlists` rows are the sole
+  source for **My mixes** navigation and detail views.
+- Active My Mix code must not inspect local folders, `MUSICSYNC_MIX_ROOT`,
+  `cover.png`, WAV files, or `positions.txt`. TuneOps must behave identically
+  locally and on Vercel.
+- Show a validated saved YouTube video's thumbnail as artwork. A future TIDAL
+  playlist-art fallback may be added without restoring filesystem discovery.
 - The saved YouTube URL is user-owned SQLite metadata. Fetch its current title,
   view count, and upload date on demand, but do not persist fetched metadata.
   Only make requests for validated YouTube video IDs and fail gracefully when
@@ -358,15 +354,21 @@ music provider or delete remote data.
   the setlist's import source: store membership in `setlists`/`setlist_tracks`,
   never `playlists`/`playlist_tracks`. Reuse shared `tracks` rows so one track
   can belong to multiple playlists and multiple setlists. The mix browser reads
-  timestamps from setlist membership and shows them in its Position column.
-- Do not show raw `positions.txt` contents in the mix detail view. Display the
-  mapped TIDAL playlist name beside the live YouTube title in the mix header.
+  any already-stored timestamps from setlist membership. New TIDAL-only imports
+  have no Time until a separate YouTube-description importer supplies it.
+- `/settings/my-mixes` owns explicit automatic discovery. It scans only
+  playlists owned by the connected TIDAL user, accepts exact case-insensitive
+  names shaped as `djset <internal name>`, and derives the My Mix name from the
+  suffix. Import a newly seen TIDAL playlist into `setlists`/`setlist_tracks`
+  once; never refetch or overwrite an already linked playlist during discovery.
+  Duplicate names are ambiguous and must be left untouched. Discovery is an
+  explicit background job, not startup behavior, and must never create normal
+  `playlists`/`playlist_tracks` membership.
+- Display the mapped TIDAL playlist name beside the live YouTube title in the
+  mix header.
 - The reused track browser must retain its full mouse and keyboard behavior on
   `/mixes/<folder>` routes, including row selection, Up/Down navigation,
   sidebar focus, and the Actions panel.
-- `vis1tracktimer` and the existing `visv1trackTimer` spelling are excluded.
-- The browser may only retrieve covers belonging to currently discovered mixes;
-  do not expose a general filesystem-serving route.
 
 ## Watched mixes
 

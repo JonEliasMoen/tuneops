@@ -6,7 +6,6 @@ function mix(folder_name: string, track_count: number, updated_at = ''): MixSumm
   return {
     folder_name, track_count, updated_at, youtube_url: '', youtube_analytics_url: '', youtube_title: '', youtube_upload_date: updated_at, youtube_duration_seconds: null, tidal_url: '',
     tidal_playlist_id: '', tidal_playlist_name: '', cover_url: '',
-    has_cover: false,
     youtube_views: null, youtube_thumbnail_impressions: null, youtube_thumbnail_ctr: null,
     youtube_watch_minutes: null,
     youtube_average_view_duration: null, youtube_average_view_percentage: null,

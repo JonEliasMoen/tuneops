@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Job } from '../api/types'
 
-export function JobStatus({ jobId, onComplete, onFailed }: { jobId: string | null; onComplete?: () => void; onFailed?: (message: string) => void }) {
+export function JobStatus({ jobId, onComplete, onFailed }: { jobId: string | null; onComplete?: (job: Job) => void; onFailed?: (message: string) => void }) {
   const completed = useRef<string | null>(null)
   const failed = useRef<string | null>(null)
   const job = useQuery({
@@ -16,7 +16,7 @@ export function JobStatus({ jobId, onComplete, onFailed }: { jobId: string | nul
   useEffect(() => {
     if (value?.state === 'succeeded' && completed.current !== value.id) {
       completed.current = value.id
-      onComplete?.()
+      onComplete?.(value)
     }
     if (value?.state === 'failed' && failed.current !== value.id) {
       failed.current = value.id

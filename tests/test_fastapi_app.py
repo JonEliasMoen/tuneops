@@ -60,7 +60,9 @@ def test_openapi_contract_advertises_react_critical_routes_and_response_fields()
         "/api/v1/collections/{kind}/{collection_id}/tracks",
         "/api/v1/tracks/playlist-action",
         "/api/v1/settings",
+        "/api/v1/settings/my-mixes",
         "/api/v1/sync/mappings",
+        "/api/v1/mixes/discover-tidal",
         "/api/v1/mixes/{folder_name}/import-tidal",
         "/api/v1/pending-tracks/{pending_id}/refresh",
     ]:

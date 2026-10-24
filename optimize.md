@@ -17,8 +17,8 @@ migration. No live data or schema was changed while producing this review.
 The code-only optimization pass is complete. The shared collection path is now
 bounded and server-side, read-only calls avoid Turso transaction overhead,
 related reads can share one remote pipeline, provider mirrors use batched
-writes, and request logs expose database costs. Navigation and local mix
-discovery use short explicitly-invalidated process caches. Configuration,
+writes, and request logs expose database costs. Navigation uses a short,
+explicitly-invalidated process cache. Configuration,
 artist, orphan, health, credential, action, and job paths no longer hydrate
 unrelated state.
 
@@ -251,8 +251,7 @@ The route currently combines:
 - indexed playlist lookup;
 - a narrow runtime-settings read;
 - one combined Last.fm month/year query (previously two remote reads);
-- `discover_mixes()`, which queries setlist/analytics metadata and scans every
-  local mix directory/positions file;
+- database-backed My Mix setlist/analytics metadata;
 - watched-mix lookup.
 
 This explains why navigation can be slower than the page it frames.
@@ -265,9 +264,7 @@ This explains why navigation can be slower than the page it frames.
 - [x] Invalidate it explicitly after mapping changes, provider refreshes,
   watched-mix changes, setlist imports, orphan cleanup, and relevant settings
   changes.
-- [x] Separate local mix-folder discovery from database metadata and cache the
-  filesystem snapshot by directory modification state. Vercel deployments with
-  no local mix root should skip the scan immediately.
+- [x] Remove local mix-folder discovery from active code entirely.
 - [ ] Add `ETag`/conditional GET after server-side invalidation is reliable.
 
 ### P1: Artists overview and history
@@ -385,14 +382,12 @@ credential storage enabled, that means two remote transactions.
 
 ### P1/P2: My Mixes and watched mixes
 
-- `discover_mixes()` calls `setlist_metadata()` and rereads every local
-  `positions.txt` on each invocation.
-- `mix_for()` and `cover_for()` rediscover every mix rather than resolving one
-  folder directly.
+- My Mix discovery and detail are now database-only; active code no longer
+  scans local folders or serves local mix covers.
 - My Mix and watched-mix detail routes fetch live YouTube metadata during the
   user-facing request.
-- Saving two My Mix URLs performs two independent database writes, then calls a
-  detail path that scans the filesystem and may call YouTube.
+- Saving My Mix URLs uses one database transaction; detail may still call
+  YouTube for current public metadata.
 - Watched-mix covers perform a database existence read before checking the
   cached file. Local files are ephemeral on Vercel.
 
@@ -400,10 +395,7 @@ Opportunities:
 
 - [ ] Serve cached `youtube_video_metadata` immediately and refresh stale
   metadata explicitly or in a job. Do not block detail rendering on YouTube.
-- [x] Cache the local mix directory snapshot for a short period and invalidate
-  after saved URL/setlist changes.
-- [x] Resolve a single safe folder directly for detail/cover paths instead of
-  scanning every folder.
+- [x] Remove local mix directory discovery and local cover endpoints entirely.
 - [x] Save both My Mix URLs in one database transaction.
 - [ ] Decide on durable object storage for watched-mix covers before relying on
   them in serverless production. Until then, remote YouTube thumbnails may be a

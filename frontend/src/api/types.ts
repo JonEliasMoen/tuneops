@@ -120,7 +120,6 @@ export type MixSummary = {
   tidal_playlist_id: string
   tidal_playlist_name: string
   cover_url: string
-  has_cover: boolean
   track_count: number
   updated_at: string
   youtube_title: string
@@ -136,6 +135,19 @@ export type MixSummary = {
   youtube_comments: number | null
   youtube_subscribers_gained: number | null
   youtube_analytics_fetched_at: string
+}
+
+export type MyMixDiscoveryItem = {
+  internal_name: string
+  expected_tidal_name: string
+  tidal_playlist_id: string
+  tidal_playlist_name: string
+  track_count: number
+  status: 'connected' | 'not_discovered'
+}
+
+export type MyMixSettings = {
+  items: MyMixDiscoveryItem[]
 }
 
 export type YouTubeStatus = {

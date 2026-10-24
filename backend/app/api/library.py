@@ -40,10 +40,8 @@ from music_library.database import (
 )
 from music_library.dimensions import DIMENSION_LABELS, DIMENSION_MAX_VALUES, DIMENSION_VALUES
 from music_tools.mixes.service import (
-    cover_for,
     discover_mixes,
     fetch_youtube_metadata,
-    invalidate_mix_snapshot,
     mix_for,
     youtube_thumbnail_url,
     youtube_video_id,
@@ -87,18 +85,6 @@ from music_tools.watched_mixes.tracklist import parse_tracklist
 
 router = APIRouter(tags=["library"])
 WATCHED_MIX_COVER_ROOT = Path(__file__).resolve().parents[3] / ".watched_mix_covers"
-
-
-def _last_mix_cue_seconds(positions: str) -> int | None:
-    values: list[int] = []
-    for raw in str(positions or "").splitlines():
-        stamp = raw.strip().removeprefix("[").split("]", 1)[0].split(maxsplit=1)[0]
-        parts = stamp.split(":")
-        if len(parts) not in {2, 3} or not all(part.isdigit() for part in parts):
-            continue
-        numbers = [int(part) for part in parts]
-        values.append(numbers[0] * 60 + numbers[1] if len(numbers) == 2 else numbers[0] * 3600 + numbers[1] * 60 + numbers[2])
-    return max(values) if values else None
 
 
 def _path(prefix: str, value: str) -> str:
@@ -740,7 +726,6 @@ def mixes() -> list[dict[str, object]]:
             "youtube_upload_date": str(video_metadata.get(youtube_video_id(mix.youtube_url) or "", {}).get("upload_date") or ""),
             "youtube_duration_seconds": (
                 youtube_service.cached_video_duration_seconds(youtube_video_id(mix.youtube_url))
-                or _last_mix_cue_seconds(mix.positions)
             ),
             "youtube_views": getattr(mix, "youtube_views", None),
             "youtube_thumbnail_impressions": getattr(mix, "youtube_thumbnail_impressions", None),
@@ -752,8 +737,7 @@ def mixes() -> list[dict[str, object]]:
             "youtube_comments": getattr(mix, "youtube_comments", None),
             "youtube_subscribers_gained": getattr(mix, "youtube_subscribers_gained", None),
             "youtube_analytics_fetched_at": getattr(mix, "youtube_analytics_fetched_at", ""),
-            "has_cover": mix.cover_path is not None,
-            "cover_url": _path("api/v1/mixes", mix.folder_name) + "/cover" if mix.cover_path else youtube_thumbnail_url(mix.youtube_url),
+            "cover_url": youtube_thumbnail_url(mix.youtube_url),
         }
         for mix in discover_mixes()
     ]
@@ -775,7 +759,7 @@ def mix_detail(folder_name: str) -> dict[str, object]:
         ),
         "tidal_url": mix.tidal_url,
         "tidal_playlist_name": mix.tidal_playlist_name,
-        "cover_url": _path("api/v1/mixes", mix.folder_name) + "/cover" if mix.cover_path else youtube_thumbnail_url(mix.youtube_url),
+        "cover_url": youtube_thumbnail_url(mix.youtube_url),
         "youtube_title": metadata.title if metadata else "",
         "youtube_channel": metadata.channel_name if metadata else "",
         "youtube_views": (
@@ -787,7 +771,6 @@ def mix_detail(folder_name: str) -> dict[str, object]:
         "youtube_metadata_error": metadata.error if metadata else "",
         "youtube_duration_seconds": (
             youtube_service.cached_video_duration_seconds(video_id)
-            or _last_mix_cue_seconds(mix.positions)
         ),
         "youtube_thumbnail_impressions": mix.youtube_thumbnail_impressions,
         "youtube_thumbnail_ctr": mix.youtube_thumbnail_ctr,
@@ -808,14 +791,5 @@ def save_mix_urls(folder_name: str, body: MixUrlsUpdate) -> dict[str, object]:
     if body.youtube_url.strip() and not youtube_video_id(body.youtube_url):
         raise HTTPException(status_code=422, detail="Enter a valid YouTube video URL")
     save_setlist_urls(folder_name, body.youtube_url, body.tidal_url)
-    invalidate_mix_snapshot()
     invalidate_navigation_snapshot()
     return mix_detail(folder_name)
-
-
-@router.get("/mixes/{folder_name}/cover", response_class=FileResponse)
-def mix_cover(folder_name: str):
-    path: Path | None = cover_for(folder_name)
-    if path is None:
-        raise HTTPException(status_code=404, detail="Mix cover was not found")
-    return FileResponse(path, media_type="image/png", headers=_local_file_cache_headers(path))

@@ -180,6 +180,30 @@ def test_manual_mix_import_runs_only_as_an_explicit_background_job(monkeypatch):
     assert registry.result == {"playlist_name": "Dark Progressive", "tracks": 2}
 
 
+def test_mix_discovery_runs_as_an_explicit_job_and_invalidates_navigation(monkeypatch):
+    registry = ImmediateJobs()
+    invalidations: list[bool] = []
+    monkeypatch.setattr(jobs, "JOBS", registry)
+    monkeypatch.setattr(
+        jobs,
+        "discover_tidal_mixes",
+        lambda actual_engine, progress: {
+            "scanned": 9,
+            "candidates": 3,
+            "imported": 2,
+            "results": [],
+        },
+    )
+    monkeypatch.setattr(jobs, "invalidate_navigation_snapshot", lambda: invalidations.append(True))
+
+    response = jobs.discover_tidal_mix_setlists()
+
+    assert response.state == "succeeded"
+    assert registry.kind == "mix-tidal-discovery"
+    assert registry.result["imported"] == 2
+    assert invalidations == [True]
+
+
 def test_watched_mix_tracklist_search_loads_delay_settings_before_job_runs(monkeypatch):
     registry = ImmediateJobs()
     session = object()

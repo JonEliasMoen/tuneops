@@ -150,26 +150,21 @@ adapters and cutover checks are specified in `AuthMigrationPlan.md`.
   successful, partial, and failed jobs.
 - [ ] Ensure deployment shutdown drains or safely requeues active work.
 
-## Phase 5 — My Mixes and local folders
+## Phase 5 — TIDAL-backed My Mixes
 
-- [ ] Separate a My Mix's cloud metadata from its local media location. Cloud
-  identity must not depend on an absolute Windows folder path.
-- [ ] Define a portable mix manifest containing a stable mix UUID, title,
-  positions, provider links, artwork reference, and optional local audio
-  fingerprint—never the audio file by default.
-- [ ] Build browser upload/import for a manifest, `positions.txt`, and cover
-  image so cloud My Mixes work without filesystem access.
-- [ ] Decide whether audio files are permanently out of scope, uploaded to
-  private object storage, or accessed only through an optional local companion.
-  Treat licensing, cost, download authorization, and retention as blockers to
-  silent audio upload.
-- [ ] Prototype an optional local companion agent for folder discovery and
-  manifest/artwork sync. It must use outbound authenticated HTTPS, expose no
-  inbound home-network port, and require explicit folder allowlists.
-- [ ] Reconcile edits using stable IDs and versions; surface conflicts instead
-  of overwriting newer cloud or local changes.
-- [ ] Keep YouTube/TIDAL metadata refresh server-side and preserve local-cover
-  precedence after upload.
+- [x] Remove active My Mix dependencies on local folders, `cover.png`, WAV
+  files, and `positions.txt`; persisted setlists are the cloud-visible source.
+- [ ] Discover owned TIDAL playlists matching `djset <name>` and import them as
+  setlists without also classifying them as ordinary indexed playlists.
+- [ ] Treat the TIDAL playlist ID as stable identity so provider renames do not
+  create duplicate mixes.
+- [ ] Diff `last_updated` and refresh only changed setlists while retaining the
+  existing database-first load path.
+- [ ] Parse optional timestamps from the linked YouTube video's description;
+  store them only after an unambiguous track-order/title match.
+- [ ] Define archive behavior for a TIDAL playlist that is deleted or no longer
+  matches the `djset ` naming convention. Never silently delete its YouTube
+  link or analytics history.
 
 ## Phase 5B — Android watched-mix companion
 

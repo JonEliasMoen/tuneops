@@ -1517,7 +1517,7 @@ def lastfm_import_summary(
 
 
 def setlist_metadata(path: Path = DATABASE_PATH) -> dict[str, dict[str, Any]]:
-    """Return all persisted user-owned metadata for local setlists."""
+    """Return all persisted user-owned metadata for My Mix setlists."""
     initialize(path)
     with connect_readonly(path) as connection:
         rows = connection.execute(
@@ -1642,7 +1642,7 @@ def setlist_metadata_for(
 def store_youtube_mix_analytics(
     records: list[dict[str, Any]], path: Path = DATABASE_PATH,
 ) -> int:
-    """Upsert independent cached YouTube Analytics rows for local mixes."""
+    """Upsert independent cached YouTube Analytics rows for My Mixes."""
     initialize(path)
     fetched_at = datetime.now(timezone.utc).isoformat()
     accepted = [
@@ -2111,7 +2111,7 @@ def tidal_watched_mixes_for_tracks(
 def save_setlist_youtube_url(
     folder_name: str, youtube_url: str, path: Path = DATABASE_PATH
 ) -> None:
-    """Persist user-owned metadata for a discovered local mix."""
+    """Persist the user-owned YouTube URL for a My Mix."""
     name = str(folder_name).strip()
     if not name:
         raise ValueError("Mix folder name cannot be empty")
@@ -2444,7 +2444,7 @@ def tidal_setlists_for_track(
 def tidal_setlists_for_tracks(
     track_ids: list[str], path: Path = DATABASE_PATH
 ) -> dict[str, list[dict[str, str]]]:
-    """Batch reverse-membership lookup for TIDAL tracks in local setlists."""
+    """Batch reverse-membership lookup for TIDAL tracks in My Mix setlists."""
     unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
     result: dict[str, list[dict[str, str]]] = {track_id: [] for track_id in unique_ids}
     if not unique_ids or not _database_available(path):

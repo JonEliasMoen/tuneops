@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
 import { SettingsPage } from './SettingsPage'
 
 
@@ -43,7 +44,7 @@ describe('SettingsPage autosave', () => {
 
   it('autosaves settings and has no normal save button', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>)
+    render(<QueryClientProvider client={client}><MemoryRouter><SettingsPage /></MemoryRouter></QueryClientProvider>)
 
     const username = await screen.findByDisplayValue('Aruzhu')
     expect(screen.queryByRole('button', { name: 'Save settings' })).toBeNull()
@@ -56,10 +57,18 @@ describe('SettingsPage autosave', () => {
 
   it('offers the standalone VirtualDJ companion as a direct download', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    render(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>)
+    render(<QueryClientProvider client={client}><MemoryRouter><SettingsPage /></MemoryRouter></QueryClientProvider>)
 
     const link = await screen.findByRole('link', { name: 'Download VirtualDJ companion' })
     expect(link.getAttribute('href')).toBe('/downloads/virtualdj-companion/tuneops_virtualdj.py')
     expect(link.getAttribute('download')).toBe('tuneops_virtualdj.py')
+  })
+
+  it('links to My Mixes discovery settings', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={client}><MemoryRouter><SettingsPage /></MemoryRouter></QueryClientProvider>)
+
+    const link = await screen.findByRole('link', { name: 'Open My Mixes settings' })
+    expect(link.getAttribute('href')).toBe('/settings/my-mixes')
   })
 })
