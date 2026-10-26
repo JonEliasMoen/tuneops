@@ -238,6 +238,10 @@ rules remain in the hosted FastAPI service.
 
 ## Phase 7 — hosted MCP server and ChatGPT plugin
 
+The implementation-ready identity, tool, approval, testing and rollout plan is
+maintained in `McpPlan.md`. The checklist below remains the deployment-level
+summary.
+
 - [ ] Define a small goal-oriented MCP tool inventory before implementation.
   Start read-only: search library, get track details, list collections, inspect
   memberships, find compatible tracks, and inspect sync/job status.

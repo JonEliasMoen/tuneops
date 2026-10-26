@@ -15,6 +15,7 @@ def configure(monkeypatch) -> None:
     monkeypatch.setenv("TUNEOPS_ALLOWED_EMAILS", "jon@example.com")
     monkeypatch.setenv("GOOGLE_SIGNIN_CLIENT_ID", "client-id")
     monkeypatch.setenv("GOOGLE_SIGNIN_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("TUNEOPS_LOCAL_USER_ID", "92f78da4-8ff3-425d-b491-3bea22e39ef3")
     monkeypatch.setenv(
         "GOOGLE_SIGNIN_REDIRECT_URI",
         "https://tuneops.example/api/v1/auth/google/callback",
@@ -73,6 +74,24 @@ def test_signed_session_allows_private_routes(monkeypatch):
     assert response.status_code == 200
 
 
+def test_legacy_session_resolves_stable_internal_user(monkeypatch):
+    configure(monkeypatch)
+    client = TestClient(create_app())
+    client.cookies.set(
+        auth.SESSION_COOKIE,
+        auth.sign({
+            "sub": "google-user",
+            "email": "jon@example.com",
+            "iat": int(time.time()),
+        }),
+    )
+
+    response = client.get("/api/v1/auth/session")
+
+    assert response.status_code == 200
+    assert response.json()["user"]["user_id"] == "92f78da4-8ff3-425d-b491-3bea22e39ef3"
+
+
 def test_google_callback_creates_session(monkeypatch):
     configure(monkeypatch)
     client = TestClient(create_app())
@@ -103,6 +122,7 @@ def test_google_callback_creates_session(monkeypatch):
             "nonce": transaction["nonce"],
         },
     )
+    monkeypatch.setattr(auth, "bootstrap_google_identity", lambda claims: "tuneops-user")
 
     callback = client.get(
         f"/api/v1/auth/google/callback?code=test-code&state={state}",
@@ -113,3 +133,6 @@ def test_google_callback_creates_session(monkeypatch):
     assert callback.headers["location"] == "/liked-tracks"
     assert auth.SESSION_COOKIE in callback.cookies
     assert client.get("/api/v1/info").status_code == 200
+    session = auth.unsign(callback.cookies.get(auth.SESSION_COOKIE))
+    assert session is not None
+    assert session["user_id"] == "tuneops-user"

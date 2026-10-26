@@ -7,6 +7,7 @@ dependencies = [
     "fastapi>=0.141,<1",
     "google-auth>=2.41,<3",
     "musicbrainzngs>=0.7.1,<1",
+    "mcp>=2.3,<3",
     "Pillow>=10,<13",
     "pylast>=7.1,<8",
     "requests>=2.32,<3",

@@ -17,9 +17,15 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 import main as engine
 from music_library.telemetry import begin_database_metrics, end_database_metrics
 
-from .api.router import api_router
 from . import auth
+from .api.router import api_router
 from .jobs import JOBS
+from .mcp.config import (
+    McpConfigurationError,
+    SUPPORTED_SCOPES,
+    load_settings as load_mcp_settings,
+)
+from .mcp.server import create_mcp_http_app, create_mcp_server
 
 
 LOGGER = logging.getLogger("musicsync")
@@ -31,9 +37,16 @@ FRONTEND_DIST = ROOT / "frontend" / "dist"
 async def lifespan(_app: FastAPI):
     engine.configure_logging()
     LOGGER.info("fastapi.start root=%s frontend_dist=%s", ROOT, FRONTEND_DIST)
-    yield
-    JOBS.shutdown()
-    LOGGER.info("fastapi.stop")
+    mcp_server = getattr(_app.state, "mcp_server", None)
+    try:
+        if mcp_server is None:
+            yield
+        else:
+            async with mcp_server.session_manager.run():
+                yield
+    finally:
+        JOBS.shutdown()
+        LOGGER.info("fastapi.stop")
 
 
 def _error(request: Request, status: int, code: str, message: str, details=None):
@@ -65,6 +78,16 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    try:
+        mcp_settings = load_mcp_settings()
+    except McpConfigurationError:
+        mcp_settings = None
+    if mcp_settings is not None:
+        mcp_server = create_mcp_server(mcp_settings)
+        app.state.mcp_server = mcp_server
+        app.state.mcp_settings = mcp_settings
+        app.mount("/mcp", create_mcp_http_app(mcp_server, mcp_settings), name="mcp")
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
@@ -119,6 +142,13 @@ def create_app() -> FastAPI:
             or path.startswith("/assets/")
             or path == "/favicon.ico"
             or path == "/login"
+            or (
+                mcp_settings is not None
+                and (
+                    path.startswith("/mcp")
+                    or path.startswith("/.well-known/oauth-protected-resource/")
+                )
+            )
         )
         if public:
             return await call_next(request)
@@ -150,6 +180,25 @@ def create_app() -> FastAPI:
         return _error(request, 500, "internal_error", "MusicSync could not complete the request.")
 
     app.include_router(api_router)
+
+    if mcp_settings is not None:
+        resource_metadata = {
+            "resource": mcp_settings.resource_url,
+            "authorization_servers": [mcp_settings.issuer_url],
+            "scopes_supported": list(SUPPORTED_SCOPES),
+            "bearer_methods_supported": ["header"],
+        }
+
+        @app.get(
+            "/.well-known/oauth-protected-resource/mcp",
+            include_in_schema=False,
+        )
+        @app.get(
+            "/.well-known/oauth-protected-resource/mcp/",
+            include_in_schema=False,
+        )
+        async def mcp_resource_metadata() -> dict[str, object]:
+            return resource_metadata
 
     @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
     async def login_page(error: str = "", return_to: str = "/"):

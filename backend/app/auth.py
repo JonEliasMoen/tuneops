@@ -17,6 +17,9 @@ from fastapi import Request
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token
 
+from music_library.credentials import CredentialConfigurationError, current_user_id
+from music_library.identities import IdentityError, bootstrap_google_identity
+
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -58,12 +61,21 @@ def allowed_emails() -> set[str]:
     return {item.strip().casefold() for item in raw.split(",") if item.strip()}
 
 
+def _internal_user_configured() -> bool:
+    try:
+        current_user_id()
+    except CredentialConfigurationError:
+        return False
+    return True
+
+
 def configured() -> bool:
     return bool(
         _client_id()
         and _client_secret()
         and len(_session_secret()) >= 32
         and allowed_emails()
+        and _internal_user_configured()
     )
 
 
@@ -77,6 +89,8 @@ def configuration_error() -> str:
         missing.append("TUNEOPS_SESSION_SECRET (at least 32 characters)")
     if not allowed_emails():
         missing.append("TUNEOPS_ALLOWED_EMAILS")
+    if not _internal_user_configured():
+        missing.append("TUNEOPS_LOCAL_USER_ID (UUID)")
     return "Missing: " + ", ".join(missing) if missing else ""
 
 
@@ -133,6 +147,14 @@ def session_user(request: Request) -> dict[str, Any] | None:
     payload = unsign(value, max_age=SESSION_MAX_AGE) if value else None
     if not payload or not payload.get("sub"):
         return None
+    # Sessions issued before application-identity linking remain usable during
+    # the single-user cutover. A fresh login persists the Google link and puts
+    # the same stable ID directly in the signed cookie.
+    if not payload.get("user_id"):
+        try:
+            payload["user_id"] = current_user_id()
+        except CredentialConfigurationError:
+            return None
     return payload
 
 
@@ -205,6 +227,10 @@ def finish_login(request: Request, code: str, state: str) -> tuple[dict[str, Any
     }
     if not session["sub"]:
         raise AuthError("Google did not return a stable account identifier")
+    try:
+        session["user_id"] = bootstrap_google_identity(claims)
+    except IdentityError as exc:
+        raise AuthError("This Google account is not linked to an active TuneOps user") from exc
     return session, str(transaction.get("return_to") or "/")
 
 

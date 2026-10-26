@@ -76,6 +76,30 @@ The working interpreter is:
 - Google login authenticates TuneOps only. YouTube Analytics authorization is
   a separate provider connection and must retain its narrower provider-token
   lifecycle.
+- Successful Google login resolves to the stable internal `app_users.id` and
+  stores that ID in the signed browser session. External accounts are linked
+  by `(issuer, subject)` through `music_library.identities`; never reassign an
+  existing identity or use email as the authorization key. Legacy signed
+  single-user sessions may temporarily resolve through `TUNEOPS_LOCAL_USER_ID`
+  until the next login persists the Google identity link.
+- MCP bearer validation lives under `backend/app/mcp`: require an exact OAuth
+  issuer, audience, signature, expiry and existing `(issuer, subject)` link
+  before exposing the internal user ID to a tool. Keep synchronous JWKS/Turso
+  validation off the ASGI event loop. MCP configuration uses
+  `TUNEOPS_MCP_ISSUER_URL`, `TUNEOPS_MCP_RESOURCE_URL` (or
+  `TUNEOPS_PUBLIC_URL`), optional `TUNEOPS_MCP_AUDIENCE`, and optional
+  `TUNEOPS_MCP_JWKS_URL`.
+- The MCP HTTP adapter is mounted only when that configuration is complete.
+  Its canonical resource URL ends in `/mcp/`; the root protected-resource
+  metadata routes and `/mcp` transport bypass browser-cookie auth but retain
+  MCP bearer auth. Keep the SDK session manager in the host FastAPI lifespan,
+  retain `stateless_http=True` for Vercel, and preserve DNS-rebinding host
+  allowlists for the canonical host, Vercel preview host, and local testing.
+- MCP library tools are bounded adapters in
+  `backend/app/services/mcp_library.py`. Reuse shared collection queries,
+  return concise summaries rather than raw rows, cap pages and membership
+  requests at 50, and require the resolved internal user to equal the current
+  single-user library owner until library tables gain explicit ownership.
 
 New HTTP routes belong in `backend/app/api`, use cases in
 `backend/app/services`, and browser UI in `frontend/src/features`. Keep provider
