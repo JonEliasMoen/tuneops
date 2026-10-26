@@ -38,7 +38,6 @@ def identity_user_id(
 ) -> str | None:
     """Resolve an already-linked external identity without changing state."""
     normalized_issuer, normalized_subject = _normalized_identity(issuer, subject)
-    initialize(path)
     with connect_readonly(path) as connection:
         row = connection.execute(
             """

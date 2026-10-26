@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 from music_library.database import connect_readonly
+from music_library.telemetry import begin_database_metrics, end_database_metrics
 from music_library.identities import (
     GOOGLE_ISSUER,
     IdentityError,
@@ -28,6 +29,26 @@ def test_link_and_resolve_external_identity(tmp_path):
 
     assert linked == user_id
     assert identity_user_id(GOOGLE_ISSUER, "google-subject", path=path) == user_id
+
+
+def test_resolve_external_identity_is_one_read_without_schema_initialization(tmp_path):
+    path = tmp_path / "library.sqlite3"
+    user_id = str(uuid.uuid4())
+    link_external_identity(user_id, GOOGLE_ISSUER, "google-subject", path=path)
+
+    metrics, token = begin_database_metrics()
+    try:
+        resolved = identity_user_id(
+            GOOGLE_ISSUER, "google-subject", path=path
+        )
+    finally:
+        end_database_metrics(token)
+
+    assert resolved == user_id
+    assert metrics.connections == 1
+    # Local SQLite adds two connection PRAGMAs. The resolver itself contributes
+    # exactly one SELECT and, critically, no schema initialization statements.
+    assert metrics.statements == 3
 
 
 def test_identity_metadata_can_change_but_owner_cannot(tmp_path):

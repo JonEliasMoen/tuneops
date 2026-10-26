@@ -116,6 +116,10 @@ authentication or storage logic. Browsing, sorting, filtering, and paging are
 SQLite-only. TIDAL refreshes run as explicit background jobs.
 Persisted job-status polling is a one-statement read and must use
 `connect_readonly()`; progress/result writes retain explicit transactions.
+Authentication identity resolution is also a one-statement read. Never call
+`database.initialize()` from `identity_user_id()` or another per-request
+token-validation path; serverless cold starts must not replay the full schema
+before accepting an MCP bearer token.
 
 ## Database performance contract
 
