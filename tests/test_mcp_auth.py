@@ -7,7 +7,12 @@ from types import SimpleNamespace
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from backend.app.mcp.auth import TuneOpsTokenVerifier, tuneops_user_id
+from backend.app.mcp.auth import (
+    GoogleTokenVerifier,
+    TuneOpsTokenVerifier,
+    token_verifier_for,
+    tuneops_user_id,
+)
 from backend.app.mcp.config import McpSettings
 
 
@@ -93,3 +98,85 @@ def test_wrong_issuer_is_rejected_before_identity_lookup():
 
     assert asyncio.run(verifier.verify_token(token)) is None
     assert called is False
+
+
+def google_settings() -> McpSettings:
+    return McpSettings(
+        issuer_url="https://accounts.google.com",
+        resource_url="https://tuneops.example/mcp/",
+        audience="chatgpt.apps.googleusercontent.com",
+        jwks_url="https://www.googleapis.com/oauth2/v3/certs",
+        auth_provider="google",
+        oauth_client_id="chatgpt.apps.googleusercontent.com",
+    )
+
+
+def test_google_access_token_resolves_existing_google_identity():
+    verifier = GoogleTokenVerifier(
+        google_settings(),
+        token_info_loader=lambda token: {
+            "aud": "chatgpt.apps.googleusercontent.com",
+            "sub": "google-user",
+            "scope": "openid email profile",
+            "expires_in": 300,
+        },
+        identity_resolver=lambda issuer, subject: (
+            "internal-user"
+            if (issuer, subject) == ("https://accounts.google.com", "google-user")
+            else None
+        ),
+    )
+
+    access_token = asyncio.run(verifier.verify_token("google-access-token"))
+
+    assert access_token is not None
+    assert access_token.client_id == "chatgpt.apps.googleusercontent.com"
+    assert access_token.subject == "google-user"
+    assert access_token.resource == "https://tuneops.example/mcp/"
+    assert access_token.scopes == ["openid", "email", "profile"]
+    assert tuneops_user_id(access_token) == "internal-user"
+
+
+def test_google_access_token_for_another_oauth_client_is_rejected():
+    verifier = GoogleTokenVerifier(
+        google_settings(),
+        token_info_loader=lambda token: {
+            "aud": "another-client.apps.googleusercontent.com",
+            "sub": "google-user",
+            "scope": "openid email profile",
+            "expires_in": 300,
+        },
+        identity_resolver=lambda issuer, subject: "internal-user",
+    )
+
+    assert asyncio.run(verifier.verify_token("wrong-client-token")) is None
+
+
+def test_google_access_token_requires_openid_and_linked_subject():
+    no_openid = GoogleTokenVerifier(
+        google_settings(),
+        token_info_loader=lambda token: {
+            "aud": "chatgpt.apps.googleusercontent.com",
+            "sub": "google-user",
+            "scope": "email profile",
+            "expires_in": 300,
+        },
+        identity_resolver=lambda issuer, subject: "internal-user",
+    )
+    unlinked = GoogleTokenVerifier(
+        google_settings(),
+        token_info_loader=lambda token: {
+            "aud": "chatgpt.apps.googleusercontent.com",
+            "sub": "google-user",
+            "scope": "openid email profile",
+            "expires_in": 300,
+        },
+        identity_resolver=lambda issuer, subject: None,
+    )
+
+    assert asyncio.run(no_openid.verify_token("missing-openid")) is None
+    assert asyncio.run(unlinked.verify_token("unlinked")) is None
+
+
+def test_verifier_factory_selects_google_mode():
+    assert isinstance(token_verifier_for(google_settings()), GoogleTokenVerifier)

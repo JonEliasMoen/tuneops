@@ -21,15 +21,15 @@ from backend.app.services.mcp_library import (
     search_tracks as search_library_tracks,
 )
 
-from .auth import TuneOpsTokenVerifier, tuneops_user_id
+from .auth import token_verifier_for, tuneops_user_id
 from .config import LIBRARY_READ, PROFILE_READ, McpSettings
 
 
-def _current_user_id(required_scope: str) -> str:
+def _current_user_id(required_scope: str | None = None) -> str:
     access_token = get_access_token()
     if access_token is None:
         raise PermissionError("Authentication is required")
-    if required_scope not in access_token.scopes:
+    if required_scope and required_scope not in access_token.scopes:
         raise PermissionError(f"The {required_scope} scope is required")
     user_id = tuneops_user_id(access_token)
     if not user_id:
@@ -38,10 +38,12 @@ def _current_user_id(required_scope: str) -> str:
 
 
 def create_mcp_server(settings: McpSettings) -> MCPServer:
+    profile_scope = None if settings.auth_provider == "google" else PROFILE_READ
+    library_scope = None if settings.auth_provider == "google" else LIBRARY_READ
     server = MCPServer(
         "TuneOps",
         description="Search and safely manage the connected TuneOps music library.",
-        token_verifier=TuneOpsTokenVerifier(settings),
+        token_verifier=token_verifier_for(settings),
         auth=AuthSettings(
             issuer_url=AnyHttpUrl(settings.issuer_url),
             resource_server_url=AnyHttpUrl(settings.resource_url),
@@ -59,14 +61,16 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
             openWorldHint=False,
         ),
         meta={
-            "securitySchemes": [{"type": "oauth2", "scopes": [PROFILE_READ]}],
+            "securitySchemes": [
+                {"type": "oauth2", "scopes": [profile_scope] if profile_scope else []}
+            ],
             "openai/profile": True,
         },
         structured_output=True,
     )
     def get_tuneops_profile() -> dict[str, object]:
         """Return the connected TuneOps account and safe provider statuses."""
-        return profile_for_user(_current_user_id(PROFILE_READ))
+        return profile_for_user(_current_user_id(profile_scope))
 
     read_annotations = ToolAnnotations(
         readOnlyHint=True,
@@ -75,7 +79,9 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
         openWorldHint=False,
     )
     read_security = {
-        "securitySchemes": [{"type": "oauth2", "scopes": [LIBRARY_READ]}]
+        "securitySchemes": [
+            {"type": "oauth2", "scopes": [library_scope] if library_scope else []}
+        ]
     }
 
     @server.tool(
@@ -93,7 +99,7 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
     ) -> dict[str, object]:
         """Search indexed TuneOps tracks by title, remix, artist or album."""
         return search_library_tracks(
-            _current_user_id(LIBRARY_READ),
+            _current_user_id(library_scope),
             query,
             limit=limit,
             cursor=cursor,
@@ -109,7 +115,7 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
     )
     def get_track(tidal_track_id: str) -> dict[str, object]:
         """Inspect one exact indexed TIDAL track and its TuneOps metadata."""
-        result = read_track(_current_user_id(LIBRARY_READ), tidal_track_id)
+        result = read_track(_current_user_id(library_scope), tidal_track_id)
         if result is None:
             raise ValueError("Track was not found")
         return result
@@ -128,7 +134,7 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
     ) -> dict[str, object]:
         """List indexed TuneOps collections, optionally filtered by type/name."""
         return read_collections(
-            _current_user_id(LIBRARY_READ),
+            _current_user_id(library_scope),
             kind=kind,
             query=query,
             limit=limit,
@@ -151,7 +157,7 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
     ) -> dict[str, object]:
         """Return a bounded track page from one exact TuneOps collection."""
         return read_collection_tracks(
-            _current_user_id(LIBRARY_READ),
+            _current_user_id(library_scope),
             kind,
             collection_id,
             limit=limit,
@@ -169,7 +175,7 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
     def get_track_memberships(tidal_track_ids: list[str]) -> dict[str, object]:
         """Show which TuneOps collections contain up to 50 exact tracks."""
         return read_track_memberships(
-            _current_user_id(LIBRARY_READ), tidal_track_ids
+            _current_user_id(library_scope), tidal_track_ids
         )
 
     return server

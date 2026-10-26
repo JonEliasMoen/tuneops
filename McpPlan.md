@@ -1,6 +1,6 @@
 # TuneOps MCP server and ChatGPT plugin plan
 
-Last reviewed: 2026-10-25.
+Last reviewed: 2026-10-26.
 
 ## Goal
 
@@ -33,34 +33,38 @@ Keep these three concepts separate:
 
 1. **TuneOps application identity** identifies the human as an internal
    `app_users.id`.
-2. **MCP OAuth authorization** lets ChatGPT call selected TuneOps tools using a
-   short-lived bearer token with explicit TuneOps scopes.
+2. **MCP OAuth authentication** uses a dedicated Google OAuth client to prove
+   the same Google identity to ChatGPT; TuneOps assigns capabilities internally.
 3. **Provider connections** are the encrypted Spotify, TIDAL and YouTube
    credentials TuneOps already owns for that internal user.
 
 ChatGPT must never receive provider tokens, `TUNEOPS_CREDENTIAL_KEY`, Turso
-credentials, browser session cookies or Google client secrets. A validated MCP
-access token resolves an internal user; TuneOps then loads that user's provider
-connection on the server.
+credentials or browser session cookies. The dedicated Google OAuth client secret
+is entered only in ChatGPT's connection setup and is never served by TuneOps. A
+validated MCP access token resolves an internal user; TuneOps then loads that
+user's provider connection on the server.
 
-### Use an established OAuth 2.1 identity provider
+### Use the existing Google identity directly for private dogfooding
 
-Do not turn the existing handwritten Google cookie login into a general OAuth
-authorization server. Keep Google as the visible sign-in method, but use an
-identity provider that supports the MCP OAuth contract: Authorization Code +
-PKCE, discovery metadata, audience/resource-bound access tokens, scopes,
-refresh/revocation and either CIMD or DCR client registration.
+Do not turn TuneOps into a general OAuth authorization server. For the private,
+single-user connection, configure ChatGPT with a dedicated Google Web OAuth
+client from the existing Google Cloud project. Request only `openid email
+profile`. Google does not issue custom TuneOps scopes, so tool descriptors use
+empty OAuth scope lists and TuneOps grants capabilities after resolving the
+linked Google `sub` to an active `app_users.id`.
 
-Preferred evaluation order:
+The dedicated client ID is mandatory. Do not reuse a broader Google/YouTube
+client: a Google access token for this exact client is the MCP credential.
+TuneOps verifies the opaque access token with Google's token-info endpoint,
+checks client ID, expiry and `openid`, and resolves the already-linked Google
+identity. This is a pragmatic private-deployment tradeoff: Google does not bind
+the token to the TuneOps MCP `resource` value. Before multi-user/public release,
+replace it with an established provider that issues resource-bound tokens and
+supports first-class TuneOps scopes.
 
-1. Auth0 with Google as the upstream identity provider and CIMD if supported.
-2. Stytch or another provider explicitly supporting MCP OAuth 2.1.
-3. A predefined ChatGPT OAuth client only if the private plugin flow requires
-   it and the provider cannot support CIMD/DCR.
-
-The first private deployment may retain the current Google web login while MCP
-uses the managed provider, but both identities must be explicitly linked to the
-same `app_users.id`. Do not correlate accounts at request time by email.
+Use ChatGPT's predefined/provided-client registration mode. The exact callback
+URL shown by ChatGPT must be allowlisted on the dedicated Google client. Keep
+Auth0/Stytch as future options, not current dependencies.
 
 ### Native approval for additive writes
 
@@ -93,7 +97,7 @@ ChatGPT
   |  Streamable HTTP MCP + OAuth bearer token
   v
 https://tuneops.vercel.app/mcp
-  |-- validate issuer, audience, expiry and scopes
+  |-- validate Google client audience, expiry and linked subject
   |-- resolve external identity -> app_users.id
   |-- MCP tool adapter (small schemas and bounded results)
   v
@@ -115,7 +119,7 @@ provider credentials or unbounded track collections.
 ### `get_tuneops_profile`
 
 - Purpose: identify the connected TuneOps account and provider health.
-- Scope: `profile:read`.
+- Internal capability: `profile:read` (not requested as a Google OAuth scope).
 - Input: none.
 - Output: stable opaque user ID, display name, TuneOps URL and safe provider
   connection labels/statuses.
@@ -126,7 +130,7 @@ provider credentials or unbounded track collections.
 
 - Purpose: search the complete indexed library by title, remix and artist with
   optional key, BPM, rating, tags and collection filters.
-- Scope: `library:read`.
+- Internal capability: `library:read` (not requested as a Google OAuth scope).
 - Input: query plus allowlisted filters, `limit <= 50`, optional cursor.
 - Output: canonical TIDAL track ID, title, artists, relevant metadata,
   memberships and absolute TuneOps track/artist links.
@@ -136,7 +140,7 @@ provider credentials or unbounded track collections.
 ### `get_track`
 
 - Purpose: inspect one exact indexed track after search or user reference.
-- Scope: `library:read`.
+- Internal capability: `library:read`.
 - Input: canonical TIDAL track ID.
 - Output: metadata, dimensions/tags/rating, memberships, My Mix and watched-mix
   relationships, Last.fm play count and absolute TuneOps links.
@@ -145,7 +149,7 @@ provider credentials or unbounded track collections.
 ### `list_collections`
 
 - Purpose: find an exact destination or inspect available collections.
-- Scope: `library:read`.
+- Internal capability: `library:read`.
 - Input: optional type (`playlist`, `event`, `source`, `setlist`,
   `watched_mix`) and text query; bounded page.
 - Output: stable collection ID, name, type, track count, writability and URL.
@@ -154,7 +158,7 @@ provider credentials or unbounded track collections.
 ### `get_collection_tracks`
 
 - Purpose: inspect a selected collection using TuneOps sorting/filtering.
-- Scope: `library:read`.
+- Internal capability: `library:read`.
 - Input: collection type and ID, allowlisted sort/filter, `limit <= 50`, cursor.
 - Output: bounded track summaries and next cursor.
 - Annotations: read-only, non-destructive, not open-world.
@@ -163,7 +167,7 @@ provider credentials or unbounded track collections.
 
 - Purpose: answer which playlists/events/sources/mixes contain one or more
   tracks before proposing an action.
-- Scope: `library:read`.
+- Internal capability: `library:read`.
 - Input: at most 50 canonical track IDs.
 - Output: memberships grouped by track.
 - Annotations: read-only, non-destructive, not open-world.
@@ -171,7 +175,7 @@ provider credentials or unbounded track collections.
 ### `add_tracks_to_playlist`
 
 - Purpose: add exact indexed TIDAL tracks to one exact writable TIDAL playlist.
-- Scope: `playlists:write`.
+- Internal capability: `playlists:write`; Google grants identity only.
 - Input: destination playlist ID, 1-50 canonical TIDAL track IDs and an
   idempotency key generated for this intended operation.
 - Output: destination name, requested/added/already-present/failed counts,
@@ -191,24 +195,44 @@ permission and safety review.
 ### Connection sequence
 
 1. ChatGPT discovers `/.well-known/oauth-protected-resource` from the MCP host.
-2. Resource metadata points to the chosen authorization server and identifies
-   the TuneOps MCP resource/audience.
-3. ChatGPT identifies its OAuth client using CIMD where supported, otherwise
-   the selected DCR/predefined-client mode.
-4. ChatGPT opens Authorization Code + PKCE. The user signs in with Google on
-   the managed provider and consents to requested TuneOps scopes.
-5. The provider issues a short-lived access token whose audience/resource is
-   the TuneOps MCP API.
+2. Resource metadata points to Google's OIDC issuer and advertises only
+   `openid email profile`.
+3. ChatGPT uses the dedicated, manually supplied Google client ID/secret and
+   the exact callback URL allowlisted in Google Cloud.
+4. ChatGPT opens Authorization Code + PKCE. The user signs in with Google and
+   consents to `openid email profile`.
+5. Google issues a short-lived opaque access token for the dedicated client.
 6. ChatGPT sends `Authorization: Bearer ...` to `/mcp`.
-7. TuneOps validates signature through cached JWKS plus issuer, audience,
-   expiry/not-before, resource and scopes on every request.
+7. TuneOps validates the token through Google's token-info endpoint, requiring
+   the exact MCP Google client ID, a live expiry and the `openid` scope.
 8. The validated `(issuer, subject)` resolves through `external_identities` to
    exactly one active `app_users.id`.
-9. Tool services receive only the resolved internal ID and granted scopes.
+9. Tool services receive only the resolved internal ID; TuneOps applies its
+   internal capabilities and ownership checks server-side.
 
 Missing, invalid or insufficient tokens return `401` with the correct
 `WWW-Authenticate` challenge and MCP `_meta["mcp/www_authenticate"]`, allowing
 ChatGPT to display the linking/reauthorization UI.
+
+### Private Google connection configuration
+
+Vercel/TuneOps environment:
+
+- `TUNEOPS_MCP_AUTH_PROVIDER=google`
+- `GOOGLE_MCP_CLIENT_ID=<dedicated ChatGPT OAuth client ID>`
+- `TUNEOPS_PUBLIC_URL=https://tuneops.vercel.app`
+
+The MCP Google client secret is not required by TuneOps or Vercel. Enter it
+only in ChatGPT's private connection setup. Configure ChatGPT with provided
+client credentials, `client_secret_post`, authorization endpoint
+`https://accounts.google.com/o/oauth2/v2/auth`, token endpoint
+`https://oauth2.googleapis.com/token`, authorization-server base
+`https://accounts.google.com`, resource `https://tuneops.vercel.app/mcp/`, and
+base scopes `openid`, `email`, `profile`. Leave default/tool scopes empty.
+Enable OIDC discovery at
+`https://accounts.google.com/.well-known/openid-configuration` and UserInfo at
+`https://openidconnect.googleapis.com/v1/userinfo`. Add the exact callback URL
+shown by ChatGPT to the dedicated Google Web client's redirect allowlist.
 
 ### Identity-linking cutover
 
@@ -218,15 +242,15 @@ an internal database user. Complete this before MCP writes:
 - Persist the current Google `(issuer, subject)` in `external_identities`.
 - Resolve the browser session to the same stable `app_users.id` currently used
   by `TUNEOPS_LOCAL_USER_ID` and encrypted provider connections.
-- Link the managed MCP-provider identity to that same user through an explicit
-  signed-in account-linking flow or controlled single-user bootstrap.
+- Reuse the already-linked Google `(issuer, subject)`; do not create a second
+  identity merely because ChatGPT uses a separate OAuth client ID.
 - Reject unknown identities even when their email happens to match an allowlist.
 - Add a visible Settings page listing linked application identities and a way
   to revoke the ChatGPT/MCP link without deleting provider credentials.
 
 ## Authorization policy
 
-Initial scopes:
+Initial internal capabilities (not Google OAuth scopes):
 
 | Scope | Permits |
 | --- | --- |
@@ -236,16 +260,17 @@ Initial scopes:
 
 Rules:
 
-- Declare scopes per MCP tool with `securitySchemes`; do not rely on a global
-  server default.
+- Declare OAuth security per MCP tool with an empty scope list in Google mode;
+  the connection's base scopes are always `openid email profile`.
 - Resolve `user_id` only from a validated token. It is never a tool argument.
 - Verify every requested track and playlist belongs to or is visible to the
   resolved user before provider access.
 - `playlists:write` does not imply remove, move, delete, create or sync rights.
-- A read-only connection must still be useful; request the write scope only
-  when ChatGPT first attempts the additive tool if the chosen provider supports
-  incremental authorization cleanly.
-- Reauthorization after scope changes must not silently reuse stale privileges.
+- A read-only connection must still be useful. Enabling a future write tool is
+  an explicit TuneOps server-side policy change and does not widen Google data
+  access.
+- If a future provider supports resource-bound custom scopes, restore
+  per-tool incremental authorization before public/multi-user release.
 
 ## Write safety and idempotency
 
@@ -293,7 +318,7 @@ clients to HTML login pages.
 
 Vercel instances are ephemeral. Keep no authorization state, idempotency state,
 jobs or protocol-critical session state only in process memory. Persist required
-state in Turso or the selected managed identity provider.
+state in Turso. Google owns its normal OAuth grant and refresh-token lifecycle.
 
 ## Delivery phases
 
@@ -301,20 +326,21 @@ state in Turso or the selected managed identity provider.
 
 - [ ] Confirm private custom MCP plugins are available in the target ChatGPT
   account/workspace.
-- [ ] Choose the OAuth provider after verifying discovery, PKCE, resource/audience
-  support and CIMD or DCR against a throwaway endpoint.
-- [ ] Decide the production MCP resource identifier and stable HTTPS URL.
+- [x] Choose direct Google OIDC with a dedicated predefined OAuth client for
+  private dogfooding; record the missing resource-bound-token tradeoff.
+- [x] Use `https://tuneops.vercel.app/mcp/` as the production MCP resource.
 - [ ] Record privacy, retention and support URLs even for private dogfooding.
 - [ ] Freeze the version-one tool inventory and schemas above.
 
-Exit: MCP Inspector can complete OAuth against a dummy protected tool, and the
-selected provider's tokens contain a verifiable TuneOps audience and scopes.
+Exit: ChatGPT can complete Google OAuth against a protected tool, and TuneOps
+verifies that the access token belongs to the dedicated Google client and the
+linked internal user.
 
 ### Phase 1 — persistent application identity
 
 - [x] Map the existing Google web identity to the current internal user.
 - [x] Make browser/API identity resolution return `app_users.id`.
-- [ ] Add explicit linking for the MCP OAuth identity.
+- [x] Reuse the existing stable Google identity link for MCP authentication.
 - [ ] Add cross-user isolation tests before accepting a second identity.
 - [ ] Add Settings visibility and revocation for linked MCP identity.
 
@@ -327,8 +353,9 @@ same internal user without using email as the authorization key.
 - [x] Mount stateless Streamable HTTP at `/mcp/`, feature-gated by complete
   OAuth resource-server configuration.
 - [x] Publish protected-resource metadata.
-- [x] Validate JWT bearer signature, exact issuer, audience, expiry and linked
-  internal identity, with correct HTTP auth challenges from the SDK.
+- [x] Support generic JWT validation and direct Google opaque-token validation;
+  require exact client audience, expiry, `openid`, and linked identity for the
+  private Google connection.
 - [x] Register `get_tuneops_profile` with per-tool security schemes.
 - [ ] Add health/initialization telemetry without exposing tool inputs.
 - [ ] Verify stateless behavior across separate Vercel function instances.
@@ -397,10 +424,11 @@ duplicate writes.
 
 ### Authentication and authorization
 
-- Missing token, bad signature, wrong issuer, wrong audience/resource, expired
-  token, not-yet-valid token and revoked identity.
+- Missing token, invalid Google token, wrong OAuth client audience, expired
+  token, missing `openid`, and revoked/unlinked identity.
 - Correct `WWW-Authenticate` and MCP auth metadata on failures.
-- Missing scope per tool and successful incremental reauthorization.
+- Google OAuth requests only `openid email profile`; internal TuneOps
+  capabilities and ownership checks remain server-enforced.
 - Unknown identity and disabled TuneOps user.
 - Cross-user track, collection, credential and idempotency access attempts.
 
@@ -428,7 +456,7 @@ duplicate writes.
 - The ChatGPT connection visibly authenticates to TuneOps and resolves the same
   internal account used by the web application.
 - Read-only tools are useful without granting `playlists:write`.
-- Every tool call is scoped by validated identity and declared scope.
+- Every tool call is scoped by validated identity and internal TuneOps policy.
 - ChatGPT shows a confirmation before `add_tracks_to_playlist`.
 - The confirmed payload names one destination and the exact tracks.
 - Duplicate/retried calls cannot add duplicate tracks.
@@ -440,7 +468,8 @@ duplicate writes.
 ## Explicit non-goals for version one
 
 - Building a custom OAuth authorization server.
-- Giving ChatGPT direct TIDAL, Spotify, Google or Turso credentials.
+- Giving ChatGPT TIDAL, Spotify, YouTube Analytics or Turso credentials. The
+  dedicated Google identity-only OAuth client is intentionally used for MCP.
 - Letting the model choose an unbounded action from a generic executor.
 - Mutating playlists without native ChatGPT confirmation.
 - Supporting anonymous access.

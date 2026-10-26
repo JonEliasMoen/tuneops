@@ -22,7 +22,6 @@ from .api.router import api_router
 from .jobs import JOBS
 from .mcp.config import (
     McpConfigurationError,
-    SUPPORTED_SCOPES,
     load_settings as load_mcp_settings,
 )
 from .mcp.server import create_mcp_http_app, create_mcp_server
@@ -185,7 +184,7 @@ def create_app() -> FastAPI:
         resource_metadata = {
             "resource": mcp_settings.resource_url,
             "authorization_servers": [mcp_settings.issuer_url],
-            "scopes_supported": list(SUPPORTED_SCOPES),
+            "scopes_supported": list(mcp_settings.advertised_scopes),
             "bearer_methods_supported": ["header"],
         }
 

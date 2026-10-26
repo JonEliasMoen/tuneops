@@ -44,3 +44,25 @@ def test_profile_tool_contract_is_read_only():
         tool.meta["securitySchemes"][0]["scopes"] == ["library:read"]
         for tool in library_tools
     )
+
+
+def test_google_tools_do_not_request_tuneops_scopes_from_google():
+    settings = McpSettings(
+        issuer_url="https://accounts.google.com",
+        resource_url="https://tuneops.example/mcp/",
+        audience="chatgpt.apps.googleusercontent.com",
+        jwks_url="https://www.googleapis.com/oauth2/v3/certs",
+        auth_provider="google",
+        oauth_client_id="chatgpt.apps.googleusercontent.com",
+    )
+    server = create_mcp_server(settings)
+
+    async def inspect_tools():
+        async with Client(server) as client:
+            return await client.list_tools()
+
+    tools = asyncio.run(inspect_tools())
+
+    assert all(
+        tool.meta["securitySchemes"][0]["scopes"] == [] for tool in tools.tools
+    )

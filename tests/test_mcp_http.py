@@ -40,3 +40,20 @@ def test_mcp_routes_bypass_cookie_login_only_when_configured(monkeypatch):
         assert client.get("/mcp/").status_code == 401
         assert client.get("/.well-known/oauth-protected-resource/mcp").status_code == 200
         assert client.get("/api/v1/info").status_code == 401
+
+
+def test_google_mcp_metadata_advertises_only_google_scopes(monkeypatch):
+    monkeypatch.setenv("TUNEOPS_MCP_AUTH_PROVIDER", "google")
+    monkeypatch.setenv("GOOGLE_MCP_CLIENT_ID", "chatgpt.apps.googleusercontent.com")
+    monkeypatch.setenv("TUNEOPS_PUBLIC_URL", "https://tuneops.example")
+    monkeypatch.setenv("TUNEOPS_AUTH_REQUIRED", "false")
+    monkeypatch.delenv("TUNEOPS_MCP_ISSUER_URL", raising=False)
+
+    with TestClient(create_app(), base_url="https://tuneops.example") as client:
+        metadata = client.get("/.well-known/oauth-protected-resource/mcp/")
+
+    assert metadata.status_code == 200
+    assert metadata.json()["authorization_servers"] == [
+        "https://accounts.google.com"
+    ]
+    assert metadata.json()["scopes_supported"] == ["openid", "email", "profile"]

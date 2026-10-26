@@ -82,12 +82,18 @@ The working interpreter is:
   existing identity or use email as the authorization key. Legacy signed
   single-user sessions may temporarily resolve through `TUNEOPS_LOCAL_USER_ID`
   until the next login persists the Google identity link.
-- MCP bearer validation lives under `backend/app/mcp`: require an exact OAuth
-  issuer, audience, signature, expiry and existing `(issuer, subject)` link
-  before exposing the internal user ID to a tool. Keep synchronous JWKS/Turso
-  validation off the ASGI event loop. MCP configuration uses
-  `TUNEOPS_MCP_ISSUER_URL`, `TUNEOPS_MCP_RESOURCE_URL` (or
-  `TUNEOPS_PUBLIC_URL`), optional `TUNEOPS_MCP_AUDIENCE`, and optional
+- MCP bearer validation lives under `backend/app/mcp`. The private ChatGPT
+  connection uses a dedicated Google OAuth client: set
+  `TUNEOPS_MCP_AUTH_PROVIDER=google`, `GOOGLE_MCP_CLIENT_ID`, and
+  `TUNEOPS_MCP_RESOURCE_URL` (or `TUNEOPS_PUBLIC_URL`). Validate Google's
+  opaque access token through Google's token-info endpoint, require the exact
+  dedicated client ID, expiry, `openid`, and an existing Google
+  `(issuer, subject)` link before exposing the internal user ID to a tool.
+  `openid email profile` are the only OAuth scopes requested from Google;
+  `profile:read`, `library:read`, and future write capabilities are internal
+  TuneOps policy, not invented Google scopes. Keep synchronous Google/Turso
+  validation off the ASGI event loop. Generic JWT IdPs remain supported through
+  `TUNEOPS_MCP_ISSUER_URL`, optional `TUNEOPS_MCP_AUDIENCE`, and optional
   `TUNEOPS_MCP_JWKS_URL`.
 - The MCP HTTP adapter is mounted only when that configuration is complete.
   Its canonical resource URL ends in `/mcp/`; the root protected-resource
