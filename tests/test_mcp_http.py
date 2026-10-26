@@ -15,12 +15,13 @@ def test_mcp_transport_requires_bearer_and_publishes_metadata(monkeypatch):
     monkeypatch.setenv("TUNEOPS_AUTH_REQUIRED", "false")
 
     with TestClient(create_app(), base_url="https://tuneops.example") as client:
-        redirect = client.get("/mcp", follow_redirects=False)
+        exact_mount = client.post("/mcp", follow_redirects=False)
         unauthorized = client.get("/mcp/")
         metadata = client.get("/.well-known/oauth-protected-resource/mcp/")
 
-    assert redirect.status_code == 307
-    assert redirect.headers["location"].endswith("/mcp/")
+    assert exact_mount.status_code == 401
+    assert "location" not in exact_mount.headers
+    assert "resource_metadata=" in exact_mount.headers["www-authenticate"]
     assert unauthorized.status_code == 401
     assert "resource_metadata=" in unauthorized.headers["www-authenticate"]
     assert metadata.status_code == 200

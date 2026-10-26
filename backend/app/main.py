@@ -133,9 +133,15 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def require_google_login(request: Request, call_next):
+        # Starlette redirects an exact mount path to its trailing-slash form.
+        # MCP clients POST to the configured URL and must not be forced through
+        # a redirect during protocol initialization, so normalize internally.
+        if mcp_settings is not None and request.scope.get("path") == "/mcp":
+            request.scope["path"] = "/mcp/"
+            request.scope["raw_path"] = b"/mcp/"
         if not auth.required():
             return await call_next(request)
-        path = request.url.path
+        path = str(request.scope.get("path") or request.url.path)
         public = (
             path.startswith("/api/v1/auth/")
             or path.startswith("/assets/")
