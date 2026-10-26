@@ -77,6 +77,7 @@ The working interpreter is:
   a separate provider connection and must retain its narrower provider-token
   lifecycle.
 - Successful Google login resolves to the stable internal `app_users.id` and
+
   stores that ID in the signed browser session. External accounts are linked
   by `(issuer, subject)` through `music_library.identities`; never reassign an
   existing identity or use email as the authorization key. Legacy signed
