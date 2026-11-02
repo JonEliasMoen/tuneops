@@ -290,7 +290,9 @@ def list_collections(
     page_limit = _bounded_limit(limit)
     selected = items[offset : offset + page_limit]
     for item in selected:
-        item["writable"] = item["type"] == "playlist"
+        # Playlists, Events, and Sources are all indexed TIDAL playlists. The
+        # collection type controls TuneOps presentation, not provider writability.
+        item["writable"] = item["type"] in {"playlist", "event", "source"}
         item["path"] = _collection_path(item["type"], item["id"])
     return {
         "collections": selected,

@@ -128,6 +128,25 @@ def test_list_collections_filters_and_counts_existing_tables(monkeypatch, tmp_pa
     }]
 
 
+def test_tidal_source_collection_is_writable(monkeypatch, tmp_path):
+    configure_owner(monkeypatch)
+    path = tmp_path / "library.sqlite3"
+    initialize(path)
+    with connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO playlists(
+                provider, provider_playlist_id, name, collection_type, indexed_at
+            ) VALUES('tidal', 'release-watch', 'releasewatch', 'source', '2026-01-01')
+            """
+        )
+
+    result = mcp_library.list_collections(USER_ID, kind="source", path=path)
+
+    assert result["collections"][0]["id"] == "release-watch"
+    assert result["collections"][0]["writable"] is True
+
+
 def test_track_memberships_rejects_unbounded_request(monkeypatch):
     configure_owner(monkeypatch)
 

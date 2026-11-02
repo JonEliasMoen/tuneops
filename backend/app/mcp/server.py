@@ -207,7 +207,7 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
         playlist_id: str,
         tidal_track_ids: list[str],
     ) -> dict[str, object]:
-        """Add TIDAL tracks remotely, then index them and their membership in TuneOps."""
+        """Add tracks to an indexed TIDAL Playlist, Event, or Source, then mirror TuneOps."""
         return add_library_tracks_to_playlist(
             _current_user_id(playlists_scope),
             playlist_id,

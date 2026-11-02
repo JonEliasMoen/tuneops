@@ -111,7 +111,8 @@ The working interpreter is:
   tables gain explicit ownership. `add_tracks_to_playlist` is an additive,
   approval-gated write: update TIDAL first, then index previously unknown track
   metadata and mirror the playlist membership in TuneOps only after provider
-  success.
+  success. MCP writability follows the TIDAL backing playlist, so TuneOps
+  collection types `playlist`, `event`, and `source` are all valid add targets.
 
 New HTTP routes belong in `backend/app/api`, use cases in
 `backend/app/services`, and browser UI in `frontend/src/features`. Keep provider
