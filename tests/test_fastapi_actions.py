@@ -32,6 +32,9 @@ class FakeSession:
     def playlist(self, playlist_id):
         return self.playlists[playlist_id]
 
+    def track(self, track_id):
+        return {"id": track_id, "title": f"Track {track_id}"}
+
 
 def _setup(monkeypatch, memberships, playlists):
     indexed = [
@@ -44,6 +47,12 @@ def _setup(monkeypatch, memberships, playlists):
         lambda playlist_id: next((item for item in indexed if item["id"] == playlist_id), None),
     )
     monkeypatch.setattr(actions, "tidal_playlists_for_tracks", lambda ids: {track_id: memberships.get(track_id, []) for track_id in ids})
+    monkeypatch.setattr(actions, "tidal_tracks_by_ids", lambda ids: {track_id: {"id": track_id} for track_id in ids})
+    monkeypatch.setattr(
+        actions,
+        "tidal_track_record",
+        lambda track: dict(track),
+    )
     monkeypatch.setattr(actions.engine, "tidal_client", lambda interactive=False: FakeSession(playlists))
     monkeypatch.setattr(actions.engine, "_call", lambda _provider, _action, callback, **_context: callback())
 
@@ -55,7 +64,7 @@ def test_add_skips_existing_membership_and_updates_cache_after_provider(monkeypa
     monkeypatch.setattr(
         actions,
         "apply_tidal_playlist_membership_changes",
-        lambda _action, playlist_id, track_ids, _source=None: cached.extend(
+        lambda _action, playlist_id, track_ids, _source=None, **_kwargs: cached.extend(
             (playlist_id, track_id) for track_id in track_ids
         ),
     )
@@ -72,7 +81,11 @@ def test_move_rolls_back_destination_when_source_remove_fails(monkeypatch):
     destination = FakePlaylist("destination")
     source = FakePlaylist("source", fail_remove=True)
     _setup(monkeypatch, {"track": [{"id": "source"}]}, {"destination": destination, "source": source})
-    monkeypatch.setattr(actions, "apply_tidal_playlist_membership_changes", lambda *_: pytest.fail("cache must not update"))
+    monkeypatch.setattr(
+        actions,
+        "apply_tidal_playlist_membership_changes",
+        lambda *_, **_kwargs: pytest.fail("cache must not update"),
+    )
 
     result = actions.mutate_playlist_tracks("move", ["track"], "destination", "source")
 
@@ -90,7 +103,7 @@ def test_bulk_action_reports_partial_failures_and_keeps_successful_cache_updates
     monkeypatch.setattr(
         actions,
         "apply_tidal_playlist_membership_changes",
-        lambda _action, playlist_id, track_ids, _source=None: cached.extend(
+        lambda _action, playlist_id, track_ids, _source=None, **_kwargs: cached.extend(
             (playlist_id, track_id) for track_id in track_ids
         ),
     )
@@ -109,6 +122,35 @@ def test_bulk_action_reports_partial_failures_and_keeps_successful_cache_updates
     assert result["changed"] == 1
     assert result["failed"] == 1
     assert result["skipped"] == 0
+
+
+def test_add_indexes_live_tidal_result_only_after_provider_success(monkeypatch):
+    destination = FakePlaylist("destination")
+    _setup(monkeypatch, {"new": []}, {"destination": destination})
+    monkeypatch.setattr(actions, "tidal_tracks_by_ids", lambda _ids: {})
+    events = []
+    monkeypatch.setattr(
+        actions,
+        "apply_tidal_playlist_membership_changes",
+        lambda _action, _playlist_id, track_ids, _source=None, *, tracks=None: events.append(
+            ("tuneops", list(track_ids), [track["id"] for track in tracks or []])
+        ),
+    )
+    original_add = destination.add
+
+    def add(track_ids, allow_duplicates=False):
+        events.append(("provider", list(track_ids)))
+        return original_add(track_ids, allow_duplicates)
+
+    destination.add = add
+
+    result = actions.mutate_playlist_tracks("add", ["new"], "destination")
+
+    assert result["changed"] == 1
+    assert events == [
+        ("provider", ["new"]),
+        ("tuneops", ["new"], ["new"]),
+    ]
 
 
 def test_like_tracks_skips_cached_likes_and_mirrors_provider_success(monkeypatch):

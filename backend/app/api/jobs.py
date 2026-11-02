@@ -17,6 +17,7 @@ from ..config import number_setting
 from ..jobs import JOBS
 from ..schemas import JobResponse, MixTidalImportRequest, TracklistSearchRequest
 from ..services.library import CollectionNotFound, descriptor
+from ..services.mix_export import export_mix_to_spotify
 from ..services.navigation_cache import invalidate_navigation_snapshot
 
 
@@ -143,6 +144,30 @@ def import_mix_tidal_setlist(folder_name: str, body: MixTidalImportRequest) -> J
 
     return JobResponse.model_validate(
         JOBS.snapshot(JOBS.submit(f"mix-tidal-import:{folder_name}", execute))
+    )
+
+
+@router.post(
+    "/mixes/{folder_name}/export-spotify",
+    response_model=JobResponse,
+    status_code=202,
+)
+def export_mix_spotify(folder_name: str) -> JobResponse:
+    """Create one Spotify playlist without adding a Playlist Sync mapping."""
+    mix = mix_for(folder_name)
+    if mix is None:
+        raise HTTPException(status_code=404, detail="Mix was not found")
+    if not (mix.tidal_playlist_id or mix.tidal_url):
+        raise HTTPException(
+            status_code=409,
+            detail="Import a TIDAL setlist before exporting this mix to Spotify",
+        )
+
+    def execute(progress):
+        return export_mix_to_spotify(mix, progress=progress)
+
+    return JobResponse.model_validate(
+        JOBS.snapshot(JOBS.submit(f"mix-spotify-export:{folder_name}", execute))
     )
 
 

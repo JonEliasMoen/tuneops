@@ -315,7 +315,10 @@ def collection_page(
             "bpm_max": bpm_max,
             "collection_types": collection_types or [],
         }
-        if offset == 0:
+        # Liked tracks is large enough that full artist/BPM/vibe aggregation is
+        # not worth a remote Turso scan on every initial page load.
+        include_stats = offset == 0 and kind != "liked"
+        if include_stats:
             records, total, stats = collection_track_page_with_stats(
                 kind,
                 collection_id,

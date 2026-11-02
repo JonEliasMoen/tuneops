@@ -56,9 +56,10 @@ def test_collection_sort_is_global_and_keeps_missing_dates_last(monkeypatch):
         lambda *_args, offset, limit, **_kwargs: (ordered[offset:offset + limit], len(ordered)),
     )
     monkeypatch.setattr(
-        library, "collection_track_page_with_stats",
-        lambda *_args, offset, limit, **_kwargs: (
-            ordered[offset:offset + limit], len(ordered), stats,
+        library,
+        "collection_track_page_with_stats",
+        lambda *_args, **_kwargs: pytest.fail(
+            "liked tracks must not calculate collection stats"
         ),
     )
 
@@ -67,6 +68,7 @@ def test_collection_sort_is_global_and_keeps_missing_dates_last(monkeypatch):
     assert page["total"] == 4
     assert [item["id"] for item in page["items"]] == ["new", "middle"]
     assert page["has_more"] is True
+    assert page["stats"] == stats
     second = library.collection_page("liked", "liked", offset=2, limit=2, sort_field="date_added", sort_direction="desc")
     assert [item["id"] for item in second["items"]] == ["old", "missing"]
 
@@ -172,8 +174,8 @@ def test_collection_length_sort_uses_duration_not_display_text(monkeypatch):
     }
     ordered = [rows[2], rows[0], rows[1]]
     monkeypatch.setattr(
-        library, "collection_track_page_with_stats",
-        lambda *_args, **_kwargs: (ordered, len(ordered), stats),
+        library, "collection_track_page",
+        lambda *_args, **_kwargs: (ordered, len(ordered)),
     )
 
     page = library.collection_page("liked", "liked", offset=0, limit=10, sort_field="length", sort_direction="asc")
@@ -521,6 +523,7 @@ def test_watched_mix_list_allows_numeric_ratings(monkeypatch):
 
 def test_watched_mix_detail_uses_video_id_for_live_youtube_media(monkeypatch):
     fetched: list[str] = []
+    saved: dict[str, str] = {}
     monkeypatch.setattr(
         library_api,
         "watched_mix",
@@ -543,6 +546,17 @@ def test_watched_mix_detail_uses_video_id_for_live_youtube_media(monkeypatch):
             error="",
         ),
     )
+    monkeypatch.setattr(
+        library_api,
+        "save_watched_mix",
+        lambda video_id, youtube_url, title, channel_name, upload_date: saved.update(
+            video_id=video_id,
+            youtube_url=youtube_url,
+            title=title,
+            channel_name=channel_name,
+            upload_date=upload_date,
+        ) or {**saved, "rating": 0},
+    )
     result = library_api.watched_mix_detail("abc123")
 
     canonical = "https://www.youtube.com/watch?v=abc123"
@@ -552,3 +566,40 @@ def test_watched_mix_detail_uses_video_id_for_live_youtube_media(monkeypatch):
     assert result["live_title"] == "Live title"
     assert result["live_channel_name"] == "Live channel"
     assert result["live_view_count"] == 42
+    assert saved["title"] == "Live title"
+
+
+def test_watched_mix_detail_reuses_stored_metadata_without_youtube_request(monkeypatch):
+    monkeypatch.setattr(
+        library_api,
+        "watched_mix",
+        lambda _id: {
+            "video_id": "abc123",
+            "youtube_url": "https://youtu.be/abc123",
+            "title": "Stored title",
+            "channel_name": "Stored channel",
+            "upload_date": "2026-01-05",
+        },
+    )
+    monkeypatch.setattr(
+        library_api,
+        "fetch_youtube_metadata",
+        lambda _url: pytest.fail("stored metadata must not trigger a YouTube request"),
+    )
+
+    result = library_api.watched_mix_detail("abc123")
+
+    assert result["live_title"] == "Stored title"
+    assert result["live_channel_name"] == "Stored channel"
+    assert result["live_upload_date"] == "2026-01-05"
+    assert result["live_metadata_error"] == ""
+
+
+def test_watched_mix_cover_always_redirects_to_youtube_cdn(monkeypatch):
+    monkeypatch.setattr(library_api, "watched_mix", lambda _id: {"video_id": "abc123"})
+
+    response = library_api.watched_mix_cover("abc123")
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://i.ytimg.com/vi/abc123/hqdefault.jpg"
+    assert response.headers["cache-control"] == "public, max-age=604800, immutable"

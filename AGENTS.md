@@ -103,10 +103,15 @@ The working interpreter is:
   retain `stateless_http=True` for Vercel, and preserve DNS-rebinding host
   allowlists for the canonical host, Vercel preview host, and local testing.
 - MCP library tools are bounded adapters in
-  `backend/app/services/mcp_library.py`. Reuse shared collection queries,
-  return concise summaries rather than raw rows, cap pages and membership
-  requests at 50, and require the resolved internal user to equal the current
-  single-user library owner until library tables gain explicit ownership.
+  `backend/app/services/mcp_library.py`. `search_tracks` deliberately searches
+  the live TIDAL catalogue and returns exact TIDAL IDs; other library reads use
+  shared TuneOps collection queries. Return concise summaries rather than raw
+  rows, cap pages and membership requests at 50, and require the resolved
+  internal user to equal the current single-user library owner until library
+  tables gain explicit ownership. `add_tracks_to_playlist` is an additive,
+  approval-gated write: update TIDAL first, then index previously unknown track
+  metadata and mirror the playlist membership in TuneOps only after provider
+  success.
 
 New HTTP routes belong in `backend/app/api`, use cases in
 `backend/app/services`, and browser UI in `frontend/src/features`. Keep provider
@@ -133,7 +138,9 @@ before accepting an MCP bearer token.
 - Shared track collections use `music_library.collection_query`. Apply
   allowlisted filters and sorting in SQL, page before enriching relationships,
   and return collection statistics only with the first page. Never restore the
-  old `limit=1_000_000` plus Python filtering path.
+  old `limit=1_000_000` plus Python filtering path. Liked tracks deliberately
+  skip collection statistics entirely so their initial page remains a bounded
+  query against remote Turso.
 - Provider imports may normalize rows in memory, but must batch canonical
   tracks, artists, relationships, and memberships inside one atomic write
   transaction. Do not open a transaction per provider track.
@@ -244,6 +251,9 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
 
 ## Playlist sync behavior
 
+- My Mix **Export to Spotify** is a one-shot creation flow. It may reuse the
+  TIDAL-to-Spotify matching engine, but its mapping remains in memory and must
+  never be persisted to `sync_mappings` or appear in Playlist Sync.
 - The React mapping editor autosaves changes after a short debounce. Do not
   restore a normal Save Mappings button. Keep Sync Now disabled while changes
   are dirty or saving, and expose an explicit retry only after autosave fails.
@@ -418,6 +428,10 @@ music provider or delete remote data.
   it must not reuse local setlist rows or imply that the user created the mix.
 - Store the validated YouTube video ID/URL, title, channel name, upload date,
   and date added. The thumbnail and current view count remain live values.
+- Never cache watched-mix covers in a server-side filesystem. The cover API
+  redirects to YouTube's static thumbnail CDN with browser-cache headers so it
+  works identically on local and ephemeral serverless runtimes. Do not store
+  image BLOBs in the database unless an explicit archival requirement appears.
 - Watched mixes use their own collapsible sidebar group with an always-present
   **Add mix** child and follow the standard mouse/keyboard navigation contract.
 - `watched_mix_tracks` is an ordered many-to-many association between saved

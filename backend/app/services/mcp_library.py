@@ -1,4 +1,4 @@
-"""Bounded read-only library adapters for MCP tools."""
+"""Bounded TuneOps/TIDAL adapters exposed through MCP tools."""
 
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ from music_library.database import (
     DATABASE_PATH,
     connect_readonly,
     lastfm_track_stats,
+    tidal_track_record,
     tidal_track_by_id,
 )
 
+from .actions import TrackActionError, mutate_playlist_tracks
 from .library import collection_page, descriptor
 
 
@@ -110,23 +112,72 @@ def search_tracks(
     bpm_min: float | None = None,
     bpm_max: float | None = None,
 ) -> dict[str, Any]:
+    """Search the live TIDAL catalog and return IDs usable by write tools."""
     _require_library_owner(user_id)
     page_limit = _bounded_limit(limit)
     offset = _offset(cursor)
-    page = collection_page(
-        "search",
-        "library",
-        offset=offset,
+    normalized_query = str(query or "").strip()
+    if not normalized_query:
+        raise ValueError("A TIDAL search query is required")
+
+    import tidalapi
+
+    session = engine.tidal_client(interactive=False)
+    response = engine._call(
+        "tidal",
+        "mcp_search_tracks",
+        lambda: session.search(
+            normalized_query,
+            models=[tidalapi.Track],
+            limit=page_limit,
+            offset=offset,
+        ),
+        # Never log the user-entered query; only bounded request metadata.
         limit=page_limit,
-        query=str(query or "").strip(),
-        bpm_min=bpm_min,
-        bpm_max=bpm_max,
+        offset=offset,
     )
+    provider_tracks = list((response or {}).get("tracks", []))
+    records = [tidal_track_record(track) for track in provider_tracks]
+    if bpm_min is not None:
+        records = [
+            row for row in records
+            if row.get("bpm") is not None and float(row["bpm"]) >= float(bpm_min)
+        ]
+    if bpm_max is not None:
+        records = [
+            row for row in records
+            if row.get("bpm") is not None and float(row["bpm"]) <= float(bpm_max)
+        ]
     return {
-        "tracks": [_track_summary(row) for row in page["items"]],
-        "total": int(page["total"]),
-        "next_cursor": str(offset + len(page["items"])) if page["has_more"] else None,
+        "source": "tidal",
+        "tracks": [_track_summary(row) for row in records],
+        "result_count": len(records),
+        # TIDAL does not expose a total here. A full page means another page may exist.
+        "next_cursor": str(offset + page_limit) if len(provider_tracks) == page_limit else None,
     }
+
+
+def add_tracks_to_playlist(
+    user_id: str,
+    playlist_id: str,
+    tidal_track_ids: list[str],
+) -> dict[str, Any]:
+    """Add exact indexed TIDAL tracks through the shared provider-first action."""
+    _require_library_owner(user_id)
+    unique_ids = list(
+        dict.fromkeys(
+            str(value).strip() for value in tidal_track_ids if str(value).strip()
+        )
+    )
+    if not unique_ids or len(unique_ids) > 50:
+        raise ValueError("Provide between 1 and 50 TIDAL track IDs")
+    normalized_playlist_id = str(playlist_id or "").strip()
+    if not normalized_playlist_id:
+        raise ValueError("A destination playlist ID is required")
+    try:
+        return mutate_playlist_tracks("add", unique_ids, normalized_playlist_id)
+    except TrackActionError as exc:
+        raise McpLibraryAccessError(str(exc)) from exc
 
 
 def get_track(user_id: str, track_id: str) -> dict[str, Any] | None:

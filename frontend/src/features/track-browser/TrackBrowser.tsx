@@ -109,7 +109,7 @@ export function TrackBrowser({ collectionType, collectionId, hideCollectionHeadi
     sort_field: sort?.field,
     sort_direction: sort?.direction,
     q: deferredQuery,
-    artist: artist ? [artist] : [],
+    artist: collectionType !== 'liked' && artist ? [artist] : [],
     key: keyFilter ? [keyFilter] : [],
     rating: rating ? [rating] : [],
     tag: tag ? [tag] : [],
@@ -305,11 +305,11 @@ export function TrackBrowser({ collectionType, collectionId, hideCollectionHeadi
       onFailed={(message) => { setRefreshError(message); setRefreshJobId(null); checkedCollections.delete(collectionKey) }}
     />
     {collectionType === 'event' ? <EventMedia eventId={collectionId} /> : null}
-    {stats ? <div className="collection-stats"><span className="stats-label">Collection stats</span>{stats.top_artists.map((item) => <Link key={item.id} className="stat artist-stat" to={`/artists/${encodeURIComponent(item.id)}`}><strong>{item.name}</strong> {item.count} tracks</Link>)}{stats.bpm_min !== null ? <span className="stat bpm-stat"><strong>BPM</strong> {stats.bpm_min}–{stats.bpm_max}</span> : null}{stats.vibe ? <span className="stat vibe-stat"><strong>Top vibe</strong> {stats.vibe} · {stats.vibe_count}</span> : null}</div> : null}
+    {stats && collectionType !== 'liked' ? <div className="collection-stats"><span className="stats-label">Collection stats</span>{stats.top_artists.map((item) => <Link key={item.id} className="stat artist-stat" to={`/artists/${encodeURIComponent(item.id)}`}><strong>{item.name}</strong> {item.count} tracks</Link>)}{stats.bpm_min !== null ? <span className="stat bpm-stat"><strong>BPM</strong> {stats.bpm_min}–{stats.bpm_max}</span> : null}{stats.vibe ? <span className="stat vibe-stat"><strong>Top vibe</strong> {stats.vibe} · {stats.vibe_count}</span> : null}</div> : null}
     <div className="quick-filters">
-      <label>Track<input value={query} onChange={(event) => { setQuery(event.target.value); setLoaded(PAGE_SIZE) }} placeholder={collectionType === 'search' ? 'Title, artist, album…' : 'Title or remix…'} /></label>
+      <label>Track<input value={query} onChange={(event) => { setQuery(event.target.value); setLoaded(PAGE_SIZE) }} placeholder={collectionType === 'search' ? 'Title, artist, album…' : collectionType === 'liked' ? 'Title, remix or artist…' : 'Title or remix…'} /></label>
       {collectionType === 'search' ? <label>Found in<select value={collectionFilter} onChange={(event) => { setCollectionFilter(event.target.value); setLoaded(PAGE_SIZE) }}><option value="">Any indexed collection</option><option value="playlist">Playlists</option><option value="event">Events</option><option value="source">Sources</option><option value="mix">My mixes</option></select></label> : null}
-      <label>Artist<select value={artist} onChange={(event) => { setArtist(event.target.value); setLoaded(PAGE_SIZE) }}><option value="">Any artist</option>{stats?.artist_options.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+      {collectionType !== 'liked' ? <label>Artist<select value={artist} onChange={(event) => { setArtist(event.target.value); setLoaded(PAGE_SIZE) }}><option value="">Any artist</option>{stats?.artist_options.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label> : null}
       <label>Key<select value={keyFilter} onChange={(event) => { setKeyFilter(event.target.value); setLoaded(PAGE_SIZE) }}><option value="">Any key</option>{CAMELOT_KEYS.map((key) => <option key={key}>{key}</option>)}</select></label>
       <label>Tag<select value={tag} onChange={(event) => { setTag(event.target.value); setLoaded(PAGE_SIZE) }}><option value="">Any tag</option>{Object.entries(dimensions.data?.values ?? {}).filter(([dimension]) => dimension !== 'rating').map(([dimension, values]) => <optgroup key={dimension} label={dimensions.data?.labels[dimension] ?? dimension}>{values.map((value) => <option key={`${dimension}:${value}`} value={`${dimension}:${value}`}>{value}</option>)}</optgroup>)}</select></label>
       <label>BPM min<input inputMode="numeric" value={bpmMin} onChange={(event) => { setBpmMin(event.target.value); setLoaded(PAGE_SIZE) }} /></label>

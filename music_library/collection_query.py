@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
-from .connection import execute_batch
+from .connection import TursoDatabaseError, execute_batch
 from .database import DATABASE_PATH, connect_readonly, initialize
 
 
@@ -21,6 +22,9 @@ MEMBERSHIP_SORT_FIELDS = {
     "mixes": "mix",
     "djmi": "watched_mix",
 }
+
+
+LOGGER = logging.getLogger("musicsync")
 
 
 def _membership(kind: str, collection_id: str) -> tuple[str, list[Any]]:
@@ -140,6 +144,8 @@ def _query_parts(
     normalized_query = " ".join(str(query or "").casefold().split())
     if normalized_query:
         fields = ["b.title", "b.remix"]
+        if kind == "liked":
+            fields.append("b.artist")
         if kind == "search":
             fields.extend(["b.artist", "b.album"])
         predicates.append("LOWER(" + " || ' ' || ".join(f"COALESCE({field}, '')" for field in fields) + ") LIKE ?")
@@ -429,16 +435,27 @@ def collection_track_page_with_stats(
          AND vibe.dimension='vibe'
         GROUP BY vibe.value
     """
-    with connect_readonly(path) as connection:
-        page_cursor, stats_cursor = execute_batch(connection, [
-            (
-                page_sql,
-                [*params, max(1, int(limit)), max(0, int(offset))],
-            ),
-            (stats_sql, params),
-        ])
-        page_rows = page_cursor.fetchall()
-        stats_rows = stats_cursor.fetchall()
+    page_params = [*params, max(1, int(limit)), max(0, int(offset))]
+    try:
+        with connect_readonly(path) as connection:
+            page_cursor, stats_cursor = execute_batch(connection, [
+                (page_sql, page_params),
+                (stats_sql, params),
+            ])
+            page_rows = page_cursor.fetchall()
+            stats_rows = stats_cursor.fetchall()
+    except TursoDatabaseError:
+        # Collection statistics are useful decoration, but must never make the
+        # actual track page unavailable when a remote Turso query times out.
+        LOGGER.warning(
+            "collection.stats_unavailable kind=%s collection_id=%s",
+            kind,
+            collection_id,
+            exc_info=True,
+        )
+        with connect_readonly(path) as connection:
+            page_rows = connection.execute(page_sql, page_params).fetchall()
+        stats_rows = []
     total = int(page_rows[0]["_total"]) if page_rows else 0
     items = [
         {key: value for key, value in dict(row).items() if key != "_total"}

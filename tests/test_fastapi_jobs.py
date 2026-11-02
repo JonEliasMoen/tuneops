@@ -180,6 +180,50 @@ def test_manual_mix_import_runs_only_as_an_explicit_background_job(monkeypatch):
     assert registry.result == {"playlist_name": "Dark Progressive", "tracks": 2}
 
 
+def test_mix_spotify_export_is_one_shot_and_does_not_save_sync_mapping(monkeypatch):
+    registry = ImmediateJobs()
+    mix = SimpleNamespace(
+        folder_name="darkprog",
+        tidal_playlist_id="tidal-playlist",
+        tidal_url="https://tidal.com/playlist/tidal-playlist",
+    )
+    exported: dict[str, object] = {}
+    monkeypatch.setattr(jobs, "JOBS", registry)
+    monkeypatch.setattr(jobs, "mix_for", lambda name: mix if name == "darkprog" else None)
+    monkeypatch.setattr(
+        jobs,
+        "export_mix_to_spotify",
+        lambda actual_mix, progress: exported.update(mix=actual_mix) or {
+            "spotify_playlist_id": "spotify-playlist",
+            "spotify_playlist_url": "https://open.spotify.com/playlist/spotify-playlist",
+            "added": 12,
+            "unmatched": 1,
+        },
+    )
+    monkeypatch.setattr(
+        jobs.engine,
+        "save_sync_mappings",
+        lambda *_args, **_kwargs: pytest.fail("one-shot export must not save a sync mapping"),
+    )
+
+    response = jobs.export_mix_spotify("darkprog")
+
+    assert response.state == "succeeded"
+    assert registry.kind == "mix-spotify-export:darkprog"
+    assert exported["mix"] is mix
+    assert registry.result["spotify_playlist_id"] == "spotify-playlist"
+
+
+def test_mix_spotify_export_requires_a_tidal_setlist(monkeypatch):
+    mix = SimpleNamespace(folder_name="empty", tidal_playlist_id="", tidal_url="")
+    monkeypatch.setattr(jobs, "mix_for", lambda _name: mix)
+
+    with pytest.raises(HTTPException) as raised:
+        jobs.export_mix_spotify("empty")
+
+    assert raised.value.status_code == 409
+
+
 def test_mix_discovery_runs_as_an_explicit_job_and_invalidates_navigation(monkeypatch):
     registry = ImmediateJobs()
     invalidations: list[bool] = []

@@ -14,6 +14,7 @@ from pydantic import AnyHttpUrl
 
 from backend.app.services.mcp_profile import profile_for_user
 from backend.app.services.mcp_library import (
+    add_tracks_to_playlist as add_library_tracks_to_playlist,
     get_collection_tracks as read_collection_tracks,
     get_track as read_track,
     get_track_memberships as read_track_memberships,
@@ -22,7 +23,7 @@ from backend.app.services.mcp_library import (
 )
 
 from .auth import token_verifier_for, tuneops_user_id
-from .config import LIBRARY_READ, PROFILE_READ, McpSettings
+from .config import LIBRARY_READ, PLAYLISTS_WRITE, PROFILE_READ, McpSettings
 
 
 def _current_user_id(required_scope: str | None = None) -> str:
@@ -40,6 +41,7 @@ def _current_user_id(required_scope: str | None = None) -> str:
 def create_mcp_server(settings: McpSettings) -> MCPServer:
     profile_scope = None if settings.auth_provider == "google" else PROFILE_READ
     library_scope = None if settings.auth_provider == "google" else LIBRARY_READ
+    playlists_scope = None if settings.auth_provider == "google" else PLAYLISTS_WRITE
     server = MCPServer(
         "TuneOps",
         description="Search and safely manage the connected TuneOps music library.",
@@ -86,7 +88,12 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
 
     @server.tool(
         name="search_tracks",
-        annotations=read_annotations,
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        ),
         meta=read_security,
         structured_output=True,
     )
@@ -97,7 +104,7 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
         bpm_min: float | None = None,
         bpm_max: float | None = None,
     ) -> dict[str, object]:
-        """Search indexed TuneOps tracks by title, remix, artist or album."""
+        """Search the live TIDAL catalog by track, remix, artist or album text."""
         return search_library_tracks(
             _current_user_id(library_scope),
             query,
@@ -176,6 +183,35 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
         """Show which TuneOps collections contain up to 50 exact tracks."""
         return read_track_memberships(
             _current_user_id(library_scope), tidal_track_ids
+        )
+
+    @server.tool(
+        name="add_tracks_to_playlist",
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=True,
+        ),
+        meta={
+            "securitySchemes": [
+                {
+                    "type": "oauth2",
+                    "scopes": [playlists_scope] if playlists_scope else [],
+                }
+            ],
+        },
+        structured_output=True,
+    )
+    def add_tracks_to_playlist(
+        playlist_id: str,
+        tidal_track_ids: list[str],
+    ) -> dict[str, object]:
+        """Add TIDAL tracks remotely, then index them and their membership in TuneOps."""
+        return add_library_tracks_to_playlist(
+            _current_user_id(playlists_scope),
+            playlist_id,
+            tidal_track_ids,
         )
 
     return server

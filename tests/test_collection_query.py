@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import pytest
 
+from music_library import collection_query
 from music_library.collection_query import (
     collection_relationships,
     collection_stats,
     collection_track_page,
     collection_track_page_with_stats,
 )
+from music_library.connection import TursoDatabaseError
 from music_library.database import connect, initialize
 
 
@@ -269,6 +271,16 @@ def test_global_collection_membership_filter_and_text_fields(tmp_path):
     assert [row["id"] for row in artist_rows] == ["five"]
 
 
+def test_liked_text_filter_matches_artist_without_artist_stats(tmp_path):
+    database = tmp_path / "library.sqlite3"
+    _seed(database)
+
+    rows, total = _page(database, "liked", "liked", query="artist two")
+
+    assert total == 1
+    assert [row["id"] for row in rows] == ["two"]
+
+
 def test_collection_stats_are_aggregated_from_the_filtered_scope(tmp_path):
     database = tmp_path / "library.sqlite3"
     _seed(database)
@@ -301,6 +313,35 @@ def test_first_page_and_stats_share_one_repository_batch(tmp_path):
     assert [row["id"] for row in rows] == ["one", "two"]
     assert stats["bpm_min"] == 120
     assert stats["bpm_max"] == 130
+
+
+def test_stats_timeout_falls_back_to_track_page(monkeypatch, tmp_path):
+    database = tmp_path / "library.sqlite3"
+    _seed(database)
+    monkeypatch.setattr(
+        collection_query,
+        "execute_batch",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            TursoDatabaseError("remote stats timed out")
+        ),
+    )
+
+    rows, total, stats = collection_track_page_with_stats(
+        "liked", "liked", "Aruzhu",
+        offset=0, limit=2, sort_field="title", sort_direction="asc",
+        path=database,
+    )
+
+    assert total == 3
+    assert [row["id"] for row in rows] == ["one", "two"]
+    assert stats == {
+        "top_artists": [],
+        "artist_options": [],
+        "bpm_min": None,
+        "bpm_max": None,
+        "vibe": "",
+        "vibe_count": 0,
+    }
 
 
 def test_relationships_are_loaded_in_one_bounded_result(tmp_path):

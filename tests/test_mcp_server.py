@@ -37,13 +37,25 @@ def test_profile_tool_contract_is_read_only():
         "list_collections",
         "get_collection_tracks",
         "get_track_memberships",
+        "add_tracks_to_playlist",
     }
-    library_tools = [tool for tool in tools.tools if tool.name != "get_tuneops_profile"]
+    library_tools = [
+        tool for tool in tools.tools
+        if tool.name not in {"get_tuneops_profile", "add_tracks_to_playlist"}
+    ]
     assert all(tool.annotations.read_only_hint is True for tool in library_tools)
     assert all(
         tool.meta["securitySchemes"][0]["scopes"] == ["library:read"]
         for tool in library_tools
     )
+    add_tool = next(tool for tool in tools.tools if tool.name == "add_tracks_to_playlist")
+    search_tool = next(tool for tool in tools.tools if tool.name == "search_tracks")
+    assert search_tool.annotations.open_world_hint is True
+    assert add_tool.annotations.read_only_hint is False
+    assert add_tool.annotations.destructive_hint is False
+    assert add_tool.annotations.idempotent_hint is True
+    assert add_tool.annotations.open_world_hint is True
+    assert add_tool.meta["securitySchemes"][0]["scopes"] == ["playlists:write"]
 
 
 def test_google_tools_do_not_request_tuneops_scopes_from_google():

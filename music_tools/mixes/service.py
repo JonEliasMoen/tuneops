@@ -81,42 +81,65 @@ def youtube_thumbnail_url(url: str) -> str:
 
 
 def fetch_youtube_metadata(url: str) -> YouTubeMetadata:
-    """Fetch current public metadata without persisting the response."""
+    """Fetch public metadata, preferring YouTube's lightweight oEmbed API."""
     video_id = youtube_video_id(url)
     if not video_id:
         return YouTubeMetadata(error="Enter a valid YouTube video URL.") if url else YouTubeMetadata()
+    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+    title = ""
+    channel_name = ""
     try:
         response = requests.get(
-            f"https://www.youtube.com/watch?v={video_id}",
+            "https://www.youtube.com/oembed",
+            params={"url": canonical_url, "format": "json"},
+            headers={"User-Agent": "Mozilla/5.0 (TuneOps YouTube metadata)"},
+            timeout=8,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        title = str(payload.get("title") or "").strip()
+        channel_name = str(payload.get("author_name") or "").strip()
+    except (requests.RequestException, ValueError):
+        # The watch-page fallback below still supports videos for which oEmbed
+        # is unavailable, disabled, or temporarily throttled.
+        pass
+
+    try:
+        response = requests.get(
+            canonical_url,
             headers={"User-Agent": "Mozilla/5.0 (TuneOps My Mixes)"},
             timeout=8,
         )
         response.raise_for_status()
     except requests.RequestException as exc:
+        if title or channel_name:
+            return YouTubeMetadata(title=title, channel_name=channel_name)
         return YouTubeMetadata(error=f"Could not fetch YouTube metadata: {exc}")
 
     page = response.text
-    title_match = re.search(
-        r'<meta\s+(?:name|property)=["\'](?:title|og:title)["\']\s+content=["\']([^"\']+)',
-        page,
-        flags=re.IGNORECASE,
-    )
-    if title_match is None:
-        title_match = re.search(r"<title>(.*?)</title>", page, flags=re.IGNORECASE | re.DOTALL)
-    title = unescape(title_match.group(1)).strip() if title_match else ""
-    if title.endswith(" - YouTube"):
-        title = title[: -len(" - YouTube")].rstrip()
-    channel_match = re.search(
-        r'["\'](?:ownerChannelName|author)["\']\s*:\s*["\']([^"\']+)',
-        page,
-    )
-    if channel_match is None:
-        channel_match = re.search(
-            r'<link\s+itemprop=["\']name["\']\s+content=["\']([^"\']+)',
+    if not title:
+        title_match = re.search(
+            r'<meta\s+(?:name|property)=["\'](?:title|og:title)["\']\s+content=["\']([^"\']+)',
             page,
             flags=re.IGNORECASE,
         )
-    channel_name = unescape(channel_match.group(1)).strip() if channel_match else ""
+        if title_match is None:
+            title_match = re.search(r"<title>(.*?)</title>", page, flags=re.IGNORECASE | re.DOTALL)
+        title = unescape(title_match.group(1)).strip() if title_match else ""
+        if title.endswith(" - YouTube"):
+            title = title[: -len(" - YouTube")].rstrip()
+    if not channel_name:
+        channel_match = re.search(
+            r'["\'](?:ownerChannelName|author)["\']\s*:\s*["\']([^"\']+)',
+            page,
+        )
+        if channel_match is None:
+            channel_match = re.search(
+                r'<link\s+itemprop=["\']name["\']\s+content=["\']([^"\']+)',
+                page,
+                flags=re.IGNORECASE,
+            )
+        channel_name = unescape(channel_match.group(1)).strip() if channel_match else ""
     views_match = re.search(r'["\']viewCount["\']\s*:\s*["\']?(\d+)', page)
     views = int(views_match.group(1)) if views_match else None
     date_match = re.search(

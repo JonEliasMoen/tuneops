@@ -3,13 +3,11 @@ from __future__ import annotations
 from calendar import month_name
 from datetime import datetime, timezone
 import json
-from pathlib import Path
 import re
 from urllib.parse import quote, urlparse
-from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import RedirectResponse, Response
 
 import main as engine
 
@@ -84,7 +82,6 @@ from music_tools.watched_mixes.tracklist import parse_tracklist
 
 
 router = APIRouter(tags=["library"])
-WATCHED_MIX_COVER_ROOT = Path(__file__).resolve().parents[3] / ".watched_mix_covers"
 
 
 def _path(prefix: str, value: str) -> str:
@@ -95,42 +92,6 @@ def _web_url(value: str) -> str:
     url = str(value or "").strip()
     parsed = urlparse(url)
     return url if parsed.scheme in {"http", "https"} and parsed.netloc else ""
-
-
-def _watched_mix_cover_path(video_id: str) -> Path:
-    safe_id = "".join(character for character in str(video_id) if character.isalnum() or character in {"-", "_"})
-    if not safe_id or safe_id != str(video_id):
-        raise HTTPException(status_code=404, detail="Watched mix cover was not found")
-    return WATCHED_MIX_COVER_ROOT / f"{safe_id}.jpg"
-
-
-def _local_file_cache_headers(path: Path) -> dict[str, str]:
-    stat = path.stat()
-    return {
-        "Cache-Control": "public, max-age=86400, must-revalidate",
-        "ETag": f'W/"{stat.st_mtime_ns:x}-{stat.st_size:x}"',
-    }
-
-
-def _cache_watched_mix_cover(video_id: str) -> Path | None:
-    path = _watched_mix_cover_path(video_id)
-    if path.is_file():
-        return path
-    try:
-        request = Request(f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg", headers={"User-Agent": "MusicSync/1.0"})
-        with urlopen(request, timeout=10) as response:
-            content = response.read(5 * 1024 * 1024)
-            content_type = str(response.headers.get("Content-Type") or "")
-        if not content or not content_type.startswith("image/"):
-            return None
-        WATCHED_MIX_COVER_ROOT.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".tmp")
-        temporary.write_bytes(content)
-        temporary.replace(path)
-        return path
-    except Exception:
-        engine.LOGGER.warning("watched_mix.cover_cache_failed video_id=%s", video_id, exc_info=True)
-        return None
 
 
 @router.get("/navigation", response_model=NavigationResponse)
@@ -542,7 +503,6 @@ def create_watched_mix(body: WatchedMixCreate) -> dict[str, object]:
         channel_name=metadata.channel_name,
         upload_date=metadata.upload_date,
     )
-    _cache_watched_mix_cover(video_id)
     invalidate_navigation_snapshot()
     return {**saved, "cover_url": f"/api/v1/watched-mixes/{quote(video_id, safe='')}/cover"}
 
@@ -556,28 +516,41 @@ def watched_mix_detail(video_id: str) -> dict[str, object]:
     # canonical URL from it so old/short/tracking-heavy stored URLs cannot stop
     # live metadata or thumbnail loading.
     canonical_url = f"https://www.youtube.com/watch?v={video_id}"
-    metadata = fetch_youtube_metadata(canonical_url)
+    metadata = None
+    if not str(record.get("title") or "").strip() or not str(record.get("channel_name") or "").strip():
+        metadata = fetch_youtube_metadata(canonical_url)
+        if metadata.title or metadata.channel_name or metadata.upload_date:
+            record = save_watched_mix(
+                video_id,
+                canonical_url,
+                title=metadata.title or str(record.get("title") or ""),
+                channel_name=metadata.channel_name or str(record.get("channel_name") or ""),
+                upload_date=metadata.upload_date or str(record.get("upload_date") or ""),
+            )
     return {
         **record,
         "youtube_url": canonical_url,
         "thumbnail_url": f"/api/v1/watched-mixes/{quote(video_id, safe='')}/cover",
         "cover_url": f"/api/v1/watched-mixes/{quote(video_id, safe='')}/cover",
-        "live_title": metadata.title,
-        "live_channel_name": metadata.channel_name,
-        "live_view_count": metadata.view_count,
-        "live_upload_date": metadata.upload_date,
-        "live_metadata_error": metadata.error,
+        "live_title": str(record.get("title") or ""),
+        "live_channel_name": str(record.get("channel_name") or ""),
+        "live_view_count": metadata.view_count if metadata else None,
+        "live_upload_date": str(record.get("upload_date") or ""),
+        "live_metadata_error": metadata.error if metadata else "",
     }
 
 
-@router.get("/watched-mixes/{video_id}/cover", response_class=FileResponse)
-def watched_mix_cover(video_id: str) -> FileResponse:
+@router.get("/watched-mixes/{video_id}/cover")
+def watched_mix_cover(video_id: str) -> Response:
     if not watched_mix(video_id):
         raise HTTPException(status_code=404, detail="Watched mix was not found")
-    path = _cache_watched_mix_cover(video_id)
-    if path is None:
-        raise HTTPException(status_code=404, detail="YouTube cover is unavailable")
-    return FileResponse(path, media_type="image/jpeg", headers=_local_file_cache_headers(path))
+    # Serverless filesystems are ephemeral. Redirect to YouTube's static image
+    # CDN and let the browser/CDN cache the image instead of writing local files.
+    return RedirectResponse(
+        f"https://i.ytimg.com/vi/{quote(video_id, safe='')}/hqdefault.jpg",
+        status_code=307,
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
+    )
 
 
 @router.patch("/watched-mixes/{video_id}")
@@ -610,10 +583,6 @@ def update_watched_mix_rating(
 def remove_watched_mix(video_id: str) -> None:
     if not delete_watched_mix(video_id):
         raise HTTPException(status_code=404, detail="Watched mix was not found")
-    try:
-        _watched_mix_cover_path(video_id).unlink(missing_ok=True)
-    except OSError:
-        engine.LOGGER.warning("watched_mix.cover_delete_failed video_id=%s", video_id, exc_info=True)
     invalidate_navigation_snapshot()
 
 

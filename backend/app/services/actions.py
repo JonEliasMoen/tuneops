@@ -16,6 +16,7 @@ from music_library.database import (
     tidal_indexed_playlist,
     tidal_liked_membership_ids,
     tidal_playlists_for_tracks,
+    tidal_track_record,
     tidal_tracks_by_ids,
 )
 
@@ -143,6 +144,22 @@ def mutate_playlist_tracks(
             if not hasattr(source, "remove_by_id"):
                 raise TrackActionError("The source playlist is not writable by the connected TIDAL account.")
 
+        # MCP can add tracks found directly in the live TIDAL catalog, before
+        # TuneOps has indexed them. Resolve their metadata now, but do not write
+        # anything locally until TIDAL has accepted the playlist mutation.
+        hydrated: dict[str, object] = {}
+        if action == "add":
+            indexed_tracks = tidal_tracks_by_ids(actionable)
+            for track_id in actionable:
+                if track_id in indexed_tracks:
+                    continue
+                hydrated[track_id] = engine._call(
+                    "tidal",
+                    "get_track_for_playlist_add",
+                    lambda current=track_id: session.track(current),
+                    track_id=track_id,
+                )
+
         succeeded: list[str] = []
         failed = 0
         for track_id in actionable:
@@ -222,8 +239,17 @@ def mutate_playlist_tracks(
 
     if succeeded:
         try:
+            newly_indexed = [
+                tidal_track_record(hydrated[track_id])
+                for track_id in succeeded
+                if track_id in hydrated
+            ]
             apply_tidal_playlist_membership_changes(
-                action, playlist_id, succeeded, source_playlist_id,
+                action,
+                playlist_id,
+                succeeded,
+                source_playlist_id,
+                tracks=newly_indexed,
             )
         except Exception as exc:
             LOGGER.exception(

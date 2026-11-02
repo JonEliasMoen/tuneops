@@ -116,3 +116,42 @@ def test_playlist_membership_changes_are_applied_atomically_in_bulk(tmp_path):
         (0, "three"), (2, "two"),
     ]
     assert tidal_indexed_playlist("destination", database)["name"] == "Destination"
+
+
+def test_playlist_add_indexes_unknown_tidal_track_with_membership(tmp_path):
+    database = tmp_path / "library.sqlite3"
+    _seed(database)
+
+    apply_tidal_playlist_membership_changes(
+        "add",
+        "destination",
+        ["live-result"],
+        path=database,
+        tracks=[{
+            "id": "live-result",
+            "title": "Live result",
+            "artist": "TIDAL Artist",
+            "artists": [{"id": "artist-1", "name": "TIDAL Artist"}],
+            "album": "Catalog Album",
+            "bpm": 126,
+        }],
+    )
+
+    with connect(database) as connection:
+        track = connection.execute(
+            "SELECT title, artist, bpm FROM tracks WHERE provider_track_id='live-result'"
+        ).fetchone()
+        membership = connection.execute(
+            """
+            SELECT 1 FROM playlist_tracks
+            WHERE provider_playlist_id='destination'
+              AND provider_track_id='live-result'
+            """
+        ).fetchone()
+
+    assert dict(track) == {
+        "title": "Live result",
+        "artist": "TIDAL Artist",
+        "bpm": 126.0,
+    }
+    assert membership is not None

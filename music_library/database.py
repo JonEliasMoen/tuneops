@@ -3412,8 +3412,10 @@ def apply_tidal_playlist_membership_changes(
     track_ids: list[str],
     source_playlist_id: str | None = None,
     path: Path = DATABASE_PATH,
+    *,
+    tracks: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Mirror successful provider playlist mutations in one transaction."""
+    """Atomically index tracks and mirror successful provider membership changes."""
     unique_ids = list(dict.fromkeys(str(track_id) for track_id in track_ids if track_id))
     if not unique_ids:
         return
@@ -3425,6 +3427,8 @@ def apply_tidal_playlist_membership_changes(
     now = datetime.now(timezone.utc).isoformat()
     placeholders = ",".join("?" for _ in unique_ids)
     with connect(path) as connection:
+        if tracks:
+            _store_tracks_and_artists(connection, tracks, now)
         if action in {"add", "move"}:
             existing = {
                 str(row["provider_track_id"])

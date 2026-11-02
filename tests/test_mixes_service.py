@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import requests
+
 from music_tools.mixes import service
 
 
@@ -45,6 +47,33 @@ def test_tidal_mix_name_requires_an_exact_djset_prefix():
     assert service.tidal_mix_name("  DJSET   My Set  ") == "My Set"
     assert service.tidal_mix_name("warmup djset darkprog") is None
     assert service.tidal_mix_name("djset") is None
+
+
+def test_youtube_metadata_keeps_oembed_title_when_watch_page_is_throttled(monkeypatch):
+    class Response:
+        def __init__(self, payload=None, error=None):
+            self.payload = payload
+            self.error = error
+            self.text = ""
+
+        def raise_for_status(self):
+            if self.error:
+                raise self.error
+
+        def json(self):
+            return self.payload
+
+    responses = iter([
+        Response({"title": "Stored Mix", "author_name": "Mix Channel"}),
+        Response(error=requests.HTTPError("429 Too Many Requests")),
+    ])
+    monkeypatch.setattr(service.requests, "get", lambda *_args, **_kwargs: next(responses))
+
+    result = service.fetch_youtube_metadata("https://youtu.be/abc123")
+
+    assert result.title == "Stored Mix"
+    assert result.channel_name == "Mix Channel"
+    assert result.error == ""
 
 
 def test_tidal_discovery_imports_new_sets_and_never_refetches_linked_sets(monkeypatch):

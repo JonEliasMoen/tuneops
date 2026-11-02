@@ -12,7 +12,6 @@
 *.sqlite3.*
 *.log
 *.log.*
-.watched_mix_covers/
 
 # Development and archived sources
 .git/
