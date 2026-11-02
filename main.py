@@ -157,6 +157,7 @@ def default_config() -> dict[str, Any]:
             "liked_tracks_cache_delay_seconds": 0.25,
             "lastfm_username": "",
             "lastfm_import_delay_seconds": 0.5,
+            "lastfm_new_track_backfill_limit": 10,
         },
         "quick_views": [
             {
@@ -260,6 +261,36 @@ def load_runtime_settings(path: Path = CONFIG_PATH) -> dict[str, Any]:
     # Preserve the first-run JSON import bridge used by the other config reads.
     load_config(path)
     return config_store.load_runtime_settings() or {}
+
+
+def backfill_new_lastfm_tracks(
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, int]:
+    """Drain a small, persistent batch of newly indexed Last.fm lookups."""
+    settings = load_runtime_settings()
+    username = str(settings.get("lastfm_username", "") or "").strip()
+    api_key = str(os.getenv("LASTFM_API_KEY", "") or "").strip()
+    if not username or not api_key:
+        return {"queued": 0, "checked": 0, "updated": 0, "plays_added": 0}
+    try:
+        from music_tools.lastfm import backfill_new_track_playcounts
+
+        return backfill_new_track_playcounts(
+            username,
+            api_key,
+            delay_seconds=max(
+                0.0, float(settings.get("lastfm_import_delay_seconds", 0.5))
+            ),
+            limit=max(
+                1, min(100, int(settings.get("lastfm_new_track_backfill_limit", 10)))
+            ),
+            progress=progress,
+        )
+    except Exception:
+        # A Last.fm outage must never roll back a successful TIDAL import. The
+        # persistent queue retains the track for a later provider job.
+        LOGGER.exception("lastfm.new_track_backfill_failed")
+        return {"queued": 0, "checked": 0, "updated": 0, "plays_added": 0}
 
 
 def load_sync_mappings(path: Path = CONFIG_PATH) -> list[dict[str, Any]]:
@@ -776,6 +807,7 @@ def refresh_tidal_playlist_cache(
     )
     records = [tidal_track_record(track) for track in items]
     store_tidal_playlist(playlist, records)
+    backfill_new_lastfm_tracks()
     LOGGER.info(
         "tidal.playlist ui_cache_refreshed playlist_id=%s tracks=%d force=%s",
         playlist_id,
@@ -1193,6 +1225,7 @@ def run_all_syncs(path: Path = CONFIG_PATH, progress: Callable[[str], None] | No
             LOGGER.exception("liked_cache.maintenance_failed")
             progress("Liked tracks cache maintenance failed; continuing playlist sync")
     if not enabled:
+        backfill_new_lastfm_tracks(progress)
         return []
     results: list[SyncResult] = []
     for index, entry in enumerate(enabled, start=1):
@@ -1221,6 +1254,7 @@ def run_all_syncs(path: Path = CONFIG_PATH, progress: Callable[[str], None] | No
         finally:
             CURRENT_MAPPING.reset(mapping_token)
     save_sync_mappings(config["playlists"], path)  # Stores IDs created during this run.
+    backfill_new_lastfm_tracks(progress)
     LOGGER.info("sync.run complete playlists=%d failures=%d", len(results), sum(bool(item.error) for item in results))
     return results
 

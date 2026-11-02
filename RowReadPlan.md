@@ -16,6 +16,9 @@ Last reviewed: 2026-11-02.
   aggregate-only queries.
 - [x] Change incremental Last.fm import to match locally, discard unmatched
   rows, update aggregates transactionally, and advance the watermark.
+- [x] Queue only genuinely new canonical TIDAL tracks for a bounded Last.fm
+  `track.getInfo` lookup. This restores their all-time user playcount without
+  recreating raw events or inventing historical month buckets.
 - [x] Verify all-time/monthly totals, then remove the legacy raw table and its
   active code paths.
 - [x] Persist a schema-version marker and add process-local initialization
@@ -105,9 +108,14 @@ TIDAL track, represented as:
 Matching is strictly local against TIDAL tracks already indexed in TuneOps.
 Last.fm import must never search the live TIDAL catalogue, create a canonical
 track, or make any TIDAL provider call. Unmatched scrobbles are discarded
-during import and are not retained for a possible future match. Consequently,
-a track indexed after an unmatched play will not gain that historical play,
-which is an accepted product tradeoff.
+during import and are not retained for a possible future match. When TuneOps
+later indexes a genuinely new canonical TIDAL track, it queues one bounded
+Last.fm artist/title lookup and may recover the provider's all-time user
+playcount. Last.fm does not expose the historical month distribution through
+that lookup, so recovered plays affect all-time track/artist totals but not
+past month/year History views. The queue is not drained until the first full
+Last.fm import has committed a watermark, preventing that initial import from
+double-counting a previously stored all-time snapshot.
 Last.fm corrections or deletions to old plays are also ignored unless the user
 explicitly runs a complete aggregate rebuild from the provider.
 
@@ -194,8 +202,9 @@ scrobble count. Settings must not count aggregate rows on every visit.
 
 ### 5. Retire the legacy raw table
 
-- Verify that the sum of `lastfm_track_totals.play_count` equals the sum of
-  `lastfm_monthly_track_counts.play_count` for each user.
+- Verify that `lastfm_track_totals.play_count` is at least the sum of known
+  `lastfm_monthly_track_counts.play_count` for each user. The difference is
+  allowed only for all-time snapshots recovered after a track was indexed.
 - Verify month/year/overall Top X and representative per-track counts against
   the clean backup.
 - Preserve the clean pre-migration backup outside the live database.

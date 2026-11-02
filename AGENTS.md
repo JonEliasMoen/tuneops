@@ -158,6 +158,16 @@ before accepting an MCP bearer token.
   the TuneOps index. Import/reconciliation must never search the live TIDAL
   catalogue, create a canonical track, or make a TIDAL provider call. A play
   that cannot be matched conservatively to an indexed track is discarded.
+- A genuinely new canonical TIDAL track is inserted into
+  `lastfm_track_backfill_queue` in the same transaction as the track. Explicit
+  provider/import jobs may drain at most the configured bounded batch through
+  Last.fm `track.getInfo`. Store the returned all-time user playcount with
+  monotonic-max semantics, remove successful zero-play lookups from the queue,
+  and retain transient failures for retry. Never populate this queue from an
+  existing-library scan. Do not drain it before a committed Last.fm import
+  watermark exists, because a later first/full import would otherwise count
+  the same history again. These snapshots do not create historical monthly
+  rows; all-time totals may therefore exceed the sum of known monthly totals.
 - Adding a cache does not excuse an unbounded fallback on every request. Cache
   validity must be explicit; repair an invalid cache through a controlled job
   rather than silently falling back to a lifetime-history scan in normal UI.
@@ -389,6 +399,9 @@ Core tables:
   navigation and month/year/overall Top X use monthly counts, while track
   tables use all-time totals. Missing/invalid state requires an explicit
   import/rebuild and must never trigger a raw fallback.
+- `lastfm_track_backfill_queue`: bounded retry ledger for tracks that were
+  first indexed after the raw-history cutover. It contains track IDs and retry
+  state only, never scrobbles or provider event history.
 - `youtube_mix_analytics`: independent cached owner analytics keyed by local
   My Mix folder. Only show a row when its cached video ID still matches the
   mix's saved YouTube URL; entering My Mixes Overview triggers one refresh.

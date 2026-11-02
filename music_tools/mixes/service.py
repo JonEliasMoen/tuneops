@@ -303,6 +303,9 @@ def discover_tidal_mixes(
         )
         results.append({**base, "status": "imported", "tracks": len(records)})
 
+    backfill = getattr(engine, "backfill_new_lastfm_tracks", None)
+    if imported and callable(backfill):
+        backfill(report)
     return {
         "scanned": len(playlists),
         "candidates": len(candidates),
@@ -352,4 +355,7 @@ def import_tidal_setlist(engine, mix: Mix, tidal_url: str) -> tuple[Any, list[di
         records,
         [],
     )
+    backfill = getattr(engine, "backfill_new_lastfm_tracks", None)
+    if callable(backfill):
+        backfill()
     return playlist, records

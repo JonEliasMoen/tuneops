@@ -102,6 +102,7 @@ def refresh_collection(kind: str, collection_id: str, force: bool = False) -> Jo
                 engine.load_runtime_settings(),
                 progress=progress,
             )
+            engine.backfill_new_lastfm_tracks(progress)
         else:
             progress(f"Checking {collection['name']} on TIDAL")
             result = engine.refresh_tidal_playlist_cache(collection_id, force=force)

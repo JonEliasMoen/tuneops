@@ -14,7 +14,10 @@ import pylast
 from music_library.database import (
     lastfm_history_navigation,
     lastfm_latest_scrobble,
+    mark_lastfm_track_backfill_error,
+    pending_lastfm_track_backfills,
     store_lastfm_aggregate_import,
+    store_lastfm_track_playcount_snapshots,
     tidal_artists_for_tracks,
     tidal_library_tracks_page,
 )
@@ -89,6 +92,87 @@ def _played_track_record(played: pylast.PlayedTrack) -> dict[str, Any] | None:
         "normalized_artist": normalize(artist),
         "normalized_title": normalize(title),
     }
+
+
+def _is_missing_track_error(exc: BaseException) -> bool:
+    """Recognize Last.fm's inconsistent missing-track responses only."""
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, pylast.WSError):
+            status = int(current.status)
+            details = str(current.details or "").strip().casefold()
+            return status == 7 or (status == 6 and details == "track not found")
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def backfill_new_track_playcounts(
+    username: str,
+    api_key: str,
+    *,
+    delay_seconds: float = 0.5,
+    limit: int = 10,
+    progress: Callable[[str], None] | None = None,
+) -> dict[str, int]:
+    """Resolve all-time counts for a bounded batch of newly indexed tracks.
+
+    Last.fm exposes an authoritative user playcount per artist/title, but no
+    historical monthly buckets through this endpoint. The snapshot therefore
+    updates only ``lastfm_track_totals``; existing monthly aggregates remain
+    untouched.
+    """
+    username = str(username or "").strip()
+    api_key = str(api_key or "").strip()
+    if not username or not api_key:
+        return {"queued": 0, "checked": 0, "updated": 0, "plays_added": 0}
+    # Without a committed recent-tracks watermark, a later first/full import
+    # would replay the same historical plays and double-count this snapshot.
+    # Keep the queue intact until that baseline import has committed.
+    if lastfm_latest_scrobble(username) is None:
+        return {"queued": 0, "checked": 0, "updated": 0, "plays_added": 0}
+    rows = pending_lastfm_track_backfills(limit=max(1, min(100, int(limit))))
+    if not rows:
+        return {"queued": 0, "checked": 0, "updated": 0, "plays_added": 0}
+    report = progress or (lambda _message: None)
+    network = _MusicSyncLastFMNetwork(
+        api_key=api_key, delay_seconds=delay_seconds,
+    )
+    snapshots: list[dict[str, Any]] = []
+    checked: list[str] = []
+    for index, row in enumerate(rows, start=1):
+        track_id = str(row.get("id") or "")
+        artist = str(row.get("artist") or "").strip()
+        title = str(row.get("title") or "").strip()
+        remix = str(row.get("remix") or "").strip()
+        lookup_title = f"{title} ({remix})" if remix else title
+        if not track_id or not artist or not lookup_title:
+            checked.append(track_id)
+            continue
+        report(f"Checking Last.fm history: {index}/{len(rows)}")
+        try:
+            play_count = pylast.Track(
+                artist, lookup_title, network, username=username,
+            ).get_userplaycount()
+        except Exception as exc:
+            # A genuinely unknown artist/title is a successful zero-play
+            # lookup. Authentication, quota and transport failures remain in
+            # the queue and abort this bounded batch so we do not hammer Last.fm.
+            if _is_missing_track_error(exc):
+                play_count = 0
+            else:
+                safe_error = _pylast_error(exc)
+                if snapshots or checked:
+                    store_lastfm_track_playcount_snapshots(
+                        username, snapshots, checked_track_ids=checked,
+                    )
+                mark_lastfm_track_backfill_error(track_id, str(safe_error))
+                raise safe_error from exc
+        snapshots.append({"track_id": track_id, "play_count": int(play_count or 0)})
+        checked.append(track_id)
+    stored = store_lastfm_track_playcount_snapshots(
+        username, snapshots, checked_track_ids=checked,
+    )
+    return {"queued": len(rows), **stored}
 
 
 def normalize(value: Any) -> str:
@@ -274,6 +358,12 @@ def import_scrobbles(
         latest_scrobble_at=latest_fetched,
         expected_previous_latest=latest,
     )
+    backfill = backfill_new_track_playcounts(
+        username,
+        api_key,
+        delay_seconds=delay_seconds,
+        progress=progress,
+    )
     history = lastfm_history_navigation(username, minimum_tracks=1)
     progress(f"History cache ready: {len(history['months']):,} months")
     result = {
@@ -292,6 +382,8 @@ def import_scrobbles(
         "history_track_months_cached": sum(
             int(item["track_count"]) for item in history["months"]
         ),
+        "new_tracks_checked": backfill["checked"],
+        "historical_plays_added": backfill["plays_added"],
     }
     LOGGER.info(
         "lastfm.import complete username=%r mode=%s duration_seconds=%.3f "

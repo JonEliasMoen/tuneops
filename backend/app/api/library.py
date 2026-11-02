@@ -613,6 +613,7 @@ def like_watched_mix_track(video_id: str, body: TracklistLikeRequest) -> dict[st
             watched_mix=video_id,
         )
         cached = add_tidal_liked_track(str(session.user.id), candidate)
+        engine.backfill_new_lastfm_tracks()
         associated = associate_tidal_tracks_with_watched_mix(video_id, [track_id])
     except Exception as exc:
         engine.LOGGER.exception("api.watched_mix like_failed track_id=%s", track_id)
@@ -660,6 +661,7 @@ def like_pending_track(pending_id: int, body: PendingLikeRequest) -> dict[str, o
             watched_mix=record.get("video_id", ""),
         )
         add_tidal_liked_track(str(session.user.id), candidate)
+        engine.backfill_new_lastfm_tracks()
         associate_tidal_tracks_with_watched_mix(str(record["video_id"]), [body.track_id])
         resolve_pending_track(pending_id)
     except Exception as exc:

@@ -50,7 +50,7 @@ def _verify_aggregate_database(database: Path) -> dict[str, int | str | bool]:
         integrity != "ok"
         or foreign_keys
         or raw_present
-        or result["total_plays"] != result["monthly_plays"]
+        or result["total_plays"] < result["monthly_plays"]
         or result["total_plays"] != result["state_plays"]
     ):
         raise RuntimeError(f"Post-cutover verification failed: {result}")

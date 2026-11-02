@@ -251,6 +251,8 @@ def mutate_playlist_tracks(
                 source_playlist_id,
                 tracks=newly_indexed,
             )
+            if newly_indexed:
+                engine.backfill_new_lastfm_tracks()
         except Exception as exc:
             LOGGER.exception(
                 "react.track_action cache_update_failed action=%s playlist_id=%s tracks=%d",

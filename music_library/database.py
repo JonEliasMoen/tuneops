@@ -23,7 +23,7 @@ from music_library.connection import (
 
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE_PATH = Path(os.getenv("MUSICSYNC_DATABASE", ROOT / "music_library.sqlite3"))
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _INITIALIZED_DATABASES: set[str] = set()
 _INITIALIZE_LOCK = threading.Lock()
 
@@ -143,6 +143,13 @@ CREATE INDEX IF NOT EXISTS lastfm_track_totals_by_plays
     ON lastfm_track_totals(
         username, play_count DESC, last_played DESC
     );
+
+CREATE TABLE IF NOT EXISTS lastfm_track_backfill_queue (
+    tidal_track_id TEXT PRIMARY KEY,
+    queued_at TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NOT NULL DEFAULT ''
+);
 
 CREATE TABLE IF NOT EXISTS lastfm_import_state (
     username TEXT PRIMARY KEY,
@@ -593,6 +600,21 @@ def _store_tracks_and_artists(
         track_id = str(record.get("id") or "")
         if track_id:
             accepted[track_id] = record
+    existing_ids: set[str] = set()
+    accepted_ids = list(accepted)
+    for chunk in _chunks(accepted_ids, 500):
+        placeholders = ",".join("?" for _ in chunk)
+        existing_ids.update(
+            str(row["provider_track_id"])
+            for row in connection.execute(
+                f"""
+                SELECT provider_track_id FROM tracks
+                WHERE provider='tidal' AND provider_track_id IN ({placeholders})
+                """,
+                chunk,
+            ).fetchall()
+        )
+    new_ids = [track_id for track_id in accepted_ids if track_id not in existing_ids]
     track_rows = [
         (
             track_id, record.get("title", ""), record.get("artist", ""),
@@ -635,7 +657,16 @@ def _store_tracks_and_artists(
         """,
         relationships,
     )
-    return list(accepted)
+    _executemany_chunked(
+        connection,
+        """
+        INSERT OR IGNORE INTO lastfm_track_backfill_queue(
+            tidal_track_id, queued_at
+        ) VALUES(?, ?)
+        """,
+        [(track_id, refreshed_at) for track_id in new_ids],
+    )
+    return new_ids
 
 
 @contextmanager
@@ -1118,6 +1149,10 @@ def delete_orphaned_tidal_track(
             "DELETE FROM lastfm_track_totals WHERE tidal_track_id=?",
             (track_id,),
         )
+        connection.execute(
+            "DELETE FROM lastfm_track_backfill_queue WHERE tidal_track_id=?",
+            (track_id,),
+        )
         deleted = connection.execute(
             """
             DELETE FROM tracks
@@ -1396,6 +1431,131 @@ def lastfm_track_stats(
         }
         for row in rows
     }
+
+
+def pending_lastfm_track_backfills(
+    limit: int = 10, path: Path = DATABASE_PATH,
+) -> list[dict[str, Any]]:
+    """Return a bounded batch of newly indexed tracks awaiting Last.fm lookup."""
+    initialize(path)
+    with connect_readonly(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT q.tidal_track_id AS id, t.title, t.artist, t.remix,
+                   q.attempts, q.queued_at
+            FROM lastfm_track_backfill_queue q
+            JOIN tracks t
+              ON t.provider='tidal'
+             AND t.provider_track_id=q.tidal_track_id
+            ORDER BY q.attempts, q.queued_at, q.tidal_track_id
+            LIMIT ?
+            """,
+            (max(1, min(100, int(limit))),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def store_lastfm_track_playcount_snapshots(
+    username: str,
+    snapshots: list[dict[str, Any]],
+    *,
+    checked_track_ids: list[str],
+    path: Path = DATABASE_PATH,
+) -> dict[str, int]:
+    """Store authoritative all-time counts without inventing monthly history."""
+    user_key = str(username or "").strip().casefold()
+    if not user_key:
+        raise ValueError("A Last.fm username is required")
+    checked = list(dict.fromkeys(
+        str(track_id).strip() for track_id in checked_track_ids if str(track_id).strip()
+    ))
+    accepted = {
+        str(row.get("track_id") or "").strip(): max(0, int(row.get("play_count") or 0))
+        for row in snapshots
+        if str(row.get("track_id") or "").strip()
+    }
+    initialize(path)
+    now = datetime.now(timezone.utc).isoformat()
+    increased_by = 0
+    updated = 0
+    with connect(path) as connection:
+        existing: dict[str, int] = {}
+        ids = list(accepted)
+        for chunk in _chunks(ids, 500):
+            placeholders = ",".join("?" for _ in chunk)
+            existing.update({
+                str(row["tidal_track_id"]): int(row["play_count"] or 0)
+                for row in connection.execute(
+                    f"""
+                    SELECT tidal_track_id, play_count FROM lastfm_track_totals
+                    WHERE username=? AND tidal_track_id IN ({placeholders})
+                    """,
+                    [user_key, *chunk],
+                ).fetchall()
+            })
+        rows: list[tuple[str, str, int, int]] = []
+        for track_id, provider_count in accepted.items():
+            old_count = existing.get(track_id, 0)
+            new_count = max(old_count, provider_count)
+            if new_count <= 0:
+                continue
+            increased_by += new_count - old_count
+            updated += int(new_count != old_count)
+            rows.append((user_key, track_id, new_count, 0))
+        _executemany_chunked(
+            connection,
+            """
+            INSERT INTO lastfm_track_totals(
+                username, tidal_track_id, play_count, last_played
+            ) VALUES(?, ?, ?, ?)
+            ON CONFLICT(username, tidal_track_id) DO UPDATE SET
+                play_count=MAX(lastfm_track_totals.play_count, excluded.play_count)
+            """,
+            rows,
+        )
+        if increased_by:
+            connection.execute(
+                """
+                INSERT INTO lastfm_import_state(
+                    username, latest_scrobble_at, matched_play_count,
+                    last_imported_at, status
+                ) VALUES(?, NULL, ?, ?, 'ready')
+                ON CONFLICT(username) DO UPDATE SET
+                    matched_play_count=(
+                        lastfm_import_state.matched_play_count
+                        + excluded.matched_play_count
+                    ),
+                    last_imported_at=excluded.last_imported_at,
+                    status='ready'
+                """,
+                (user_key, increased_by, now),
+            )
+        _executemany_chunked(
+            connection,
+            "DELETE FROM lastfm_track_backfill_queue WHERE tidal_track_id=?",
+            [(track_id,) for track_id in checked],
+        )
+    return {
+        "checked": len(checked),
+        "updated": updated,
+        "plays_added": increased_by,
+    }
+
+
+def mark_lastfm_track_backfill_error(
+    track_id: str, error: str, path: Path = DATABASE_PATH,
+) -> None:
+    """Retain a failed lookup for a later bounded retry."""
+    initialize(path)
+    with connect(path) as connection:
+        connection.execute(
+            """
+            UPDATE lastfm_track_backfill_queue
+            SET attempts=attempts + 1, last_error=?
+            WHERE tidal_track_id=?
+            """,
+            (str(error or "Last.fm lookup failed")[:300], str(track_id)),
+        )
 
 
 def rebuild_lastfm_aggregates_from_legacy(
@@ -4078,33 +4238,7 @@ def add_tidal_liked_track(
         raise ValueError("A TIDAL track ID is required")
     now = datetime.now(timezone.utc).isoformat()
     with connect(path) as connection:
-        connection.execute(
-            """
-            INSERT INTO tracks(
-                provider, provider_track_id, title, artist, remix, album,
-                album_art_url, duration_seconds, bpm, musical_key, key_scale,
-                release_year, isrc, refreshed_at
-            ) VALUES('tidal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(provider, provider_track_id) DO UPDATE SET
-                title=excluded.title, artist=excluded.artist,
-                remix=excluded.remix, album=excluded.album,
-                album_art_url=excluded.album_art_url,
-                duration_seconds=excluded.duration_seconds, bpm=excluded.bpm,
-                musical_key=excluded.musical_key,
-                key_scale=excluded.key_scale,
-                release_year=excluded.release_year, isrc=excluded.isrc,
-                refreshed_at=excluded.refreshed_at
-            """,
-            (
-                track_id, record.get("title", ""), record.get("artist", ""),
-                record.get("remix", ""), record.get("album", ""),
-                record.get("album_art_url", ""), record.get("duration_seconds"),
-                record.get("bpm"), record.get("musical_key", ""),
-                record.get("key_scale", ""), record.get("year"),
-                record.get("isrc", ""), now,
-            ),
-        )
-        _store_track_artists(connection, track_id, record)
+        _store_tracks_and_artists(connection, [record], now)
         exists = connection.execute(
             """
             SELECT 1 FROM liked_tracks
