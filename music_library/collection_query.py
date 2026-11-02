@@ -224,11 +224,9 @@ def _query_parts(
     ctes = f"""
         WITH membership AS ({membership_sql}),
         plays AS (
-            SELECT tidal_track_id AS track_id, COUNT(*) AS play_count,
-                   MAX(played_at) AS last_played
-            FROM lastfm_scrobbles
-            WHERE username=? AND tidal_track_id IS NOT NULL
-            GROUP BY tidal_track_id
+            SELECT tidal_track_id AS track_id, play_count, last_played
+            FROM lastfm_track_totals
+            WHERE username=?
         ),
         base AS (
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix, t.album,

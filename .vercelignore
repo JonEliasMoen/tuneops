@@ -27,6 +27,4 @@ backups/
 
 # Local planning and infrastructure files are not runtime dependencies
 infra/
-AuthMigrationPlan.md
-DeploymentPlan.md
-Tasks.md
+**.md

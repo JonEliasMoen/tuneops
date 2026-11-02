@@ -14,6 +14,8 @@ commit or print secrets from `.env`, `.spotify_cache`, `.tidal_session.json`, or
 - FastAPI documentation: `http://127.0.0.1:8081/api/docs`
 - Headless configured sync: `python startup_sync.py`
 - Full TIDAL liked-track cache: `python cache_liked_tracks.py`
+- Verified Last.fm aggregate cutover:
+  `python migrate_lastfm_aggregates.py --database <sqlite-file> --apply`
 - Verified Turso-to-SQLite backup: `python backup_turso.py --database <name>`
 - Direct headless sync: `python main.py --sync`
 - Dependencies are declared in the repository-level `../requirements.txt`.
@@ -129,6 +131,40 @@ before accepting an MCP bearer token.
 
 ## Database performance contract
 
+- Remote row-read consumption is a correctness and availability constraint,
+  not a later optimization. Read `RowReadPlan.md` before adding a database-backed
+  page, aggregate, statistic, relationship, history feature, polling loop, or
+  automatic frontend refetch.
+- Before implementing such a feature, identify its tables, expected cardinality,
+  request frequency, pagination/refetch multiplier, indexes, and query plan.
+  Do not infer cost from the number of rows returned. Use a production-sized
+  temporary SQLite copy and `EXPLAIN QUERY PLAN` when the query is non-trivial.
+- Stop and warn the user before implementation if an interactive query performs
+  an unbounded/full-table scan of a table that can exceed 10,000 rows, has cost
+  that grows with lifetime history instead of page size, repeats a large
+  aggregate per page/item/poll, or is estimated above 25,000 rows read per
+  request. Propose a bounded/materialized alternative first. Database engine
+  changes and a larger quota do not waive this review.
+- Normal interactive requests should target fewer than 10,000 estimated rows
+  read. Explicit import/rebuild/migration jobs may scan a large table once, but
+  must never repeat that scan per track, page, month, or progress poll.
+- The legacy `lastfm_scrobbles` table was removed under `RowReadPlan.md`; do not
+  recreate it or add any new dependency on it. TuneOps stores only
+  matched Last.fm aggregates: all-time totals per TIDAL track, monthly totals,
+  and compact import state. Discard unmatched scrobbles during import. There is
+  no raw-history fallback in normal, repair, Settings, navigation, or MCP
+  request handling after cutover.
+- Last.fm matching is strictly local against TIDAL tracks already present in
+  the TuneOps index. Import/reconciliation must never search the live TIDAL
+  catalogue, create a canonical track, or make a TIDAL provider call. A play
+  that cannot be matched conservatively to an indexed track is discarded.
+- Adding a cache does not excuse an unbounded fallback on every request. Cache
+  validity must be explicit; repair an invalid cache through a controlled job
+  rather than silently falling back to a lifetime-history scan in normal UI.
+- Serverless cold starts must not execute schema migrations, duplicate cleanup,
+  historical backfills, or other data scans. Schema lifecycle belongs in an
+  explicit versioned migration path; normal requests may perform at most a
+  constant-cost version check.
 - Treat Turso as a remote HTTP database, not as local SQLite. A helper that
   opens several connections or executes one statement per row creates real
   network round trips.
@@ -344,15 +380,15 @@ Core tables:
 - `event_links`: independent user-owned YouTube and Concert Archives URLs keyed
   to an indexed TIDAL event. YouTube metadata may be fetched for presentation;
   Concert Archives is storage/link-out only and must never be scraped or fetched.
-- `lastfm_scrobbles`: immutable listening-history rows keyed by user, timestamp,
-  and normalized identity. Preserve timestamps for monthly charts. Matching to
-  TIDAL tracks must be conservative: ambiguous identities remain unmatched.
-- `lastfm_monthly_track_counts` and `lastfm_history_cache_state`: rebuildable
-  per-user materialized history aggregates. Raw `lastfm_scrobbles` remain the
-  authority. History navigation and month/year/overall Top X queries use these
-  counts after a successful import or reconciliation, but retain a raw-query
-  fallback for databases that have not built the cache yet. Any operation that
-  changes historical TIDAL matches must rebuild or invalidate this cache.
+- `lastfm_scrobbles`: removed legacy migration input. Never recreate or query
+  it in active application code. Preserve the external pre-migration backup;
+  only the explicit cutover utility may inspect such a legacy backup.
+- `lastfm_track_totals`, `lastfm_monthly_track_counts`, and compact Last.fm
+  import state are the authoritative production representation. Store only
+  conservatively matched TIDAL plays; discard unmatched provider rows. History
+  navigation and month/year/overall Top X use monthly counts, while track
+  tables use all-time totals. Missing/invalid state requires an explicit
+  import/rebuild and must never trigger a raw fallback.
 - `youtube_mix_analytics`: independent cached owner analytics keyed by local
   My Mix folder. Only show a row when its cached video ID still matches the
   mix's saved YouTube URL; entering My Mixes Overview triggers one refresh.
@@ -366,8 +402,9 @@ The Settings **Orphaned tracks** view lists TIDAL track rows that have no
 membership in Liked tracks, indexed playlists/events/sources, My Mixes
 setlists, or watched mixes. Clearing this view is an explicit, confirmed,
 local-only destructive action: delete the orphan track rows and their cascading
-local metadata, reset matching Last.fm scrobbles to unmatched, and never call a
-music provider or delete remote data.
+local metadata, including their Last.fm aggregate rows, and never call a music
+provider or delete remote data. Deleted aggregates are not retained for future
+rematching.
 
 ## Mix explorer
 
@@ -500,11 +537,12 @@ revalidation on the following run.
 - Route: `/liked-tracks`.
 - Last.fm history is imported explicitly from Settings using `LASTFM_API_KEY`
   from `.env` and `settings.lastfm_username` from the SQLite configuration
-  store. The first
-  import walks oldest-to-newest so an interrupted run can resume safely;
-  subsequent imports use the newest cached timestamp. Track tables expose
-  optional Play count and Last played fields, and the inspector shows the
-  current matched count. Importing must never modify TIDAL or scrobble plays.
+  store. Import matches provider rows against indexed TIDAL tracks before
+  storage, discards unmatched rows, transactionally increments all-time/monthly
+  aggregates, and advances a compact provider watermark only after commit.
+  Track tables expose optional Play count and Last played fields, and the
+  inspector shows the current matched count. Importing must never modify TIDAL
+  or provider scrobble plays.
 - Route `/search` is the global library search. It deduplicates tracks across
   liked tracks, indexed Playlists/Events/Sources, and My Mixes, never calls a
   provider while searching, and matches free text against title, remix,

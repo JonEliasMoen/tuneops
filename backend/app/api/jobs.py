@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 import main as engine
 from music_library.database import lastfm_import_summary
 from music_library.database import pending_track, pending_tracks, update_pending_track_candidates, watched_mix
-from music_tools.lastfm import import_scrobbles, reconcile_track_matches
+from music_tools.lastfm import import_scrobbles
 from music_tools.mixes.service import discover_tidal_mixes, import_tidal_setlist, mix_for
 from music_tools.watched_mixes.tracklist import find_tidal_matches
 
@@ -77,22 +77,6 @@ def run_lastfm_import() -> JobResponse:
         return result
 
     return JobResponse.model_validate(JOBS.snapshot(JOBS.submit("lastfm-import", execute)))
-
-
-@router.post("/lastfm/reconcile", response_model=JobResponse, status_code=202)
-def run_lastfm_reconcile() -> JobResponse:
-    username = str(engine.load_runtime_settings().get("lastfm_username", "") or "").strip()
-
-    def execute(progress):
-        progress("Matching cached Last.fm identities to the TIDAL library")
-        result = reconcile_track_matches(username)
-        progress(
-            f"History cache ready: {int(result.get('history_months_cached', 0)):,} months"
-        )
-        invalidate_navigation_snapshot()
-        return result
-
-    return JobResponse.model_validate(JOBS.snapshot(JOBS.submit("lastfm-reconcile", execute)))
 
 
 @router.post(

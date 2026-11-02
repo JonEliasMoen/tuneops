@@ -90,7 +90,7 @@ export function SettingsPage() {
   })
   function confirmClearOrphaned() {
     const count = orphaned.data?.total ?? 0
-    if (!count || !window.confirm(`Permanently remove ${count} orphaned tracks from the local database? Ratings, tags, and dimensions attached only to these tracks will also be removed. Last.fm matches will be reset. Nothing is deleted from TIDAL.`)) return
+    if (!count || !window.confirm(`Permanently remove ${count} orphaned tracks from the local database? Ratings, tags, dimensions, and matched Last.fm aggregate counts attached only to these tracks will also be removed. Nothing is deleted from TIDAL.`)) return
     clearOrphaned.mutate()
   }
   function confirmRemoveOrphaned(trackId: string, title: string, artist: string) {
@@ -146,7 +146,7 @@ export function SettingsPage() {
         <label>Username<input value={draft.lastfm_username} onChange={(event) => setDraft({ ...draft, lastfm_username: event.target.value })} /></label>
         <label>Top tracks per month<input type="number" min="1" max="100" value={draft.history_top_tracks} onChange={(event) => setDraft({ ...draft, history_top_tracks: Number(event.target.value) })} /></label>
         <p className={draft.lastfm_api_key_configured ? 'good' : 'warning'}>{draft.lastfm_api_key_configured ? 'API key configured in .env' : 'LASTFM_API_KEY is missing from .env'}</p>
-        <div className="button-row"><button type="button" disabled={saveState !== 'saved' || startJob.isPending} onClick={() => startJob.mutate('/lastfm/import')}>Import plays</button><button type="button" disabled={saveState !== 'saved' || startJob.isPending} onClick={() => startJob.mutate('/lastfm/reconcile')}>Reconcile cached plays</button></div>
+        <div className="button-row"><button type="button" disabled={saveState !== 'saved' || startJob.isPending} onClick={() => startJob.mutate('/lastfm/import')}>Import plays</button></div>
         <JobStatus jobId={jobId} />
       </section>
       <section className="settings-card"><h2>YouTube Analytics</h2>
@@ -195,7 +195,7 @@ export function SettingsPage() {
           <div className="orphaned-track-table-wrap"><table className="orphaned-track-table"><thead><tr><th>Title</th><th>Artist</th><th>Album</th><th>Rating</th><th>Tags</th><th>Last.fm plays</th><th>Action</th></tr></thead><tbody>{orphaned.data.items.map((track) => <tr key={track.id}><td>{track.title || EMPTY_CELL}</td><td>{track.artist || EMPTY_CELL}</td><td>{track.album || EMPTY_CELL}</td><td>{track.rating || EMPTY_CELL}</td><td>{track.tag_count + track.dimension_count || EMPTY_CELL}</td><td>{track.lastfm_plays || EMPTY_CELL}</td><td><button type="button" className="danger compact-button" disabled={removeOrphaned.isPending} onClick={() => confirmRemoveOrphaned(track.id, track.title || 'Untitled track', track.artist || 'Unknown artist')}>{removingTrackId === track.id ? 'Removing...' : 'Remove'}</button></td></tr>)}</tbody></table></div>
           {orphaned.data.has_more ? <p className="muted">Showing the first {orphaned.data.items.length} tracks.</p> : null}
         </> : <p className="good">No orphaned tracks.</p>}
-        {clearOrphaned.isSuccess ? <p className="good">Removed {clearOrphaned.data.deleted_tracks} local tracks and reset {clearOrphaned.data.cleared_lastfm_matches} Last.fm matches.</p> : null}
+        {clearOrphaned.isSuccess ? <p className="good">Removed {clearOrphaned.data.deleted_tracks} local tracks and {clearOrphaned.data.cleared_lastfm_matches} matched Last.fm plays.</p> : null}
         {clearOrphaned.isError ? <div className="error-banner">{clearOrphaned.error.message}</div> : null}
         {removeOrphaned.isError ? <div className="error-banner">{removeOrphaned.error.message}</div> : null}
       </section>

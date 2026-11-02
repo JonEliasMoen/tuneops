@@ -12,11 +12,9 @@ from typing import Any, Callable
 import pylast
 
 from music_library.database import (
+    lastfm_history_navigation,
     lastfm_latest_scrobble,
-    lastfm_unmatched_identities,
-    rebuild_lastfm_history_cache,
-    set_lastfm_track_matches,
-    store_lastfm_scrobbles,
+    store_lastfm_aggregate_import,
     tidal_artists_for_tracks,
     tidal_library_tracks_page,
 )
@@ -129,11 +127,13 @@ def _artist_variants(value: str) -> set[str]:
     return variants
 
 
-def reconcile_track_matches(username: str) -> dict[str, int]:
-    """Match only identities that resolve unambiguously to one local track."""
+def _indexed_matcher() -> tuple[
+    dict[tuple[str, str], set[str]], dict[tuple[str, str], set[str]],
+]:
+    """Build an in-memory matcher from already indexed TuneOps tracks only."""
     records = tidal_library_tracks_page(limit=1_000_000)
     LOGGER.info(
-        "lastfm.match start username=%r tidal_tracks=%d", username, len(records)
+        "lastfm.matcher indexed_tidal_tracks=%d", len(records)
     )
     artist_map = tidal_artists_for_tracks([str(row.get("id") or "") for row in records])
     exact_index: dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -154,12 +154,18 @@ def reconcile_track_matches(username: str) -> dict[str, int]:
                 exact_index[(artist, title)].add(track_id)
             for title in base_titles:
                 base_index[(artist, title)].add(track_id)
+    return exact_index, base_index
 
-    identities = lastfm_unmatched_identities(username)
-    matches: list[dict[str, str]] = []
-    for identity in identities:
-        artist_values = _artist_variants(identity.get("artist") or "")
-        exact_titles, base_titles = _title_variants(identity.get("title") or "")
+
+def _match_records_to_indexed_tracks(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    exact_index, base_index = _indexed_matcher()
+    matched: list[dict[str, Any]] = []
+    matched_identities: set[tuple[str, str]] = set()
+    for record in records:
+        artist_values = _artist_variants(str(record.get("artist") or ""))
+        exact_titles, base_titles = _title_variants(str(record.get("title") or ""))
         exact_candidates = {
             track_id
             for artist in artist_values
@@ -177,31 +183,20 @@ def reconcile_track_matches(username: str) -> dict[str, int]:
             }
             confidence = "base"
         if len(candidates) == 1:
-            matches.append(
+            matched.append(
                 {
-                    "normalized_artist": identity["normalized_artist"],
-                    "normalized_title": identity["normalized_title"],
+                    **record,
                     "track_id": next(iter(candidates)),
                     "confidence": confidence,
                 }
             )
-    updated = set_lastfm_track_matches(username, matches)
-    history_cache = rebuild_lastfm_history_cache(username)
-    LOGGER.info(
-        "lastfm.match complete username=%r identities_checked=%d "
-        "identities_matched=%d scrobbles_matched=%d",
-        username,
-        len(identities),
-        len(matches),
-        updated,
-    )
-    return {
-        "identities_checked": len(identities),
-        "identities_matched": len(matches),
-        "scrobbles_matched": updated,
-        "history_months_cached": history_cache["months"],
-        "history_track_months_cached": history_cache["tracks"],
-    }
+            matched_identities.add(
+                (
+                    str(record.get("normalized_artist") or ""),
+                    str(record.get("normalized_title") or ""),
+                )
+            )
+    return matched, len(matched_identities)
 
 
 def import_scrobbles(
@@ -220,7 +215,6 @@ def import_scrobbles(
     progress = progress or (lambda _message: None)
     latest = lastfm_latest_scrobble(username)
     fetched = 0
-    added = 0
     started_at = time.monotonic()
     mode = "incremental" if latest is not None else "full"
     LOGGER.info(
@@ -242,86 +236,21 @@ def import_scrobbles(
             stream=True,
         )
 
-        # pyLast streams newest-to-oldest. On the first import, collect and
-        # reverse before committing so an interrupted retry cannot mistake a
-        # partial newest page for a completed history. Incremental imports can
-        # safely commit each chunk as it arrives because the old tail exists.
-        if latest is None:
-            played_items: list[pylast.PlayedTrack] = []
-            for played in recent_tracks:
-                played_items.append(played)
-                if len(played_items) % IMPORT_PAGE_SIZE == 0:
-                    message = (
-                        f"Fetched {len(played_items):,} Last.fm plays; "
-                        "still reading full history"
-                    )
-                    LOGGER.info(
-                        "lastfm.import fetched username=%r mode=full plays=%d",
-                        username,
-                        len(played_items),
-                    )
-                    progress(message)
-            LOGGER.info(
-                "lastfm.import fetch_complete username=%r mode=full plays=%d",
-                username,
-                len(played_items),
-            )
-            played_items.reverse()
-            batches = (
-                played_items[index : index + IMPORT_PAGE_SIZE]
-                for index in range(0, len(played_items), IMPORT_PAGE_SIZE)
-            )
-        else:
-            def streamed_batches():
-                batch: list[pylast.PlayedTrack] = []
-                received = 0
-                for played in recent_tracks:
-                    batch.append(played)
-                    received += 1
-                    if len(batch) >= IMPORT_PAGE_SIZE:
-                        LOGGER.info(
-                            "lastfm.import fetched username=%r mode=incremental "
-                            "plays=%d",
-                            username,
-                            received,
-                        )
-                        yield batch
-                        batch = []
-                if batch:
-                    yield batch
-                LOGGER.info(
-                    "lastfm.import fetch_complete username=%r mode=incremental "
-                    "plays=%d",
-                    username,
-                    received,
-                )
-
-            batches = streamed_batches()
-
-        for batch_number, played_batch in enumerate(batches, start=1):
-            records = [
-                record
-                for played in played_batch
-                if (record := _played_track_record(played)) is not None
-            ]
-            fetched += len(records)
-            batch_added = store_lastfm_scrobbles(username, records)
-            added += batch_added
-            message = (
-                f"Imported {fetched:,} Last.fm plays "
-                f"({batch_number:,} local batches)"
-            )
-            LOGGER.info(
-                "lastfm.import stored username=%r batch=%d batch_fetched=%d "
-                "batch_added=%d total_fetched=%d total_added=%d",
-                username,
-                batch_number,
-                len(records),
-                batch_added,
-                fetched,
-                added,
-            )
-            progress(message)
+        # pyLast streams newest-to-oldest. Collect the bounded import before
+        # committing so the aggregate watermark advances atomically; a failed
+        # import cannot leave partially incremented totals.
+        records: list[dict[str, Any]] = []
+        for played in recent_tracks:
+            record = _played_track_record(played)
+            if record is not None:
+                records.append(record)
+            if len(records) and len(records) % IMPORT_PAGE_SIZE == 0:
+                progress(f"Fetched {len(records):,} Last.fm plays")
+        fetched = len(records)
+        LOGGER.info(
+            "lastfm.import fetch_complete username=%r mode=%s plays=%d",
+            username, mode, fetched,
+        )
     except Exception as exc:
         safe_error = _pylast_error(exc)
         LOGGER.warning(
@@ -334,14 +263,35 @@ def import_scrobbles(
         )
         raise safe_error from exc
 
-    matching = reconcile_track_matches(username)
-    progress(
-        f"History cache ready: {matching['history_months_cached']:,} months"
+    progress(f"Matching {fetched:,} plays against indexed TuneOps tracks")
+    matched, identities_matched = _match_records_to_indexed_tracks(records)
+    latest_fetched = max(
+        (int(record["played_at"]) for record in records), default=latest
     )
+    added = store_lastfm_aggregate_import(
+        username,
+        matched,
+        latest_scrobble_at=latest_fetched,
+        expected_previous_latest=latest,
+    )
+    history = lastfm_history_navigation(username, minimum_tracks=1)
+    progress(f"History cache ready: {len(history['months']):,} months")
     result = {
         "fetched": fetched,
         "added": added,
-        **matching,
+        "identities_checked": len({
+            (
+                str(record.get("normalized_artist") or ""),
+                str(record.get("normalized_title") or ""),
+            )
+            for record in records
+        }),
+        "identities_matched": identities_matched,
+        "scrobbles_matched": added,
+        "history_months_cached": len(history["months"]),
+        "history_track_months_cached": sum(
+            int(item["track_count"]) for item in history["months"]
+        ),
     }
     LOGGER.info(
         "lastfm.import complete username=%r mode=%s duration_seconds=%.3f "

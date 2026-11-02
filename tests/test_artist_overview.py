@@ -35,15 +35,13 @@ def _seed(database):
             "INSERT INTO setlist_tracks(folder_name, position, provider_track_id) VALUES ('mix', 0, 'two')"
         )
         connection.executemany(
-            """INSERT INTO lastfm_scrobbles(
-                   username, played_at, artist, title, normalized_artist,
-                   normalized_title, tidal_track_id, imported_at
-               ) VALUES ('aruzhu', ?, ?, ?, ?, ?, ?, 'now')""",
+            """INSERT INTO lastfm_track_totals(
+                   username, tidal_track_id, play_count, last_played
+               ) VALUES ('aruzhu', ?, ?, ?)""",
             [
-                (1, "Alpha", "One", "alpha", "one", "one"),
-                (2, "Alpha", "One", "alpha", "one", "one"),
-                (3, "Alpha, Beta", "Two", "alpha beta", "two", "two"),
-                (4, "Outside", "Outside", "outside", "outside", "outside"),
+                ("one", 2, 2),
+                ("two", 1, 3),
+                ("outside", 1, 4),
             ],
         )
 

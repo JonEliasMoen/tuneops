@@ -159,15 +159,13 @@ def _seed(database):
         )
         connection.executemany(
             """
-            INSERT INTO lastfm_scrobbles(
-                username, played_at, artist, title, normalized_artist,
-                normalized_title, tidal_track_id, imported_at
-            ) VALUES('aruzhu', ?, ?, ?, ?, ?, ?, 'now')
+            INSERT INTO lastfm_track_totals(
+                username, tidal_track_id, play_count, last_played
+            ) VALUES('aruzhu', ?, ?, ?)
             """,
             [
-                (100, "Artist One", "Alpha Song", "artist one", "alpha song", "one"),
-                (200, "Artist One", "Alpha Song", "artist one", "alpha song", "one"),
-                (300, "Artist One", "Gamma Song", "artist one", "gamma song", "three"),
+                ("one", 2, 200),
+                ("three", 1, 300),
             ],
         )
 
@@ -182,6 +180,13 @@ def _page(database, kind, collection_id, **kwargs):
         path=database,
         **kwargs,
     )
+
+
+def test_collection_page_sql_never_reads_raw_lastfm_history():
+    sql, _params = collection_query._query_parts("liked", "liked", "aruzhu")
+
+    assert "lastfm_scrobbles" not in sql
+    assert "lastfm_track_totals" in sql
 
 
 @pytest.mark.parametrize(

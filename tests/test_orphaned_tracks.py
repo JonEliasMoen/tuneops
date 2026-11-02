@@ -39,7 +39,7 @@ def test_orphans_exclude_every_supported_library_membership(tmp_path):
     assert [track["id"] for track in result["items"]] == ["orphan"]
 
 
-def test_clear_orphans_removes_local_metadata_and_resets_lastfm_match(tmp_path):
+def test_clear_orphans_removes_local_metadata_and_lastfm_aggregates(tmp_path):
     database = tmp_path / "library.sqlite3"
     initialize(database)
     with connect(database) as connection:
@@ -54,24 +54,33 @@ def test_clear_orphans_removes_local_metadata_and_resets_lastfm_match(tmp_path):
         )
         connection.execute(
             """
-            INSERT INTO lastfm_scrobbles(
-                username, played_at, artist, title, normalized_artist,
-                normalized_title, tidal_track_id, match_confidence, imported_at
-            ) VALUES('user', 1, 'Test Artist', 'Orphan', 'test artist',
-                     'orphan', 'orphan', 'exact', 'now')
+            INSERT INTO lastfm_track_totals(
+                username, tidal_track_id, play_count, last_played
+            ) VALUES('user', 'orphan', 3, 1)
             """
+        )
+        connection.execute(
+            """INSERT INTO lastfm_monthly_track_counts(
+                   username, year, month, tidal_track_id, play_count, last_played
+               ) VALUES('user', '2026', '01', 'orphan', 3, 1)"""
+        )
+        connection.execute(
+            """INSERT INTO lastfm_import_state(
+                   username, latest_scrobble_at, matched_play_count,
+                   last_imported_at, status
+               ) VALUES('user', 1, 3, 'now', 'ready')"""
         )
 
     result = clear_orphaned_tidal_tracks(path=database)
 
-    assert result == {"deleted_tracks": 1, "cleared_lastfm_matches": 1}
+    assert result == {"deleted_tracks": 1, "cleared_lastfm_matches": 3}
     with connect(database) as connection:
         assert connection.execute("SELECT provider_track_id FROM tracks").fetchall()[0][0] == "liked"
-        scrobble = connection.execute(
-            "SELECT tidal_track_id, match_confidence FROM lastfm_scrobbles"
-        ).fetchone()
-        assert scrobble["tidal_track_id"] is None
-        assert scrobble["match_confidence"] == ""
+        assert connection.execute("SELECT COUNT(*) FROM lastfm_track_totals").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM lastfm_monthly_track_counts").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT matched_play_count FROM lastfm_import_state"
+        ).fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM track_user_metadata").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM track_dimension_values").fetchone()[0] == 0
 

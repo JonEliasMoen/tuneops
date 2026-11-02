@@ -7,23 +7,35 @@ import json
 import sqlite3
 import threading
 import unicodedata
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo
 
 from music_library.dimensions import DIMENSION_MAX_VALUES, DIMENSION_VALUES
-from music_library.connection import database_backend, open_connection
+from music_library.connection import (
+    TursoDatabaseError,
+    database_backend,
+    open_connection,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DATABASE_PATH = Path(os.getenv("MUSICSYNC_DATABASE", ROOT / "music_library.sqlite3"))
-_REMOTE_INITIALIZED: set[str] = set()
-_REMOTE_INITIALIZE_LOCK = threading.Lock()
+SCHEMA_VERSION = 1
+_INITIALIZED_DATABASES: set[str] = set()
+_INITIALIZE_LOCK = threading.Lock()
 
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS app_schema_meta (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    schema_version INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS tracks (
     provider TEXT NOT NULL,
@@ -104,27 +116,6 @@ CREATE TABLE IF NOT EXISTS event_links (
         REFERENCES playlists(provider, provider_playlist_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS lastfm_scrobbles (
-    username TEXT NOT NULL,
-    played_at INTEGER NOT NULL,
-    artist TEXT NOT NULL,
-    title TEXT NOT NULL,
-    album TEXT NOT NULL DEFAULT '',
-    mbid TEXT NOT NULL DEFAULT '',
-    normalized_artist TEXT NOT NULL,
-    normalized_title TEXT NOT NULL,
-    tidal_track_id TEXT,
-    match_confidence TEXT NOT NULL DEFAULT '',
-    imported_at TEXT NOT NULL,
-    PRIMARY KEY (username, played_at, normalized_artist, normalized_title)
-);
-
-CREATE INDEX IF NOT EXISTS lastfm_scrobbles_by_tidal_track
-    ON lastfm_scrobbles(username, tidal_track_id, played_at);
-
-CREATE INDEX IF NOT EXISTS lastfm_scrobbles_by_month
-    ON lastfm_scrobbles(username, played_at);
-
 CREATE TABLE IF NOT EXISTS lastfm_monthly_track_counts (
     username TEXT NOT NULL,
     year TEXT NOT NULL,
@@ -140,9 +131,26 @@ CREATE INDEX IF NOT EXISTS lastfm_monthly_counts_by_period
         username, year, month, play_count DESC, last_played DESC
     );
 
-CREATE TABLE IF NOT EXISTS lastfm_history_cache_state (
+CREATE TABLE IF NOT EXISTS lastfm_track_totals (
+    username TEXT NOT NULL,
+    tidal_track_id TEXT NOT NULL,
+    play_count INTEGER NOT NULL,
+    last_played INTEGER NOT NULL,
+    PRIMARY KEY (username, tidal_track_id)
+);
+
+CREATE INDEX IF NOT EXISTS lastfm_track_totals_by_plays
+    ON lastfm_track_totals(
+        username, play_count DESC, last_played DESC
+    );
+
+CREATE TABLE IF NOT EXISTS lastfm_import_state (
     username TEXT PRIMARY KEY,
-    refreshed_at TEXT NOT NULL
+    latest_scrobble_at INTEGER,
+    matched_play_count INTEGER NOT NULL DEFAULT 0,
+    last_imported_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ready'
+        CHECK (status IN ('ready', 'rebuilding', 'repair_required'))
 );
 
 CREATE TABLE IF NOT EXISTS liked_track_snapshots (
@@ -664,18 +672,37 @@ def _database_available(path: Path) -> bool:
 
 def initialize(path: Path = DATABASE_PATH) -> None:
     remote = database_backend() == "turso" and Path(path) == DATABASE_PATH
-    remote_key = os.getenv("TURSO_DATABASE_URL") or os.getenv(
-        "tuneopsdb_TURSO_DATABASE_URL", ""
+    key = (
+        "turso:"
+        + str(
+            os.getenv("TURSO_DATABASE_URL")
+            or os.getenv("tuneopsdb_TURSO_DATABASE_URL", "")
+        )
+        if remote
+        else "sqlite:" + str(Path(path).resolve())
     )
-    if remote and remote_key in _REMOTE_INITIALIZED:
+    if key in _INITIALIZED_DATABASES:
         return
-    lock = _REMOTE_INITIALIZE_LOCK if remote else nullcontext()
-    with lock:
-        if remote and remote_key in _REMOTE_INITIALIZED:
+    with _INITIALIZE_LOCK:
+        if key in _INITIALIZED_DATABASES:
+            return
+        if _stored_schema_version(path) == SCHEMA_VERSION:
+            _INITIALIZED_DATABASES.add(key)
             return
         _initialize_connection(path)
-        if remote:
-            _REMOTE_INITIALIZED.add(remote_key)
+        _INITIALIZED_DATABASES.add(key)
+
+
+def _stored_schema_version(path: Path) -> int | None:
+    """Read one persistent schema marker without running migration code."""
+    try:
+        with connect_readonly(path) as connection:
+            row = connection.execute(
+                "SELECT schema_version FROM app_schema_meta WHERE singleton=1"
+            ).fetchone()
+    except (sqlite3.DatabaseError, TursoDatabaseError):
+        return None
+    return int(row["schema_version"]) if row is not None else None
 
 
 def _initialize_connection(path: Path) -> None:
@@ -835,6 +862,16 @@ def _initialize_connection(path: Path) -> None:
                 """
             )
             connection.execute("DROP TABLE mixes")
+        connection.execute(
+            """
+            INSERT INTO app_schema_meta(singleton, schema_version, updated_at)
+            VALUES(1, ?, ?)
+            ON CONFLICT(singleton) DO UPDATE SET
+                schema_version=excluded.schema_version,
+                updated_at=excluded.updated_at
+            """,
+            (SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()),
+        )
 
 
 def delete_tidal_playlist_cache(
@@ -898,9 +935,8 @@ def orphaned_tidal_tracks(
                 SELECT provider, provider_track_id, COUNT(*) AS dimension_count
                 FROM track_dimension_values GROUP BY provider, provider_track_id
             ), play_counts AS (
-                SELECT tidal_track_id, COUNT(*) AS lastfm_plays
-                FROM lastfm_scrobbles
-                WHERE tidal_track_id IS NOT NULL GROUP BY tidal_track_id
+                SELECT tidal_track_id, SUM(play_count) AS lastfm_plays
+                FROM lastfm_track_totals GROUP BY tidal_track_id
             ), filtered AS (
                 SELECT t.provider_track_id AS id, t.title, t.artist, t.album,
                        COALESCE(m.star_rating, 0) AS rating,
@@ -951,57 +987,72 @@ def orphaned_tidal_tracks(
 
 
 def clear_orphaned_tidal_tracks(path: Path = DATABASE_PATH) -> dict[str, int]:
-    """Delete all local orphan tracks and detach their Last.fm matches."""
+    """Delete all local orphan tracks and their matched Last.fm aggregates."""
     initialize(path)
     with connect(path) as connection:
-        affected_users = [
-            str(row["username"])
-            for row in connection.execute(
-                f"""
-                SELECT DISTINCT ls.username
-                FROM lastfm_scrobbles ls
-                WHERE EXISTS (
-                    SELECT 1 FROM tracks t
-                    WHERE t.provider_track_id=ls.tidal_track_id
-                      AND {_ORPHANED_TIDAL_TRACK}
-                )
-                """
-            ).fetchall()
-        ]
         orphan_count = int(connection.execute(
             f"SELECT COUNT(*) FROM tracks t WHERE {_ORPHANED_TIDAL_TRACK}"
         ).fetchone()[0])
         lastfm_matches = int(connection.execute(
             f"""
-            SELECT COUNT(*)
-            FROM lastfm_scrobbles ls
+            SELECT COALESCE(SUM(totals.play_count), 0)
+            FROM lastfm_track_totals totals
             WHERE EXISTS (
                 SELECT 1 FROM tracks t
-                WHERE t.provider_track_id=ls.tidal_track_id
+                WHERE t.provider='tidal'
+                  AND t.provider_track_id=totals.tidal_track_id
                   AND {_ORPHANED_TIDAL_TRACK}
             )
             """
         ).fetchone()[0])
         connection.execute(
             f"""
-            UPDATE lastfm_scrobbles
-            SET tidal_track_id=NULL, match_confidence=''
+            UPDATE lastfm_import_state
+            SET matched_play_count=MAX(0, matched_play_count - COALESCE((
+                SELECT SUM(totals.play_count)
+                FROM lastfm_track_totals totals
+                WHERE totals.username=lastfm_import_state.username
+                  AND EXISTS (
+                      SELECT 1 FROM tracks t
+                      WHERE t.provider='tidal'
+                        AND t.provider_track_id=totals.tidal_track_id
+                        AND {_ORPHANED_TIDAL_TRACK}
+                  )
+            ), 0))
+            WHERE EXISTS (
+                SELECT 1 FROM lastfm_track_totals totals
+                WHERE totals.username=lastfm_import_state.username
+                  AND EXISTS (
+                      SELECT 1 FROM tracks t
+                      WHERE t.provider='tidal'
+                        AND t.provider_track_id=totals.tidal_track_id
+                        AND {_ORPHANED_TIDAL_TRACK}
+                  )
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            DELETE FROM lastfm_monthly_track_counts
             WHERE EXISTS (
                 SELECT 1 FROM tracks t
-                WHERE t.provider_track_id=lastfm_scrobbles.tidal_track_id
+                WHERE t.provider='tidal'
+                  AND t.provider_track_id=lastfm_monthly_track_counts.tidal_track_id
                   AND {_ORPHANED_TIDAL_TRACK}
             )
             """
         )
-        if affected_users:
-            connection.executemany(
-                "DELETE FROM lastfm_monthly_track_counts WHERE username=?",
-                [(username,) for username in affected_users],
+        connection.execute(
+            f"""
+            DELETE FROM lastfm_track_totals
+            WHERE EXISTS (
+                SELECT 1 FROM tracks t
+                WHERE t.provider='tidal'
+                  AND t.provider_track_id=lastfm_track_totals.tidal_track_id
+                  AND {_ORPHANED_TIDAL_TRACK}
             )
-            connection.executemany(
-                "DELETE FROM lastfm_history_cache_state WHERE username=?",
-                [(username,) for username in affected_users],
-            )
+            """
+        )
         connection.execute(
             f"DELETE FROM tracks AS t WHERE {_ORPHANED_TIDAL_TRACK}"
         )
@@ -1036,21 +1087,37 @@ def delete_orphaned_tidal_track(
         ).fetchone()
         if orphan is None:
             return {"deleted_tracks": 0, "cleared_lastfm_matches": 0}
-        affected_users = [
-            str(row["username"])
-            for row in connection.execute(
-                "SELECT DISTINCT username FROM lastfm_scrobbles WHERE tidal_track_id=?",
-                (track_id,),
-            ).fetchall()
-        ]
-        cleared = connection.execute(
+        cleared = int(connection.execute(
             """
-            UPDATE lastfm_scrobbles
-            SET tidal_track_id=NULL, match_confidence=''
-            WHERE tidal_track_id=?
+            SELECT COALESCE(SUM(play_count), 0)
+            FROM lastfm_track_totals WHERE tidal_track_id=?
             """,
             (track_id,),
-        ).rowcount
+        ).fetchone()[0])
+        connection.execute(
+            """
+            UPDATE lastfm_import_state
+            SET matched_play_count=MAX(0, matched_play_count - COALESCE((
+                SELECT play_count FROM lastfm_track_totals
+                WHERE username=lastfm_import_state.username
+                  AND tidal_track_id=?
+            ), 0))
+            WHERE EXISTS (
+                SELECT 1 FROM lastfm_track_totals
+                WHERE username=lastfm_import_state.username
+                  AND tidal_track_id=?
+            )
+            """,
+            (track_id, track_id),
+        )
+        connection.execute(
+            "DELETE FROM lastfm_monthly_track_counts WHERE tidal_track_id=?",
+            (track_id,),
+        )
+        connection.execute(
+            "DELETE FROM lastfm_track_totals WHERE tidal_track_id=?",
+            (track_id,),
+        )
         deleted = connection.execute(
             """
             DELETE FROM tracks
@@ -1068,15 +1135,6 @@ def delete_orphaned_tidal_track(
             )
             """
         )
-        if affected_users:
-            connection.executemany(
-                "DELETE FROM lastfm_monthly_track_counts WHERE username=?",
-                [(username,) for username in affected_users],
-            )
-            connection.executemany(
-                "DELETE FROM lastfm_history_cache_state WHERE username=?",
-                [(username,) for username in affected_users],
-            )
     return {"deleted_tracks": deleted, "cleared_lastfm_matches": cleared}
 
 
@@ -1200,143 +1258,115 @@ def save_tidal_event_links(
 def lastfm_latest_scrobble(
     username: str, path: Path = DATABASE_PATH
 ) -> int | None:
-    """Return the newest imported Last.fm play timestamp for one user."""
+    """Return the newest fully committed Last.fm provider timestamp."""
     initialize(path)
     with connect_readonly(path) as connection:
-        value = connection.execute(
-            "SELECT MAX(played_at) FROM lastfm_scrobbles WHERE username=?",
+        row = connection.execute(
+            "SELECT latest_scrobble_at FROM lastfm_import_state WHERE username=?",
             (str(username).casefold(),),
-        ).fetchone()[0]
+        ).fetchone()
+    value = row[0] if row is not None else None
     return int(value) if value is not None else None
 
 
-def store_lastfm_scrobbles(
+def store_lastfm_aggregate_import(
     username: str,
-    records: list[dict[str, Any]],
+    matched_records: list[dict[str, Any]],
+    *,
+    latest_scrobble_at: int | None,
+    expected_previous_latest: int | None,
     path: Path = DATABASE_PATH,
 ) -> int:
-    """Insert immutable Last.fm plays and return the number newly stored."""
-    if not records:
-        return 0
+    """Commit one provider import directly into matched aggregate tables.
+
+    ``matched_records`` must already be conservatively matched against the
+    indexed TuneOps TIDAL library and contain ``track_id`` and ``played_at``.
+    Unmatched provider rows never reach this storage boundary.
+    """
+    user_key = str(username or "").strip().casefold()
+    if not user_key:
+        raise ValueError("A Last.fm username is required")
     initialize(path)
+    totals: dict[str, tuple[int, int]] = {}
+    monthly: dict[tuple[str, str, str], tuple[int, int]] = {}
+    oslo = ZoneInfo("Europe/Oslo")
+    for record in matched_records:
+        track_id = str(record.get("track_id") or "").strip()
+        if not track_id:
+            raise ValueError("Matched Last.fm records require a TIDAL track ID")
+        played_at = int(record["played_at"])
+        count, last = totals.get(track_id, (0, 0))
+        totals[track_id] = (count + 1, max(last, played_at))
+        played = datetime.fromtimestamp(played_at, oslo)
+        key = (f"{played.year:04d}", f"{played.month:02d}", track_id)
+        count, last = monthly.get(key, (0, 0))
+        monthly[key] = (count + 1, max(last, played_at))
+
     imported_at = datetime.now(timezone.utc).isoformat()
-    user_key = str(username).strip().casefold()
+    matched_count = len(matched_records)
     with connect(path) as connection:
-        before = connection.total_changes
-        connection.executemany(
+        current = connection.execute(
+            "SELECT latest_scrobble_at FROM lastfm_import_state WHERE username=?",
+            (user_key,),
+        ).fetchone()
+        current_latest = (
+            int(current["latest_scrobble_at"])
+            if current is not None and current["latest_scrobble_at"] is not None
+            else None
+        )
+        if current_latest != expected_previous_latest:
+            raise RuntimeError(
+                "Last.fm import state changed concurrently; retry the import"
+            )
+        _executemany_chunked(
+            connection,
             """
-            INSERT OR IGNORE INTO lastfm_scrobbles(
-                username, played_at, artist, title, album, mbid,
-                normalized_artist, normalized_title, imported_at
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO lastfm_track_totals(
+                username, tidal_track_id, play_count, last_played
+            ) VALUES(?, ?, ?, ?)
+            ON CONFLICT(username, tidal_track_id) DO UPDATE SET
+                play_count=lastfm_track_totals.play_count + excluded.play_count,
+                last_played=MAX(lastfm_track_totals.last_played, excluded.last_played)
             """,
             [
-                (
-                    user_key,
-                    int(record["played_at"]),
-                    str(record.get("artist") or ""),
-                    str(record.get("title") or ""),
-                    str(record.get("album") or ""),
-                    str(record.get("mbid") or ""),
-                    str(record.get("normalized_artist") or ""),
-                    str(record.get("normalized_title") or ""),
-                    imported_at,
-                )
-                for record in records
+                (user_key, track_id, count, last_played)
+                for track_id, (count, last_played) in totals.items()
             ],
         )
-        return connection.total_changes - before
-
-
-def lastfm_unmatched_identities(
-    username: str, path: Path = DATABASE_PATH
-) -> list[dict[str, str]]:
-    """Return distinct imported identities that still lack a TIDAL match."""
-    initialize(path)
-    with connect_readonly(path) as connection:
-        rows = connection.execute(
+        _executemany_chunked(
+            connection,
             """
-            SELECT normalized_artist, normalized_title,
-                   MIN(artist) AS artist, MIN(title) AS title
-            FROM lastfm_scrobbles
-            WHERE username=? AND tidal_track_id IS NULL
-            GROUP BY normalized_artist, normalized_title
-            """,
-            (str(username).strip().casefold(),),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def set_lastfm_track_match(
-    username: str,
-    normalized_artist: str,
-    normalized_title: str,
-    track_id: str,
-    confidence: str,
-    path: Path = DATABASE_PATH,
-) -> None:
-    """Apply one conservative identity match to all corresponding scrobbles."""
-    initialize(path)
-    with connect(path) as connection:
-        connection.execute(
-            """
-            UPDATE lastfm_scrobbles
-            SET tidal_track_id=?, match_confidence=?
-            WHERE username=? AND normalized_artist=? AND normalized_title=?
-            """,
-            (
-                str(track_id), str(confidence), str(username).strip().casefold(),
-                str(normalized_artist), str(normalized_title),
-            ),
-        )
-        connection.execute(
-            "DELETE FROM lastfm_monthly_track_counts WHERE username=?",
-            (str(username).strip().casefold(),),
-        )
-        connection.execute(
-            "DELETE FROM lastfm_history_cache_state WHERE username=?",
-            (str(username).strip().casefold(),),
-        )
-
-
-def set_lastfm_track_matches(
-    username: str,
-    matches: list[dict[str, str]],
-    path: Path = DATABASE_PATH,
-) -> int:
-    """Apply several conservative Last.fm-to-TIDAL identity matches at once."""
-    if not matches:
-        return 0
-    initialize(path)
-    user_key = str(username).strip().casefold()
-    with connect(path) as connection:
-        before = connection.total_changes
-        connection.executemany(
-            """
-            UPDATE lastfm_scrobbles
-            SET tidal_track_id=?, match_confidence=?
-            WHERE username=? AND normalized_artist=? AND normalized_title=?
-              AND tidal_track_id IS NULL
+            INSERT INTO lastfm_monthly_track_counts(
+                username, year, month, tidal_track_id, play_count, last_played
+            ) VALUES(?, ?, ?, ?, ?, ?)
+            ON CONFLICT(username, year, month, tidal_track_id) DO UPDATE SET
+                play_count=lastfm_monthly_track_counts.play_count + excluded.play_count,
+                last_played=MAX(
+                    lastfm_monthly_track_counts.last_played, excluded.last_played
+                )
             """,
             [
-                (
-                    str(match["track_id"]), str(match["confidence"]), user_key,
-                    str(match["normalized_artist"]),
-                    str(match["normalized_title"]),
-                )
-                for match in matches
+                (user_key, year, month, track_id, count, last_played)
+                for (year, month, track_id), (count, last_played) in monthly.items()
             ],
         )
-        updated = connection.total_changes - before
         connection.execute(
-            "DELETE FROM lastfm_monthly_track_counts WHERE username=?",
-            (user_key,),
+            """
+            INSERT INTO lastfm_import_state(
+                username, latest_scrobble_at, matched_play_count,
+                last_imported_at, status
+            ) VALUES(?, ?, ?, ?, 'ready')
+            ON CONFLICT(username) DO UPDATE SET
+                latest_scrobble_at=excluded.latest_scrobble_at,
+                matched_play_count=(
+                    lastfm_import_state.matched_play_count + excluded.matched_play_count
+                ),
+                last_imported_at=excluded.last_imported_at,
+                status='ready'
+            """,
+            (user_key, latest_scrobble_at, matched_count, imported_at),
         )
-        connection.execute(
-            "DELETE FROM lastfm_history_cache_state WHERE username=?",
-            (user_key,),
-        )
-        return updated
+    return matched_count
 
 
 def lastfm_track_stats(
@@ -1353,11 +1383,9 @@ def lastfm_track_stats(
     with connect_readonly(path) as connection:
         rows = connection.execute(
             f"""
-            SELECT tidal_track_id, COUNT(*) AS play_count,
-                   MAX(played_at) AS last_played
-            FROM lastfm_scrobbles
+            SELECT tidal_track_id, play_count, last_played
+            FROM lastfm_track_totals
             WHERE username=? AND tidal_track_id IN ({placeholders})
-            GROUP BY tidal_track_id
             """,
             [str(username).strip().casefold(), *unique_ids],
         ).fetchall()
@@ -1370,18 +1398,57 @@ def lastfm_track_stats(
     }
 
 
-def rebuild_lastfm_history_cache(
+def rebuild_lastfm_aggregates_from_legacy(
     username: str, path: Path = DATABASE_PATH
-) -> dict[str, int]:
-    """Rebuild compact monthly counts from authoritative matched scrobbles."""
+) -> dict[str, int | None]:
+    """Build aggregate-only Last.fm state from the legacy raw event table.
+
+    This explicit migration helper is not a request-time fallback. It remains
+    non-destructive so aggregate totals can be verified before a later,
+    coordinated cutover drops ``lastfm_scrobbles``.
+    """
     user_key = str(username or "").strip().casefold()
     if not user_key:
-        return {"months": 0, "tracks": 0, "plays": 0}
+        raise ValueError("A Last.fm username is required")
     initialize(path)
-    refreshed_at = datetime.now(timezone.utc).isoformat()
+    migrated_at = datetime.now(timezone.utc).isoformat()
     with connect(path) as connection:
+        legacy_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='lastfm_scrobbles'"
+        ).fetchone()
+        if legacy_exists is None:
+            raise RuntimeError("The legacy Last.fm table does not exist")
+
+        source = connection.execute(
+            """
+            SELECT COUNT(*) AS fetched_plays,
+                   SUM(CASE WHEN tidal_track_id IS NOT NULL THEN 1 ELSE 0 END)
+                       AS matched_plays,
+                   MAX(played_at) AS latest_scrobble_at
+            FROM lastfm_scrobbles
+            WHERE username=?
+            """,
+            (user_key,),
+        ).fetchone()
+        matched_plays = int(source["matched_plays"] or 0)
+
         connection.execute(
-            "DELETE FROM lastfm_monthly_track_counts WHERE username=?",
+            "DELETE FROM lastfm_track_totals WHERE username=?", (user_key,)
+        )
+        connection.execute(
+            "DELETE FROM lastfm_monthly_track_counts WHERE username=?", (user_key,)
+        )
+        connection.execute(
+            """
+            INSERT INTO lastfm_track_totals(
+                username, tidal_track_id, play_count, last_played
+            )
+            SELECT username, tidal_track_id, COUNT(*), MAX(played_at)
+            FROM lastfm_scrobbles
+            WHERE username=? AND tidal_track_id IS NOT NULL
+            GROUP BY username, tidal_track_id
+            """,
             (user_key,),
         )
         connection.execute(
@@ -1404,24 +1471,143 @@ def rebuild_lastfm_history_cache(
         )
         connection.execute(
             """
-            INSERT INTO lastfm_history_cache_state(username, refreshed_at)
-            VALUES(?, ?)
-            ON CONFLICT(username) DO UPDATE SET refreshed_at=excluded.refreshed_at
+            INSERT INTO lastfm_import_state(
+                username, latest_scrobble_at, matched_play_count,
+                last_imported_at, status
+            ) VALUES(?, ?, ?, ?, 'ready')
+            ON CONFLICT(username) DO UPDATE SET
+                latest_scrobble_at=excluded.latest_scrobble_at,
+                matched_play_count=excluded.matched_play_count,
+                last_imported_at=excluded.last_imported_at,
+                status='ready'
             """,
-            (user_key, refreshed_at),
+            (
+                user_key,
+                source["latest_scrobble_at"],
+                matched_plays,
+                migrated_at,
+            ),
         )
-        summary = connection.execute(
+        totals = connection.execute(
+            """
+            SELECT COUNT(*) AS tracks, COALESCE(SUM(play_count), 0) AS plays
+            FROM lastfm_track_totals WHERE username=?
+            """,
+            (user_key,),
+        ).fetchone()
+        monthly = connection.execute(
             """
             SELECT COUNT(DISTINCT year || '-' || month) AS months,
-                   COUNT(*) AS tracks, COALESCE(SUM(play_count), 0) AS plays
+                   COUNT(*) AS track_months,
+                   COALESCE(SUM(play_count), 0) AS plays
             FROM lastfm_monthly_track_counts WHERE username=?
             """,
             (user_key,),
         ).fetchone()
+        total_plays = int(totals["plays"] or 0)
+        monthly_plays = int(monthly["plays"] or 0)
+        if total_plays != matched_plays or monthly_plays != matched_plays:
+            raise RuntimeError(
+                "Last.fm aggregate verification failed: source, all-time, "
+                "and monthly play totals differ"
+            )
+
     return {
-        "months": int(summary["months"] or 0),
-        "tracks": int(summary["tracks"] or 0),
-        "plays": int(summary["plays"] or 0),
+        "fetched_plays": int(source["fetched_plays"] or 0),
+        "matched_plays": matched_plays,
+        "latest_scrobble_at": (
+            int(source["latest_scrobble_at"])
+            if source["latest_scrobble_at"] is not None else None
+        ),
+        "tracks": int(totals["tracks"] or 0),
+        "months": int(monthly["months"] or 0),
+        "track_months": int(monthly["track_months"] or 0),
+    }
+
+
+def legacy_lastfm_usernames(path: Path = DATABASE_PATH) -> list[str]:
+    """List users present in the legacy table for an explicit cutover."""
+    initialize(path)
+    with connect_readonly(path) as connection:
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='lastfm_scrobbles'"
+        ).fetchone()
+        if exists is None:
+            return []
+    with connect_readonly(path) as connection:
+        rows = connection.execute(
+            "SELECT DISTINCT username FROM lastfm_scrobbles ORDER BY username"
+        ).fetchall()
+    return [str(row["username"]) for row in rows]
+
+
+def finalize_lastfm_aggregate_cutover(
+    path: Path = DATABASE_PATH,
+) -> dict[str, int]:
+    """Verify every aggregate and remove the legacy raw Last.fm tables."""
+    initialize(path)
+    with connect(path) as connection:
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='lastfm_scrobbles'"
+        ).fetchone()
+        if exists is None:
+            return {"users": 0, "matched_plays": 0, "raw_rows_removed": 0}
+        rows = connection.execute(
+            """
+            WITH raw AS (
+                SELECT username, COUNT(*) AS raw_rows,
+                       SUM(CASE WHEN tidal_track_id IS NOT NULL THEN 1 ELSE 0 END)
+                           AS matched_plays,
+                       MAX(played_at) AS latest_scrobble_at
+                FROM lastfm_scrobbles GROUP BY username
+            ), totals AS (
+                SELECT username, SUM(play_count) AS plays
+                FROM lastfm_track_totals GROUP BY username
+            ), monthly AS (
+                SELECT username, SUM(play_count) AS plays
+                FROM lastfm_monthly_track_counts GROUP BY username
+            )
+            SELECT raw.username, raw.raw_rows, raw.matched_plays,
+                   raw.latest_scrobble_at,
+                   COALESCE(totals.plays, 0) AS total_plays,
+                   COALESCE(monthly.plays, 0) AS monthly_plays,
+                   state.latest_scrobble_at AS state_latest,
+                   state.matched_play_count AS state_matched,
+                   state.status
+            FROM raw
+            LEFT JOIN totals ON totals.username=raw.username
+            LEFT JOIN monthly ON monthly.username=raw.username
+            LEFT JOIN lastfm_import_state state ON state.username=raw.username
+            ORDER BY raw.username
+            """
+        ).fetchall()
+        for row in rows:
+            matched = int(row["matched_plays"] or 0)
+            if (
+                int(row["total_plays"] or 0) != matched
+                or int(row["monthly_plays"] or 0) != matched
+                or row["state_latest"] != row["latest_scrobble_at"]
+                or int(row["state_matched"] or 0) != matched
+                or row["status"] != "ready"
+            ):
+                raise RuntimeError(
+                    f"Last.fm cutover verification failed for {row['username']}"
+                )
+        raw_rows = sum(int(row["raw_rows"] or 0) for row in rows)
+        matched_plays = sum(int(row["matched_plays"] or 0) for row in rows)
+        connection.execute("DROP TABLE lastfm_scrobbles")
+        cache_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='lastfm_history_cache_state'"
+        ).fetchone()
+        if cache_exists is not None:
+            connection.execute("DROP TABLE lastfm_history_cache_state")
+    return {
+        "users": len(rows),
+        "matched_plays": matched_plays,
+        "raw_rows_removed": raw_rows,
     }
 
 
@@ -1460,21 +1646,10 @@ def lastfm_history_navigation(
     with connect_readonly(path) as connection:
         rows = connection.execute(
             """
-            WITH cache_ready AS (
-                SELECT 1 FROM lastfm_history_cache_state WHERE username=?
-            ), monthly AS (
+            WITH monthly AS (
                 SELECT year, month, tidal_track_id, play_count
                 FROM lastfm_monthly_track_counts
-                WHERE username=? AND EXISTS (SELECT 1 FROM cache_ready)
-                UNION ALL
-                SELECT
-                    strftime('%Y', played_at, 'unixepoch', 'localtime') AS year,
-                    strftime('%m', played_at, 'unixepoch', 'localtime') AS month,
-                    tidal_track_id, COUNT(*) AS play_count
-                FROM lastfm_scrobbles
-                WHERE username=? AND tidal_track_id IS NOT NULL
-                  AND NOT EXISTS (SELECT 1 FROM cache_ready)
-                GROUP BY year, month, tidal_track_id
+                WHERE username=?
             )
             SELECT 'year' AS period_type, year, NULL AS month,
                    COUNT(DISTINCT tidal_track_id) AS track_count,
@@ -1491,8 +1666,6 @@ def lastfm_history_navigation(
             ORDER BY year DESC, period_type DESC, month DESC
             """,
             (
-                str(username).strip().casefold(),
-                str(username).strip().casefold(),
                 str(username).strip().casefold(),
                 threshold,
                 threshold,
@@ -1528,21 +1701,10 @@ def lastfm_month_top_tracks(
     with connect_readonly(path) as connection:
         rows = connection.execute(
             """
-            WITH cache_ready AS (
-                SELECT 1 FROM lastfm_history_cache_state WHERE username=?
-            ), period AS (
+            WITH period AS (
                 SELECT tidal_track_id, play_count, last_played
                 FROM lastfm_monthly_track_counts
                 WHERE username=? AND year=? AND month=?
-                  AND EXISTS (SELECT 1 FROM cache_ready)
-                UNION ALL
-                SELECT tidal_track_id, COUNT(*), MAX(played_at)
-                FROM lastfm_scrobbles
-                WHERE username=? AND tidal_track_id IS NOT NULL
-                  AND strftime('%Y', played_at, 'unixepoch', 'localtime')=?
-                  AND strftime('%m', played_at, 'unixepoch', 'localtime')=?
-                  AND NOT EXISTS (SELECT 1 FROM cache_ready)
-                GROUP BY tidal_track_id
             )
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix,
                    t.album, t.album_art_url, t.duration_seconds, t.bpm,
@@ -1555,8 +1717,6 @@ def lastfm_month_top_tracks(
             LIMIT ?
             """,
             (
-                user_key,
-                user_key, f"{int(year):04d}", f"{int(month):02d}",
                 user_key, f"{int(year):04d}", f"{int(month):02d}",
                 max(1, int(limit)),
             ),
@@ -1578,21 +1738,11 @@ def lastfm_year_top_tracks(
     with connect_readonly(path) as connection:
         rows = connection.execute(
             """
-            WITH cache_ready AS (
-                SELECT 1 FROM lastfm_history_cache_state WHERE username=?
-            ), period AS (
+            WITH period AS (
                 SELECT tidal_track_id, SUM(play_count) AS play_count,
                        MAX(last_played) AS last_played
                 FROM lastfm_monthly_track_counts
                 WHERE username=? AND year=?
-                  AND EXISTS (SELECT 1 FROM cache_ready)
-                GROUP BY tidal_track_id
-                UNION ALL
-                SELECT tidal_track_id, COUNT(*), MAX(played_at)
-                FROM lastfm_scrobbles
-                WHERE username=? AND tidal_track_id IS NOT NULL
-                  AND strftime('%Y', played_at, 'unixepoch', 'localtime')=?
-                  AND NOT EXISTS (SELECT 1 FROM cache_ready)
                 GROUP BY tidal_track_id
             )
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix,
@@ -1606,8 +1756,6 @@ def lastfm_year_top_tracks(
             LIMIT ?
             """,
             (
-                user_key,
-                user_key, f"{int(year):04d}",
                 user_key, f"{int(year):04d}",
                 max(1, int(limit)),
             ),
@@ -1628,20 +1776,10 @@ def lastfm_all_time_top_tracks(
     with connect_readonly(path) as connection:
         rows = connection.execute(
             """
-            WITH cache_ready AS (
-                SELECT 1 FROM lastfm_history_cache_state WHERE username=?
-            ), period AS (
-                SELECT tidal_track_id, SUM(play_count) AS play_count,
-                       MAX(last_played) AS last_played
-                FROM lastfm_monthly_track_counts
-                WHERE username=? AND EXISTS (SELECT 1 FROM cache_ready)
-                GROUP BY tidal_track_id
-                UNION ALL
-                SELECT tidal_track_id, COUNT(*), MAX(played_at)
-                FROM lastfm_scrobbles
-                WHERE username=? AND tidal_track_id IS NOT NULL
-                  AND NOT EXISTS (SELECT 1 FROM cache_ready)
-                GROUP BY tidal_track_id
+            WITH period AS (
+                SELECT tidal_track_id, play_count, last_played
+                FROM lastfm_track_totals
+                WHERE username=?
             )
             SELECT t.provider_track_id AS id, t.title, t.artist, t.remix,
                    t.album, t.album_art_url, t.duration_seconds, t.bpm,
@@ -1653,7 +1791,7 @@ def lastfm_all_time_top_tracks(
             ORDER BY play_count DESC, last_played DESC, t.title COLLATE NOCASE
             LIMIT ?
             """,
-            (user_key, user_key, user_key, max(1, int(limit))),
+            (user_key, max(1, int(limit))),
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -1668,13 +1806,15 @@ def lastfm_import_summary(
     with connect_readonly(path) as connection:
         row = connection.execute(
             """
-            SELECT COUNT(*) AS scrobbles,
-                   SUM(CASE WHEN tidal_track_id IS NOT NULL THEN 1 ELSE 0 END) AS matched,
-                   MAX(played_at) AS latest
-            FROM lastfm_scrobbles WHERE username=?
+            SELECT matched_play_count AS scrobbles,
+                   matched_play_count AS matched,
+                   latest_scrobble_at AS latest
+            FROM lastfm_import_state WHERE username=? AND status='ready'
             """,
             (str(username).strip().casefold(),),
         ).fetchone()
+    if row is None:
+        return {"scrobbles": 0, "matched": 0, "latest": None}
     return {
         "scrobbles": int(row["scrobbles"] or 0),
         "matched": int(row["matched"] or 0),
@@ -2724,11 +2864,12 @@ def tidal_artist_overview_page(
         result = connection.execute(
             library_cte + f"""
             , plays AS (
-                SELECT ta.artist_key, COUNT(*) AS lastfm_plays
-                FROM lastfm_scrobbles ls
+                SELECT ta.artist_key, SUM(totals.play_count) AS lastfm_plays
+                FROM lastfm_track_totals totals
                 JOIN track_artists ta
-                  ON ta.provider='tidal' AND ta.provider_track_id=ls.tidal_track_id
-                WHERE ls.username=? AND ls.tidal_track_id IS NOT NULL
+                  ON ta.provider='tidal'
+                 AND ta.provider_track_id=totals.tidal_track_id
+                WHERE totals.username=?
                 GROUP BY ta.artist_key
             ), filtered AS (
                 SELECT a.artist_key AS id, a.name,
