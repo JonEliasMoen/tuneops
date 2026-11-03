@@ -90,6 +90,7 @@ def test_tuneops_oauth_uses_mounted_issuer_and_internal_scopes(monkeypatch):
     assert settings.resource_url == "https://tuneops.example/mcp/"
     assert settings.oauth_client_id == "chatgpt-client"
     assert settings.advertised_scopes == (
+        "openid", "email", "profile",
         "profile:read", "library:read", "playlists:write"
     )
 

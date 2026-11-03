@@ -42,11 +42,10 @@ class McpSettings:
 
     @property
     def advertised_scopes(self) -> tuple[str, ...]:
-        return GOOGLE_SCOPES if self.auth_provider == "google" else (
-            PROFILE_READ,
-            LIBRARY_READ,
-            PLAYLISTS_WRITE,
-        )
+        if self.auth_provider == "google":
+            return GOOGLE_SCOPES
+        internal = (PROFILE_READ, LIBRARY_READ, PLAYLISTS_WRITE)
+        return GOOGLE_SCOPES + internal if self.auth_provider == "tuneops" else internal
 
 
 def load_settings() -> McpSettings:

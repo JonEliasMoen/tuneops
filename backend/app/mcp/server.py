@@ -57,8 +57,8 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
             client_registration_options=(
                 ClientRegistrationOptions(
                     enabled=False,
-                    valid_scopes=[PROFILE_READ, LIBRARY_READ, PLAYLISTS_WRITE],
-                    default_scopes=[PROFILE_READ, LIBRARY_READ],
+                    valid_scopes=list(settings.advertised_scopes),
+                    default_scopes=["openid", "email", "profile", PROFILE_READ, LIBRARY_READ],
                 )
                 if oauth_provider is not None
                 else None
@@ -74,6 +74,19 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
         )
         async def google_oauth_callback(request):
             return await oauth_provider.google_callback(request)
+
+        @server.custom_route(
+            "/.well-known/openid-configuration", methods=["GET"],
+            include_in_schema=False,
+        )
+        async def openid_configuration(request):
+            return await oauth_provider.openid_configuration(request)
+
+        @server.custom_route(
+            "/userinfo", methods=["GET", "POST"], include_in_schema=False
+        )
+        async def userinfo(request):
+            return await oauth_provider.userinfo(request)
 
     @server.tool(
         name="get_tuneops_profile",

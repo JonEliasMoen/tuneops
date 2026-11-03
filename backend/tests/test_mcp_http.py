@@ -74,6 +74,8 @@ def test_tuneops_oauth_publishes_authorization_server_metadata(monkeypatch):
         standard_authorization = client.get(
             "/.well-known/oauth-authorization-server/mcp"
         )
+        openid = client.get("/mcp/.well-known/openid-configuration")
+        userinfo = client.get("/mcp/userinfo")
 
     assert protected.status_code == 200
     assert protected.json()["authorization_servers"] == [
@@ -85,8 +87,14 @@ def test_tuneops_oauth_publishes_authorization_server_metadata(monkeypatch):
     )
     assert authorization.json()["token_endpoint"] == "https://tuneops.example/mcp/token"
     assert authorization.json()["scopes_supported"] == [
+        "openid", "email", "profile",
         "profile:read", "library:read", "playlists:write"
     ]
     assert "registration_endpoint" not in authorization.json()
     assert standard_authorization.status_code == 200
     assert standard_authorization.json() == authorization.json()
+    assert openid.status_code == 200
+    assert openid.json()["userinfo_endpoint"] == "https://tuneops.example/mcp/userinfo"
+    assert openid.json()["scopes_supported"][:3] == ["openid", "email", "profile"]
+    assert userinfo.status_code == 401
+    assert userinfo.json() == {"error": "invalid_token"}

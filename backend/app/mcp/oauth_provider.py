@@ -27,13 +27,13 @@ from mcp.server.auth.provider import (
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 from pydantic import AnyUrl
 from starlette.requests import Request
-from starlette.responses import RedirectResponse
+from starlette.responses import JSONResponse, RedirectResponse
 
 from backend.app import auth as web_auth
 from backend.music_library.database import connect, connect_readonly
 from backend.music_library.identities import GOOGLE_ISSUER, identity_user_id
 
-from .config import LIBRARY_READ, PLAYLISTS_WRITE, PROFILE_READ, McpSettings
+from .config import GOOGLE_SCOPES, LIBRARY_READ, PLAYLISTS_WRITE, PROFILE_READ, McpSettings
 
 
 ACCESS_TTL = 60 * 60
@@ -41,7 +41,7 @@ REFRESH_TTL = 90 * 24 * 60 * 60
 CODE_TTL = 10 * 60
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-ALLOWED_SCOPES = (PROFILE_READ, LIBRARY_READ, PLAYLISTS_WRITE)
+ALLOWED_SCOPES = GOOGLE_SCOPES + (PROFILE_READ, LIBRARY_READ, PLAYLISTS_WRITE)
 LOGGER = logging.getLogger("musicsync")
 
 
@@ -242,6 +242,68 @@ class TuneOpsOAuthProvider(
         except AuthorizeError:
             return RedirectResponse("/login?error=oauth_failed", status_code=303)
         return RedirectResponse(target, status_code=303)
+
+    async def openid_configuration(self, request: Request):
+        issuer = self.settings.issuer_url.rstrip("/")
+        return JSONResponse(
+            {
+                "issuer": self.settings.issuer_url,
+                "authorization_endpoint": issuer + "/authorize",
+                "token_endpoint": issuer + "/token",
+                "userinfo_endpoint": issuer + "/userinfo",
+                "scopes_supported": list(ALLOWED_SCOPES),
+                "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code", "refresh_token"],
+                "subject_types_supported": ["public"],
+                "token_endpoint_auth_methods_supported": [
+                    "client_secret_post", "client_secret_basic"
+                ],
+                "code_challenge_methods_supported": ["S256"],
+                "claims_supported": ["sub", "email", "email_verified", "name"],
+            },
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    def _user_info(self, token: str) -> tuple[int, dict[str, object]]:
+        access = self._load_access(token)
+        if access is None:
+            return 401, {"error": "invalid_token"}
+        if "openid" not in access.scopes:
+            return 403, {"error": "insufficient_scope"}
+        with connect_readonly() as connection:
+            row = connection.execute(
+                """SELECT u.id, u.display_name, e.email, e.display_name AS identity_name
+                   FROM app_users u
+                   LEFT JOIN external_identities e
+                     ON e.user_id=u.id AND e.issuer=?
+                   WHERE u.id=? AND u.status='active'
+                   LIMIT 1""",
+                (GOOGLE_ISSUER, access.subject),
+            ).fetchone()
+        if row is None:
+            return 401, {"error": "invalid_token"}
+        result: dict[str, object] = {"sub": str(row["id"])}
+        if "email" in access.scopes and row["email"]:
+            result.update(email=str(row["email"]), email_verified=True)
+        if "profile" in access.scopes:
+            result["name"] = str(row["identity_name"] or row["display_name"] or "")
+        return 200, result
+
+    async def userinfo(self, request: Request):
+        authorization = request.headers.get("authorization", "")
+        scheme, _, token = authorization.partition(" ")
+        if scheme.casefold() != "bearer" or not token.strip():
+            return JSONResponse(
+                {"error": "invalid_token"}, status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        status, payload = await asyncio.to_thread(self._user_info, token.strip())
+        headers = {"Cache-Control": "no-store"}
+        if status == 401:
+            headers["WWW-Authenticate"] = 'Bearer error="invalid_token"'
+        elif status == 403:
+            headers["WWW-Authenticate"] = 'Bearer error="insufficient_scope", scope="openid"'
+        return JSONResponse(payload, status_code=status, headers=headers)
 
     def _load_code(self, client_id: str, raw_code: str) -> AuthorizationCode | None:
         with connect_readonly() as connection:
