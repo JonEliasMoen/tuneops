@@ -80,7 +80,11 @@ def create_app() -> FastAPI:
 
     try:
         mcp_settings = load_mcp_settings()
-    except McpConfigurationError:
+    except McpConfigurationError as exc:
+        # Configuration failures contain variable names/validation guidance,
+        # never credential values. Do not silently hide why OAuth discovery
+        # and the MCP mount are unavailable in a deployment.
+        LOGGER.warning("mcp.disabled configuration_error=%s", exc)
         mcp_settings = None
     if mcp_settings is not None:
         mcp_server = create_mcp_server(mcp_settings)
