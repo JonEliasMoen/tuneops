@@ -11,7 +11,7 @@ from fastapi.responses import RedirectResponse, Response
 
 import main as engine
 
-from music_library.database import (
+from backend.music_library.database import (
     add_pending_track,
     add_tidal_liked_track,
     associate_tidal_tracks_with_watched_mix,
@@ -24,7 +24,6 @@ from music_library.database import (
     save_tidal_event_links,
     resolve_pending_track,
     replace_tidal_tracks_dimension,
-    tidal_dimensions_for_tracks,
     tidal_tags_for_tracks,
     tidal_indexed_playlists,
     tidal_event_with_links,
@@ -36,15 +35,15 @@ from music_library.database import (
     set_tidal_tracks_dimension_value,
     youtube_video_metadata,
 )
-from music_library.dimensions import DIMENSION_LABELS, DIMENSION_MAX_VALUES, DIMENSION_VALUES
-from music_tools.mixes.service import (
+from backend.music_library.dimensions import DIMENSION_LABELS, DIMENSION_MAX_VALUES, DIMENSION_VALUES
+from backend.music_tools.mixes.service import (
     discover_mixes,
     fetch_youtube_metadata,
     mix_for,
     youtube_thumbnail_url,
     youtube_video_id,
 )
-from music_tools.youtube_analytics import service as youtube_service
+from backend.music_tools.youtube_analytics import service as youtube_service
 
 from ..schemas import (
     ArtistOverviewPage,
@@ -78,7 +77,7 @@ from ..services.navigation_cache import (
     invalidate_navigation_snapshot,
     store_navigation_snapshot,
 )
-from music_tools.watched_mixes.tracklist import parse_tracklist
+from backend.music_tools.watched_mixes.tracklist import parse_tracklist
 
 
 router = APIRouter(tags=["library"])

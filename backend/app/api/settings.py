@@ -9,13 +9,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 import main as engine
-from music_library.database import (
+from backend.music_library.database import (
     clear_orphaned_tidal_tracks,
     delete_orphaned_tidal_track,
     delete_tidal_playlist_cache,
     orphaned_tidal_tracks,
 )
-from music_tools.mixes.service import discover_mixes
+from backend.music_tools.mixes.service import discover_mixes
 
 from ..schemas import PublicSettings, SettingsPatch, SyncMappings
 from ..services.navigation_cache import invalidate_navigation_snapshot

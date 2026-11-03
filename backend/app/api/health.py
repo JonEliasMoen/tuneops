@@ -5,9 +5,8 @@ import os
 from fastapi import APIRouter
 
 import main as engine
-from music_library.database import DATABASE_PATH
-from music_library.connection import database_backend
-from music_library.credentials import credential_availability
+from backend.music_library.database import DATABASE_PATH, database_backend
+from backend.music_library.credentials import credential_availability
 
 from ..schemas import HealthResponse, ProviderStatus
 

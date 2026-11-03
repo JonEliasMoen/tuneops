@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 import main as engine
-from music_library.telemetry import begin_database_metrics, end_database_metrics
+from backend.music_library.telemetry import begin_database_metrics, end_database_metrics
 
 from . import auth
 from .api.router import api_router

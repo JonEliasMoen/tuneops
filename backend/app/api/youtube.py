@@ -6,15 +6,15 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Cookie, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
-from music_library.database import (
+from backend.music_library.database import (
     imported_youtube_reach_report_ids,
     store_youtube_mix_analytics,
     store_youtube_reach_reports,
     store_youtube_video_metadata,
     youtube_video_metadata,
 )
-from music_tools.mixes.service import discover_mixes, fetch_youtube_metadata, youtube_video_id
-from music_tools.youtube_analytics import service
+from backend.music_tools.mixes.service import discover_mixes, fetch_youtube_metadata, youtube_video_id
+from backend.music_tools.youtube_analytics import service
 
 from ..jobs import JOBS
 from ..schemas import JobResponse
@@ -107,8 +107,8 @@ def refresh_youtube_analytics() -> JobResponse:
                 or existing_metadata.get(video_id, {}).get("title")
                 or getattr(public_metadata.get(video_id), "title", ""),
                 "upload_date": service.cached_video_upload_date(video_id)
-                or existing_metadata.get(video_id, {}).get("upload_date")
-                or getattr(public_metadata.get(video_id), "upload_date", ""),
+                               or existing_metadata.get(video_id, {}).get("upload_date")
+                               or getattr(public_metadata.get(video_id), "upload_date", ""),
             }
             for video_id in mix_by_video
         ])

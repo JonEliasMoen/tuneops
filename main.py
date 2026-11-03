@@ -44,7 +44,7 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(ROOT / ".env")
 
-from music_library.database import (  # noqa: E402 - local .env configures its path
+from backend.music_library.database import (  # noqa: E402 - local .env configures its path
     cached_tidal_playlist,
     merge_tidal_liked_tracks_prefix,
     set_tidal_playlist_collection_type,
@@ -53,8 +53,8 @@ from music_library.database import (  # noqa: E402 - local .env configures its p
     tidal_liked_track_ids,
     tidal_track_record,
 )
-from music_library import config_store  # noqa: E402
-from music_library.credentials import (  # noqa: E402
+from backend.music_library import config_store
+from backend.music_library.credentials import (  # noqa: E402
     SpotifyDatabaseCacheHandler,
     credentials_available,
     load_or_import_file_credentials,
@@ -273,7 +273,7 @@ def backfill_new_lastfm_tracks(
     if not username or not api_key:
         return {"queued": 0, "checked": 0, "updated": 0, "plays_added": 0}
     try:
-        from music_tools.lastfm import backfill_new_track_playcounts
+        from backend.music_tools.lastfm import backfill_new_track_playcounts
 
         return backfill_new_track_playcounts(
             username,

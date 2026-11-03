@@ -10,7 +10,7 @@ import logging
 from typing import Literal
 
 import main as engine
-from music_library.database import (
+from backend.music_library.database import (
     add_tidal_liked_memberships,
     apply_tidal_playlist_membership_changes,
     tidal_indexed_playlist,

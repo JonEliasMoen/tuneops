@@ -11,7 +11,7 @@ import jwt
 import requests
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
-from music_library.identities import identity_user_id
+from backend.music_library.identities import identity_user_id
 
 from .config import McpSettings
 
