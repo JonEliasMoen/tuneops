@@ -179,6 +179,56 @@ def add_tracks_to_playlist(
         raise McpLibraryAccessError(str(exc)) from exc
 
 
+def remove_tracks_from_collection(
+    user_id: str,
+    playlist_id: str,
+    tidal_track_ids: list[str],
+) -> dict[str, Any]:
+    """Remove exact tracks from an indexed TIDAL-backed collection."""
+    _require_library_owner(user_id)
+    unique_ids = list(
+        dict.fromkeys(
+            str(value).strip() for value in tidal_track_ids if str(value).strip()
+        )
+    )
+    if not unique_ids or len(unique_ids) > 50:
+        raise ValueError("Provide between 1 and 50 TIDAL track IDs")
+    normalized_playlist_id = str(playlist_id or "").strip()
+    if not normalized_playlist_id:
+        raise ValueError("A collection playlist ID is required")
+    try:
+        return mutate_playlist_tracks("remove", unique_ids, normalized_playlist_id)
+    except TrackActionError as exc:
+        raise McpLibraryAccessError(str(exc)) from exc
+
+
+def move_tracks_between_playlists(
+    user_id: str,
+    source_playlist_id: str,
+    destination_playlist_id: str,
+    tidal_track_ids: list[str],
+) -> dict[str, Any]:
+    """Move exact tracks provider-first, with rollback if source removal fails."""
+    _require_library_owner(user_id)
+    unique_ids = list(
+        dict.fromkeys(
+            str(value).strip() for value in tidal_track_ids if str(value).strip()
+        )
+    )
+    if not unique_ids or len(unique_ids) > 50:
+        raise ValueError("Provide between 1 and 50 TIDAL track IDs")
+    source_id = str(source_playlist_id or "").strip()
+    destination_id = str(destination_playlist_id or "").strip()
+    if not source_id or not destination_id:
+        raise ValueError("Source and destination playlist IDs are required")
+    try:
+        return mutate_playlist_tracks(
+            "move", unique_ids, destination_id, source_playlist_id=source_id
+        )
+    except TrackActionError as exc:
+        raise McpLibraryAccessError(str(exc)) from exc
+
+
 def get_track(user_id: str, track_id: str) -> dict[str, Any] | None:
     _require_library_owner(user_id)
     normalized_id = str(track_id or "").strip()
@@ -317,13 +367,18 @@ def get_collection_tracks(
     collection = descriptor(normalized_kind, str(collection_id or "").strip())
     page_limit = _bounded_limit(limit)
     offset = _offset(cursor)
+    effective_sort_field = sort_field
+    effective_sort_direction = sort_direction
+    if normalized_kind == "liked" and not str(sort_field or "").strip():
+        effective_sort_field = "date_added"
+        effective_sort_direction = "desc"
     page = collection_page(
         normalized_kind,
         collection["id"],
         offset=offset,
         limit=page_limit,
-        sort_field=sort_field,
-        sort_direction=sort_direction,
+        sort_field=effective_sort_field,
+        sort_direction=effective_sort_direction,
     )
     return {
         "collection": {
@@ -332,6 +387,9 @@ def get_collection_tracks(
         },
         "tracks": [_track_summary(row) for row in page["items"]],
         "total": int(page["total"]),
+        "ordering": (
+            "newest_liked_first" if normalized_kind == "liked" else "collection_order"
+        ),
         "next_cursor": str(offset + len(page["items"])) if page["has_more"] else None,
     }
 

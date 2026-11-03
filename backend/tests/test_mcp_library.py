@@ -154,6 +154,36 @@ def test_track_memberships_rejects_unbounded_request(monkeypatch):
         mcp_library.get_track_memberships(USER_ID, [str(index) for index in range(51)])
 
 
+def test_liked_collection_is_bounded_and_defaults_to_newest_first(monkeypatch):
+    configure_owner(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(
+        mcp_library,
+        "descriptor",
+        lambda kind, collection_id: {
+            "type": kind, "id": collection_id, "name": "TIDAL liked tracks",
+        },
+    )
+    monkeypatch.setattr(
+        mcp_library,
+        "collection_page",
+        lambda kind, collection_id, **kwargs: captured.update(
+            kind=kind, collection_id=collection_id, **kwargs,
+        ) or {"items": [{"id": "track-1", "title": "Newest"}], "total": 5308, "has_more": True},
+    )
+
+    result = mcp_library.get_collection_tracks(
+        USER_ID, "liked", "liked", limit=500
+    )
+
+    assert captured["limit"] == 50
+    assert captured["offset"] == 0
+    assert captured["sort_field"] == "date_added"
+    assert captured["sort_direction"] == "desc"
+    assert result["ordering"] == "newest_liked_first"
+    assert result["next_cursor"] == "1"
+
+
 def test_add_tracks_to_playlist_reuses_provider_first_action(monkeypatch):
     configure_owner(monkeypatch)
     captured = {}
@@ -184,3 +214,65 @@ def test_add_tracks_to_playlist_rejects_unbounded_request(monkeypatch):
         mcp_library.add_tracks_to_playlist(
             USER_ID, "playlist-1", [str(index) for index in range(51)],
         )
+
+
+def test_remove_tracks_reuses_provider_first_action(monkeypatch):
+    configure_owner(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(
+        mcp_library,
+        "mutate_playlist_tracks",
+        lambda action, track_ids, playlist_id, **kwargs: captured.update(
+            action=action, track_ids=track_ids, playlist_id=playlist_id, **kwargs,
+        ) or {"action": action, "changed": 2},
+    )
+
+    result = mcp_library.remove_tracks_from_collection(
+        USER_ID, "source-1", ["track-1", "track-1", "track-2"]
+    )
+
+    assert captured == {
+        "action": "remove",
+        "track_ids": ["track-1", "track-2"],
+        "playlist_id": "source-1",
+    }
+    assert result["changed"] == 2
+
+
+def test_move_tracks_reuses_provider_first_action_with_source(monkeypatch):
+    configure_owner(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(
+        mcp_library,
+        "mutate_playlist_tracks",
+        lambda action, track_ids, playlist_id, **kwargs: captured.update(
+            action=action, track_ids=track_ids, playlist_id=playlist_id, **kwargs,
+        ) or {"action": action, "changed": 1},
+    )
+
+    result = mcp_library.move_tracks_between_playlists(
+        USER_ID, "source-1", "destination-1", ["track-1"]
+    )
+
+    assert captured == {
+        "action": "move",
+        "track_ids": ["track-1"],
+        "playlist_id": "destination-1",
+        "source_playlist_id": "source-1",
+    }
+    assert result["changed"] == 1
+
+
+@pytest.mark.parametrize(
+    "function,args",
+    [
+        (mcp_library.remove_tracks_from_collection, ("playlist-1",)),
+        (mcp_library.move_tracks_between_playlists, ("source-1", "destination-1")),
+    ],
+)
+def test_destructive_playlist_actions_reject_unbounded_requests(
+    monkeypatch, function, args,
+):
+    configure_owner(monkeypatch)
+    with pytest.raises(ValueError, match="between 1 and 50"):
+        function(USER_ID, *args, [str(index) for index in range(51)])

@@ -331,21 +331,26 @@ class TuneOpsOAuthProvider(
         access, refresh = _token(), _token()
         grant_id = grant_id or str(uuid.uuid4())
         timestamp = _now_iso()
+        invalid_grant = False
         with connect() as connection:
             if code_hash:
                 deleted = connection.execute(
                     "DELETE FROM oauth_authorization_codes WHERE code_hash=?", (code_hash,)
                 )
                 if deleted.rowcount == 0:
-                    raise TokenError("invalid_grant", "Authorization code was already used")
-                connection.execute(
-                    """INSERT INTO oauth_token_grants(
-                        id,user_id,client_id,scopes_json,resource,refresh_token_hash,
-                        refresh_expires_at,created_at,updated_at
-                    ) VALUES(?,?,?,?,?,?,?,?,?)""",
-                    (grant_id,user_id,client_id,_scopes_json(scopes),resource,_hash(refresh),
-                     now + REFRESH_TTL,timestamp,timestamp),
-                )
+                    invalid_grant = True
+                else:
+                    connection.execute(
+                        """INSERT INTO oauth_token_grants(
+                            id,user_id,client_id,scopes_json,resource,refresh_token_hash,
+                            refresh_expires_at,created_at,updated_at
+                        ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                        (
+                            grant_id, user_id, client_id, _scopes_json(scopes),
+                            resource, _hash(refresh), now + REFRESH_TTL,
+                            timestamp, timestamp,
+                        ),
+                    )
             else:
                 rotated = connection.execute(
                     """UPDATE oauth_token_grants SET refresh_token_hash=?,
@@ -355,14 +360,22 @@ class TuneOpsOAuthProvider(
                      previous_refresh_hash),
                 )
                 if rotated.rowcount == 0:
-                    raise TokenError("invalid_grant", "Refresh token was already used")
+                    invalid_grant = True
+                else:
+                    connection.execute(
+                        "DELETE FROM oauth_access_tokens WHERE grant_id=?", (grant_id,)
+                    )
+            if not invalid_grant:
                 connection.execute(
-                    "DELETE FROM oauth_access_tokens WHERE grant_id=?", (grant_id,)
+                    "INSERT INTO oauth_access_tokens(token_hash,grant_id,expires_at,created_at) VALUES(?,?,?,?)",
+                    (_hash(access), grant_id, now + ACCESS_TTL, timestamp),
                 )
-            connection.execute(
-                "INSERT INTO oauth_access_tokens(token_hash,grant_id,expires_at,created_at) VALUES(?,?,?,?)",
-                (_hash(access), grant_id, now + ACCESS_TTL, timestamp),
+        if invalid_grant:
+            description = (
+                "Authorization code was already used" if code_hash
+                else "Refresh token was already used"
             )
+            raise TokenError("invalid_grant", description)
         return OAuthToken(access_token=access, expires_in=ACCESS_TTL,
                           refresh_token=refresh, scope=" ".join(scopes))
 

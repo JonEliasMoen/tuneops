@@ -19,6 +19,8 @@ from backend.app.services.mcp_library import (
     get_track as read_track,
     get_track_memberships as read_track_memberships,
     list_collections as read_collections,
+    move_tracks_between_playlists as move_library_tracks_between_playlists,
+    remove_tracks_from_collection as remove_library_tracks_from_collection,
     search_tracks as search_library_tracks,
 )
 
@@ -196,7 +198,7 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
         sort_field: str = "",
         sort_direction: str = "",
     ) -> dict[str, object]:
-        """Return a bounded track page from one exact TuneOps collection."""
+        """Return a bounded track page; Liked defaults to newest likes first."""
         return read_collection_tracks(
             _current_user_id(library_scope),
             kind,
@@ -245,6 +247,64 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
         return add_library_tracks_to_playlist(
             _current_user_id(playlists_scope),
             playlist_id,
+            tidal_track_ids,
+        )
+
+    @server.tool(
+        name="remove_tracks_from_collection",
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=True,
+        ),
+        meta={
+            "securitySchemes": [
+                {
+                    "type": "oauth2",
+                    "scopes": [playlists_scope] if playlists_scope else [],
+                }
+            ],
+        },
+        structured_output=True,
+    )
+    def remove_tracks_from_collection(
+        playlist_id: str,
+        tidal_track_ids: list[str],
+    ) -> dict[str, object]:
+        """Remove tracks from a TIDAL-backed Playlist, Event, or Source."""
+        return remove_library_tracks_from_collection(
+            _current_user_id(playlists_scope), playlist_id, tidal_track_ids
+        )
+
+    @server.tool(
+        name="move_tracks_between_playlists",
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=True,
+        ),
+        meta={
+            "securitySchemes": [
+                {
+                    "type": "oauth2",
+                    "scopes": [playlists_scope] if playlists_scope else [],
+                }
+            ],
+        },
+        structured_output=True,
+    )
+    def move_tracks_between_playlists(
+        source_playlist_id: str,
+        destination_playlist_id: str,
+        tidal_track_ids: list[str],
+    ) -> dict[str, object]:
+        """Move tracks between indexed TIDAL playlists with rollback on failure."""
+        return move_library_tracks_between_playlists(
+            _current_user_id(playlists_scope),
+            source_playlist_id,
+            destination_playlist_id,
             tidal_track_ids,
         )
 

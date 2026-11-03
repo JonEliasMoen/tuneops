@@ -38,10 +38,17 @@ def test_profile_tool_contract_is_read_only():
         "get_collection_tracks",
         "get_track_memberships",
         "add_tracks_to_playlist",
+        "remove_tracks_from_collection",
+        "move_tracks_between_playlists",
+    }
+    write_names = {
+        "add_tracks_to_playlist",
+        "remove_tracks_from_collection",
+        "move_tracks_between_playlists",
     }
     library_tools = [
         tool for tool in tools.tools
-        if tool.name not in {"get_tuneops_profile", "add_tracks_to_playlist"}
+        if tool.name not in {"get_tuneops_profile", *write_names}
     ]
     assert all(tool.annotations.read_only_hint is True for tool in library_tools)
     assert all(
@@ -56,6 +63,14 @@ def test_profile_tool_contract_is_read_only():
     assert add_tool.annotations.idempotent_hint is True
     assert add_tool.annotations.open_world_hint is True
     assert add_tool.meta["securitySchemes"][0]["scopes"] == ["playlists:write"]
+    destructive_tools = [tool for tool in tools.tools if tool.name in write_names - {"add_tracks_to_playlist"}]
+    assert all(tool.annotations.read_only_hint is False for tool in destructive_tools)
+    assert all(tool.annotations.destructive_hint is True for tool in destructive_tools)
+    assert all(tool.annotations.idempotent_hint is True for tool in destructive_tools)
+    assert all(
+        tool.meta["securitySchemes"][0]["scopes"] == ["playlists:write"]
+        for tool in destructive_tools
+    )
 
 
 def test_google_tools_do_not_request_tuneops_scopes_from_google():
