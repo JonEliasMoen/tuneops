@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_dotenv(path: Path) -> None:
@@ -36,7 +36,7 @@ _load_dotenv(ROOT / ".env")
 # Turso in the environment.
 os.environ["TUNEOPS_DATABASE_BACKEND"] = "sqlite"
 
-from backend.music_library import (  # noqa: E402
+from backend.music_library.credentials import (  # noqa: E402
     connection_metadata,
     current_user_id,
     load_credentials,

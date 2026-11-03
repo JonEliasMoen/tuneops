@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BACKUP_DIR = ROOT / "backups" / "database"
 DATABASE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -46,7 +46,7 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(ROOT / ".env")
 
-from backend.music_library import (  # noqa: E402
+from backend.music_library.connection import (  # noqa: E402
     TursoConnection,
     turso_configuration,
 )

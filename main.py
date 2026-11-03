@@ -273,7 +273,7 @@ def backfill_new_lastfm_tracks(
     if not username or not api_key:
         return {"queued": 0, "checked": 0, "updated": 0, "plays_added": 0}
     try:
-        from backend.music_tools import backfill_new_track_playcounts
+        from backend.music_tools.lastfm import backfill_new_track_playcounts
 
         return backfill_new_track_playcounts(
             username,

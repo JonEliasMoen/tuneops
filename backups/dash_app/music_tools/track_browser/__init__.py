@@ -6,13 +6,13 @@ implementation can move without changing every consumer.
 """
 
 def content(*args, **kwargs):
-    from backend.music_tools import content as implementation
+    from music_tools.liked_tracks.page import content as implementation
 
     return implementation(*args, **kwargs)
 
 
 def register_callbacks(*args, **kwargs):
-    from backend.music_tools import register_callbacks as implementation
+    from music_tools.liked_tracks.page import register_callbacks as implementation
 
     return implementation(*args, **kwargs)
 

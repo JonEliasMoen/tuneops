@@ -5,27 +5,27 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import unquote
 
-from backend.music_library.database import (
+from music_library.database import (
     set_tidal_playlist_collection_type,
     tidal_artist,
     tidal_indexed_playlists,
 )
-from backend.music_tools import content as track_browser_content
-from backend.music_tools import register_callbacks as register_track_browser_callbacks
-from backend.music_tools.mixes import content as mixes_content
-from backend.music_tools.mixes import register_callbacks as register_mixes_callbacks
-from backend.music_tools.mixes import register_routes as register_mixes_routes
-from backend.music_tools import content as watched_mixes_content
-from backend.music_tools import pending_content
-from backend.music_tools import register_pending_callbacks
-from backend.music_tools import register_callbacks as register_watched_mixes_callbacks
-from backend.music_tools import DEFAULT_QUICK_VIEWS
-from backend.music_tools import content as settings_content
-from backend.music_tools import register_callbacks as register_settings_callbacks
-from backend.music_tools import content as global_search_content
-from backend.music_tools import links_panel as event_links_panel
-from backend.music_tools import register_callbacks as register_event_callbacks
-from backend.music_tools import INDEX_STRING, shell, sidebar
+from music_tools.track_browser import content as track_browser_content
+from music_tools.track_browser import register_callbacks as register_track_browser_callbacks
+from music_tools.mixes import content as mixes_content
+from music_tools.mixes import register_callbacks as register_mixes_callbacks
+from music_tools.mixes import register_routes as register_mixes_routes
+from music_tools.watched_mixes import content as watched_mixes_content
+from music_tools.watched_mixes import pending_content
+from music_tools.watched_mixes import register_pending_callbacks
+from music_tools.watched_mixes import register_callbacks as register_watched_mixes_callbacks
+from music_tools.settings import DEFAULT_QUICK_VIEWS
+from music_tools.settings import content as settings_content
+from music_tools.settings import register_callbacks as register_settings_callbacks
+from music_tools.global_search import content as global_search_content
+from music_tools.events import links_panel as event_links_panel
+from music_tools.events import register_callbacks as register_event_callbacks
+from music_tools.ui import INDEX_STRING, shell, sidebar
 
 
 def create_app(engine):

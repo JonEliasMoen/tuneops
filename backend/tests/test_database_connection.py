@@ -1,5 +1,5 @@
 from __future__ import annotations
-from backend.music_library import connection
+from backend.music_library import connection, database
 
 
 def test_database_backend_is_explicit(monkeypatch):

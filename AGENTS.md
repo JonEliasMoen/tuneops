@@ -13,10 +13,11 @@ commit or print secrets from `.env`, `.spotify_cache`, `.tidal_session.json`, or
   `python react_app.py` or `python main.py` (defaults to `127.0.0.1:8081`)
 - FastAPI documentation: `http://127.0.0.1:8081/api/docs`
 - Headless configured sync: `python startup_sync.py`
-- Full TIDAL liked-track cache: `python cache_liked_tracks.py`
+- Full TIDAL liked-track cache: `python -m backend.utils.cache_liked_tracks`
 - Verified Last.fm aggregate cutover:
-  `python migrate_lastfm_aggregates.py --database <sqlite-file> --apply`
-- Verified Turso-to-SQLite backup: `python backup_turso.py --database <name>`
+  `python -m backend.utils.migrate_lastfm_aggregates --database <sqlite-file> --apply`
+- Verified Turso-to-SQLite backup:
+  `python -m backend.utils.backup_turso --database <name>`
 - Direct headless sync: `python main.py --sync`
 - Dependencies are declared in the repository-level `../requirements.txt`.
 
@@ -46,15 +47,15 @@ The working interpreter is:
   API/login route. This is the Vercel-aware static frontend boundary: keep SPA
   fallback there rather than restoring a manual catch-all or conditional
   `StaticFiles` mount, which can omit hashed Vite assets from the deployment.
-- `music_tools/lastfm/`: provider-neutral listening-history import and
+- `backend/music_tools/lastfm/`: provider-neutral listening-history import and
   conservative Last.fm identity matching through `pylast`; keep it independent
   of the presentation layer. Translate provider errors without logging request
   URLs or API keys.
-- `music_tools/liked_tracks/`: provider-neutral TIDAL liked/indexed-playlist
+- `backend/music_tools/liked_tracks/`: provider-neutral TIDAL liked/indexed-playlist
   retrieval used by backend jobs and services.
-- `music_tools/mixes/`: database-backed My Mix metadata, YouTube presentation,
+- `backend/music_tools/mixes/`: database-backed My Mix metadata, YouTube presentation,
   and explicit TIDAL setlist import. It has no local media-folder dependency.
-- `music_library/database.py`: shared SQLite schema, TIDAL playlist cache,
+- `backend/music_library/database.py`: shared SQLite schema, TIDAL playlist cache,
   liked-track cache, reverse playlist membership lookup, and future user
   metadata storage.
 
@@ -122,6 +123,13 @@ and database work out of React components. Reuse
 existing provider/session functions and SQLite functions instead of duplicating
 authentication or storage logic. Browsing, sorting, filtering, and paging are
 SQLite-only. TIDAL refreshes run as explicit background jobs.
+
+The experimental `backend/music_tools/tracklist` package is groundwork for a
+future explicit 1001Tracklists import job. It is not currently an API or UI
+feature. Preserve its third-party MIT notice, perform no network request during
+module import or page load, keep requests bounded by timeouts and exact-host
+validation, and add throttling/caching plus explicit candidate confirmation
+before wiring it into Watched Mixes.
 Persisted job-status polling is a one-statement read and must use
 `connect_readonly()`; progress/result writes retain explicit transactions.
 Authentication identity resolution is also a one-statement read. Never call
@@ -231,7 +239,7 @@ Build reusable table-state/navigation helpers instead of one-off key handlers.
 - The Fields popover beside Refresh controls visible columns from the same
   declarative schema. Column-specific CSS must use semantic classes such as
   `track-column-remix`, never positional `nth-child` selectors.
-- Every dimension declared in `music_library/dimensions.py` is available as an
+- Every dimension declared in `backend/music_library/dimensions.py` is available as an
   optional Fields column backed by `row["dimensions"]`. Keep dimensions hidden
   by default, sortable when enabled, and synchronized with inspector edits.
 - Quick Views are named sets of visible table fields configured under
@@ -565,7 +573,8 @@ revalidation on the following run.
   into SQLite; **Refresh from TIDAL** explicitly repeats it. Subsequent paging,
   scrolling, filtering, and sorting read only SQLite and must not call TIDAL.
   Other collection routes retain the **Reload SQLite** button and never refresh
-  liked tracks. `cache_liked_tracks.py` performs a complete reconciliation.
+  liked tracks. `backend/utils/cache_liked_tracks.py` performs a complete
+  reconciliation.
   Each manual/startup Playlist Sync run also performs the bounded maintenance
   pass, adding recent likes and reconciling removals within the scanned prefix
   while preserving the older cached tail.
@@ -627,7 +636,7 @@ revalidation on the following run.
   dimensions stored in `track_dimension_values`. Rating, Energy, and Tension
   are single-choice 1–5 values; Driver and Scale allow up to two choices; Vibe,
   Movement, Function, Structure, and Texture are multi-value tags. Keep the
-  catalog centralized in `music_library/dimensions.py` and highlight selected
+  catalog centralized in `backend/music_library/dimensions.py` and highlight selected
   values in place. These dimensions do not
   belong in the Actions panel; Actions is reserved for playlist operations.
 - When removing a track while viewing that same indexed playlist, remove its
@@ -644,7 +653,7 @@ revalidation on the following run.
 - `music_library.sqlite3`: live configuration and sync state as well as the
   music library. Preserve mapping IDs, unmatched records, `last_sync`, and
   `source_version` when editing UI rows.
-- `music_library/config_store.py`: transactional compatibility repository for
+- `backend/music_library/config_store.py`: transactional compatibility repository for
   settings, sync mappings/state, and both Quick View types. Existing callers
   currently use the document-shaped `main.load_config()` / `save_config()` API,
   but those functions read and write SQLite.
@@ -659,13 +668,13 @@ revalidation on the following run.
   and connection state. During the credential cutover these remain untouched
   rollback inputs; active reads/writes use encrypted database rows when
   `TUNEOPS_CREDENTIAL_STORAGE=database`.
-- `migrate_auth.py`: read-only inspection plus explicit local credential import
+- `backend/utils/migrate_auth.py`: read-only inspection plus explicit local credential import
   and decryption verification. It intentionally targets SQLite before the full
   database migration.
-- `migrate_database.py`: protected SQLite-to-Turso copy/verification utility.
+- `backend/utils/migrate_database.py`: protected SQLite-to-Turso copy/verification utility.
   It refuses to merge non-empty mismatched tables unless `--replace` is
   explicitly supplied, migrates table-by-table, and verifies every row count.
-- `backup_turso.py`: read-only Turso-to-local backup utility. It uses the
+- `backend/utils/backup_turso.py`: read-only Turso-to-local backup utility. It uses the
   official CLI `.dump`, restores into a temporary SQLite file, verifies
   integrity, foreign keys, stable remote counts, and every table count, then
   atomically promotes a timestamped ignored `.sqlite3` file. Stop writers for

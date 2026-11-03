@@ -1,4 +1,14 @@
-from .scraper import *
+"""Adapted from elte0/1001-tracklists-api; see THIRD_PARTY_LICENSE.md."""
+
+from urllib.parse import urljoin
+
+from .scraper import (
+	BASE_URL,
+	get_json,
+	get_soup,
+	is_1001tracklists_url,
+	search_1001tracklist,
+)
 
 import re
 
@@ -61,16 +71,20 @@ class Tracklist:
 		if fetch:
 			self.fetch()
 	def search_for_tracklist(self, url):
-		""" Initialize Tracklist. """
+		"""Find the first 1001Tracklists result for a video URL."""
 		search_soup = search_1001tracklist(url)
-		href = [k["href"] for k in search_soup.findAll("a", href=True) if "/tracklist" in k["href"]]
+		href = [
+			link["href"]
+			for link in search_soup.find_all("a", href=True)
+			if "/tracklist/" in link["href"]
+		]
 		if len(href) == 0:
-			raise Exception("No tracklist found for that video")
-		return "https://www.1001tracklists.com"+href[0]
+			raise LookupError("No 1001Tracklists result was found for that video")
+		return urljoin(BASE_URL, href[0])
 
 	def validate_url(self, url):
-		if "1001tracklist" in url:
-			return url
+		if is_1001tracklists_url(url):
+			return str(url).strip()
 		else:
 			return self.search_for_tracklist(url)
 	def fetch(self):
@@ -127,9 +141,10 @@ class Tracklist:
 			tracklist_source = {}
 			
 			for person_place in tracklist_DJs_location:
-				if re.search("\/dj\/", person_place.get("href")):
+				href = person_place.get("href") or ""
+				if "/dj/" in href:
 					tracklist_DJs.append(person_place.text)
-				if re.search("\/source\/", person_place.get("href")):
+				if "/source/" in href:
 					tracklist_source[person_place.parent.parent.parent.find("td").contents[0]] = person_place.text
 			  
 			self.DJs = tracklist_DJs
@@ -279,7 +294,7 @@ class Track:
 		try:
 			artist_span = soup.find('span', {'title': 'open artist page'}).parent
 			self.artist = Artist(span=artist_span)
-		except: # No artist link available -> use artist name from metadata or self.full_artist
+		except AttributeError: # No artist link available -> use metadata or full_artist
 			self.artist = Artist(name=meta_data['byArtist'] if 'byArtist' in meta_data else self.full_artist)
 		
 		# Get label details (store in list because can have multiple labels)

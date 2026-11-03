@@ -21,7 +21,7 @@ from backend.music_library.connection import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DATABASE_PATH = Path(os.getenv("MUSICSYNC_DATABASE", ROOT / "music_library.sqlite3"))
 SCHEMA_VERSION = 2
 _INITIALIZED_DATABASES: set[str] = set()

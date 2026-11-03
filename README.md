@@ -33,7 +33,7 @@ To measure the read-only SQLite preparation path for a large React collection,
 without calling a provider or changing the library, run:
 
 ```powershell
-python profile_library.py --collection search --limit 5000
+python -m backend.utils.profile_library --collection search --limit 5000
 ```
 
 The table keeps 200-row pages and restores at most 1,000 rows per view; this
@@ -45,7 +45,7 @@ Stop TuneOps writers for exact verification, make sure the Turso CLI is logged
 in, and run:
 
 ```powershell
-python backup_turso.py --database <turso-database-name> --wsl
+python -m backend.utils.backup_turso --database <turso-database-name> --wsl
 ```
 
 Omit `--wsl` when `turso` is installed natively. The default destination is a
@@ -62,8 +62,8 @@ backup, so keep `TUNEOPS_CREDENTIAL_KEY` separately.
 - `startup_sync.py` runs that engine without loading the web interface.
 - `frontend/src/` owns the application shell, sidebar and feature UI.
 - `backend/app/` owns the FastAPI routes and background jobs.
-- `music_tools/liked_tracks/` owns provider-neutral TIDAL retrieval services.
-- `music_library/database.py` owns the local SQLite catalogue, playlist
+- `backend/music_tools/liked_tracks/` owns provider-neutral TIDAL retrieval services.
+- `backend/music_library/database.py` owns the local SQLite catalogue, playlist
   membership index, and user-owned metadata schema.
 - `backups/dash_app/` contains the retired Dash frontend for source reference;
   active code must not import it.

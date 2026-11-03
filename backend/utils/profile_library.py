@@ -14,7 +14,7 @@ import time
 from typing import Any, Callable
 
 from backend.app.services.library import collection_page
-from backend.music_library import database_backend
+from backend.music_library.connection import database_backend
 from backend.music_library.telemetry import begin_database_metrics, end_database_metrics
 
 

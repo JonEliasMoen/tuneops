@@ -6,7 +6,7 @@ import argparse
 import sys
 import time
 
-import musicsync
+import main as engine
 from backend.music_library.database import DATABASE_PATH, store_tidal_liked_tracks
 
 
@@ -14,9 +14,9 @@ def cache_all_liked_tracks(page_size: int = 100, delay_seconds: float = 0.5) -> 
     """Fetch every liked-track page newest-first and persist it in SQLite."""
     from tidalapi.user import ItemOrder, OrderDirection
 
-    session = musicsync.tidal_client(interactive=False)
+    session = engine.tidal_client(interactive=False)
     user_id = str(session.user.id)
-    total_items = musicsync._call(
+    total_items = engine._call(
         "tidal",
         "favorite_tracks_count",
         session.user.favorites.get_tracks_count,
@@ -25,7 +25,7 @@ def cache_all_liked_tracks(page_size: int = 100, delay_seconds: float = 0.5) -> 
     cached_total = 0
     page_number = 0
 
-    musicsync.LOGGER.info(
+    engine.LOGGER.info(
         "liked_cache.start user_id=%s provider_total=%d page_size=%d "
         "delay_seconds=%.2f database=%s",
         user_id,
@@ -40,7 +40,7 @@ def cache_all_liked_tracks(page_size: int = 100, delay_seconds: float = 0.5) -> 
 
     while request_offset < total_items:
         page_number += 1
-        tracks = musicsync._call(
+        tracks = engine._call(
             "tidal",
             "favorite_tracks_full_cache",
             lambda: session.user.favorites.tracks(
@@ -83,7 +83,7 @@ def cache_all_liked_tracks(page_size: int = 100, delay_seconds: float = 0.5) -> 
         if delay_seconds:
             time.sleep(delay_seconds)
 
-    musicsync.LOGGER.info(
+    engine.LOGGER.info(
         "liked_cache.complete user_id=%s cached_tracks=%d provider_total=%d "
         "unavailable=%d pages=%d database=%s",
         user_id,
@@ -122,11 +122,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    musicsync.configure_logging()
+    engine.configure_logging()
     try:
         total = cache_all_liked_tracks(args.page_size, args.delay)
     except Exception:
-        musicsync.LOGGER.exception("liked_cache.failed")
+        engine.LOGGER.exception("liked_cache.failed")
         print("Liked-track cache failed. See music_sync.log for details.", file=sys.stderr)
         return 1
     print(f"Complete: {total:,} liked tracks cached in {DATABASE_PATH}")

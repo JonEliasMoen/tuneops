@@ -7,7 +7,7 @@ import sys
 
 
 SCRIPT = (
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[2]
     / "frontend" / "public" / "downloads" / "virtualdj-companion"
     / "tuneops_virtualdj.py"
 )

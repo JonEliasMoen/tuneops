@@ -182,7 +182,7 @@ def test_analytics_refresh_matches_owned_video_results_to_mix_folders(monkeypatc
 
     registry = ImmediateJobs()
     monkeypatch.setattr(youtube_api, "JOBS", registry)
-    monkeypatch.setattr(backend.music_tools.youtube_analytics.service, "status", lambda: {"connected": True})
+    monkeypatch.setattr(service, "status", lambda: {"connected": True})
     monkeypatch.setattr(
         youtube_api,
         "discover_mixes",
@@ -190,11 +190,11 @@ def test_analytics_refresh_matches_owned_video_results_to_mix_folders(monkeypatc
     )
     monkeypatch.setattr(youtube_api, "youtube_video_id", lambda _url: "video-id")
     monkeypatch.setattr(
-        backend.music_tools.youtube_analytics.service,
+        service,
         "query_video_analytics",
         lambda ids: {"video-id": {"video": "video-id", "views": 42}} if ids == ["video-id"] else {},
     )
-    monkeypatch.setattr(backend.music_tools.youtube_analytics.service, "query_video_titles", lambda ids: {ids[0]: "Darkprog"})
+    monkeypatch.setattr(service, "query_video_titles", lambda ids: {ids[0]: "Darkprog"})
     monkeypatch.setattr(
         youtube_api,
         "store_youtube_mix_analytics",
@@ -208,7 +208,7 @@ def test_analytics_refresh_matches_owned_video_results_to_mix_folders(monkeypatc
     monkeypatch.setattr(youtube_api, "youtube_video_metadata", lambda: {})
     monkeypatch.setattr(youtube_api, "imported_youtube_reach_report_ids", lambda: set())
     monkeypatch.setattr(
-        backend.music_tools.youtube_analytics.service,
+        service,
         "sync_video_reach_reports",
         lambda ids, imported: {"records": [], "report_ids": [], "job_created": False},
     )
@@ -236,7 +236,7 @@ def test_analytics_refresh_matches_owned_video_results_to_mix_folders(monkeypatc
 
 
 def test_youtube_callback_returns_to_settings(monkeypatch):
-    monkeypatch.setattr(backend.music_tools.youtube_analytics.service, "exchange_code", lambda _code: None)
+    monkeypatch.setattr(service, "exchange_code", lambda _code: None)
 
     response = youtube_api.youtube_callback(
         code="authorization-code",

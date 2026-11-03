@@ -23,7 +23,7 @@ from backend.music_library.credentials import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 TOKEN_PATH = ROOT / ".youtube_oauth.json"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"

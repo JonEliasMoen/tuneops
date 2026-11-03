@@ -5,20 +5,20 @@ from __future__ import annotations
 import time
 from urllib.parse import quote
 
-from backend.music_library.database import (
+from music_library.database import (
     add_tidal_liked_track,
     add_pending_track,
     associate_tidal_tracks_with_watched_mix,
     save_watched_mix,
     watched_mix,
 )
-from backend.music_tools.mixes import (
+from music_tools.mixes.service import (
     fetch_youtube_metadata,
     youtube_thumbnail_url,
     youtube_video_id,
 )
-from backend.music_tools import content as track_browser_content
-from backend.music_tools import content as stopwatch_content
+from music_tools.track_browser import content as track_browser_content
+from music_tools.track_browser.stopwatch import content as stopwatch_content
 from .tracklist import find_tidal_matches, parse_tracklist
 
 

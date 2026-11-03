@@ -9,7 +9,7 @@ from backend.app.main import create_app
 
 
 def test_built_frontend_serves_hashed_assets_and_spa_routes(monkeypatch):
-    dist = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+    dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
     assets = list((dist / "assets").glob("index-*.js"))
     if not assets:
         pytest.skip("frontend has not been built")

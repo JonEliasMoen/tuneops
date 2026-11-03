@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _load_dotenv(path: Path) -> None:
@@ -35,9 +35,12 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(ROOT / ".env")
 
-from backend.music_library import TursoConnection, turso_configuration  # noqa: E402
+from backend.music_library.connection import (  # noqa: E402
+    TursoConnection,
+    turso_configuration,
+)
 from backend.music_library.database import DATABASE_PATH, SCHEMA  # noqa: E402
-from backend.music_library import load_credentials  # noqa: E402
+from backend.music_library.credentials import load_credentials  # noqa: E402
 
 
 def _quote(identifier: str) -> str:

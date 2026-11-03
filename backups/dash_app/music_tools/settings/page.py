@@ -6,9 +6,9 @@ import os
 from datetime import datetime
 from typing import Any
 
-from backend.music_library.database import lastfm_import_summary
-from backend.music_tools import import_scrobbles
-from backend.music_tools import columns_for, default_visible_fields
+from music_library.database import lastfm_import_summary
+from music_tools.lastfm import import_scrobbles
+from music_tools.track_browser.table import columns_for, default_visible_fields
 
 
 DEFAULT_QUICK_VIEWS = [

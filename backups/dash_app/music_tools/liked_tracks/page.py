@@ -6,8 +6,8 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
-from backend.music_library import DIMENSION_MAX_VALUES, DIMENSION_VALUES
-from backend.music_library.database import (
+from music_library.dimensions import DIMENSION_MAX_VALUES, DIMENSION_VALUES
+from music_library.database import (
     associate_tidal_tracks_with_watched_mix,
     add_tidal_playlist_membership,
     lastfm_track_stats,
@@ -23,14 +23,14 @@ from backend.music_library.database import (
     toggle_tidal_track_dimension,
     watched_mixes,
 )
-from backend.music_tools import auto_tag_tracks
-from backend.music_tools import (
+from music_tools.auto_tagging import auto_tag_tracks
+from music_tools.track_browser.table import (
     columns_for,
     default_visible_fields,
     render_track_table,
     sort_rows,
 )
-from backend.music_tools import content as stopwatch_content
+from music_tools.track_browser.stopwatch import content as stopwatch_content
 
 from .service import (
     collection_artist_summary,
