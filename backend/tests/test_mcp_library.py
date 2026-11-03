@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 from backend.app.services import mcp_library
+from backend.music_tools.mixes.service import Mix
 from backend.music_library.database import connect, initialize
 
 
@@ -182,6 +183,80 @@ def test_liked_collection_is_bounded_and_defaults_to_newest_first(monkeypatch):
     assert captured["sort_direction"] == "desc"
     assert result["ordering"] == "newest_liked_first"
     assert result["next_cursor"] == "1"
+
+
+def test_list_my_mixes_is_bounded_and_uses_cached_metadata(monkeypatch):
+    configure_owner(monkeypatch)
+    mixes = [
+        Mix(
+            folder_name=f"mix-{index:02d}",
+            youtube_url="https://youtu.be/abc123XYZ00",
+            tidal_url="https://tidal.com/playlist/p1",
+            tidal_playlist_id="p1",
+            tidal_playlist_name="djset test",
+            track_count=index,
+            youtube_views=100 + index,
+        )
+        for index in range(60)
+    ]
+    monkeypatch.setattr(mcp_library, "discover_mixes", lambda: list(reversed(mixes)))
+    monkeypatch.setattr(
+        mcp_library,
+        "youtube_video_metadata",
+        lambda: {"abc123XYZ00": {"title": "Cached title", "upload_date": "2026-01-01"}},
+    )
+
+    result = mcp_library.list_my_mixes(USER_ID, limit=500, cursor="5")
+
+    assert len(result["mixes"]) == 50
+    assert result["mixes"][0]["mix_id"] == "mix-05"
+    assert result["mixes"][0]["youtube_title"] == "Cached title"
+    assert result["mixes"][0]["analytics"]["views"] == 105
+    assert result["total"] == 60
+    assert result["next_cursor"] == "55"
+
+
+def test_get_my_mix_returns_bounded_track_page_without_provider_calls(monkeypatch):
+    configure_owner(monkeypatch)
+    mix = Mix(
+        folder_name="drivingtechno",
+        youtube_url="",
+        tidal_url="",
+        tidal_playlist_id="",
+        tidal_playlist_name="",
+        track_count=12,
+    )
+    captured = {}
+    monkeypatch.setattr(
+        mcp_library, "mix_for", lambda mix_id: mix if mix_id == "drivingtechno" else None,
+    )
+    monkeypatch.setattr(mcp_library, "youtube_video_metadata", lambda: {})
+    monkeypatch.setattr(
+        mcp_library,
+        "get_collection_tracks",
+        lambda user_id, kind, collection_id, **kwargs: captured.update(
+            user_id=user_id, kind=kind, collection_id=collection_id, **kwargs,
+        ) or {
+            "tracks": [{"tidal_track_id": "track-1", "bpm": 128, "key": "06A"}],
+            "total": 12,
+            "next_cursor": "1",
+        },
+    )
+
+    result = mcp_library.get_my_mix(
+        USER_ID, "drivingtechno", limit=1, cursor="0"
+    )
+
+    assert captured == {
+        "user_id": USER_ID,
+        "kind": "setlist",
+        "collection_id": "drivingtechno",
+        "limit": 1,
+        "cursor": "0",
+    }
+    assert result["mix"]["mix_id"] == "drivingtechno"
+    assert result["tracks"][0]["bpm"] == 128
+    assert result["track_total"] == 12
 
 
 def test_add_tracks_to_playlist_reuses_provider_first_action(monkeypatch):

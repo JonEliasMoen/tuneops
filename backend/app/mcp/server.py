@@ -16,9 +16,11 @@ from backend.app.services.mcp_profile import profile_for_user
 from backend.app.services.mcp_library import (
     add_tracks_to_playlist as add_library_tracks_to_playlist,
     get_collection_tracks as read_collection_tracks,
+    get_my_mix as read_my_mix,
     get_track as read_track,
     get_track_memberships as read_track_memberships,
     list_collections as read_collections,
+    list_my_mixes as read_my_mixes,
     move_tracks_between_playlists as move_library_tracks_between_playlists,
     remove_tracks_from_collection as remove_library_tracks_from_collection,
     search_tracks as search_library_tracks,
@@ -220,6 +222,43 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
         return read_track_memberships(
             _current_user_id(library_scope), tidal_track_ids
         )
+
+    @server.tool(
+        name="list_my_mixes",
+        annotations=read_annotations,
+        meta=read_security,
+        structured_output=True,
+    )
+    def list_my_mixes(
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        """List a bounded page of My Mixes and their cached analytics."""
+        return read_my_mixes(
+            _current_user_id(library_scope), limit=limit, cursor=cursor
+        )
+
+    @server.tool(
+        name="get_my_mix",
+        annotations=read_annotations,
+        meta=read_security,
+        structured_output=True,
+    )
+    def get_my_mix(
+        mix_id: str,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        """Read one My Mix plus a bounded ordered page of its cached tracks."""
+        result = read_my_mix(
+            _current_user_id(library_scope),
+            mix_id,
+            limit=limit,
+            cursor=cursor,
+        )
+        if result is None:
+            raise ValueError("My Mix was not found")
+        return result
 
     @server.tool(
         name="add_tracks_to_playlist",

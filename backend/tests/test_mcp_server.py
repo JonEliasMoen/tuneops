@@ -37,6 +37,8 @@ def test_profile_tool_contract_is_read_only():
         "list_collections",
         "get_collection_tracks",
         "get_track_memberships",
+        "list_my_mixes",
+        "get_my_mix",
         "add_tracks_to_playlist",
         "remove_tracks_from_collection",
         "move_tracks_between_playlists",

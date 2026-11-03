@@ -15,6 +15,14 @@ from backend.music_library.database import (
     lastfm_track_stats,
     tidal_track_record,
     tidal_track_by_id,
+    youtube_video_metadata,
+)
+from backend.music_tools.mixes.service import (
+    Mix,
+    discover_mixes,
+    mix_for,
+    youtube_thumbnail_url,
+    youtube_video_id,
 )
 
 from .actions import TrackActionError, mutate_playlist_tracks
@@ -412,4 +420,89 @@ def get_track_memberships(user_id: str, track_ids: list[str]) -> dict[str, Any]:
             }
             for track_id in unique_ids
         ]
+    }
+
+
+def _mix_summary(mix: Mix, video_metadata: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    video_id = youtube_video_id(mix.youtube_url) or ""
+    public_metadata = video_metadata.get(video_id, {})
+    return {
+        "mix_id": mix.folder_name,
+        "name": mix.folder_name,
+        "track_count": mix.track_count,
+        "tidal_playlist_id": mix.tidal_playlist_id,
+        "tidal_playlist_name": mix.tidal_playlist_name,
+        "tidal_url": mix.tidal_url,
+        "youtube_url": mix.youtube_url,
+        "youtube_video_id": video_id,
+        "youtube_title": str(public_metadata.get("title") or ""),
+        "youtube_upload_date": str(public_metadata.get("upload_date") or ""),
+        "youtube_cover_url": youtube_thumbnail_url(mix.youtube_url),
+        "analytics": {
+            "views": mix.youtube_views,
+            "watch_minutes": mix.youtube_watch_minutes,
+            "average_view_duration_seconds": mix.youtube_average_view_duration,
+            "average_view_percentage": mix.youtube_average_view_percentage,
+            "likes": mix.youtube_likes,
+            "comments": mix.youtube_comments,
+            "subscribers_gained": mix.youtube_subscribers_gained,
+            "thumbnail_impressions": mix.youtube_thumbnail_impressions,
+            "thumbnail_ctr": mix.youtube_thumbnail_ctr,
+            "fetched_at": mix.youtube_analytics_fetched_at,
+        },
+        "updated_at": mix.updated_at,
+    }
+
+
+def list_my_mixes(
+    user_id: str,
+    *,
+    limit: int = 20,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """Return one bounded page of cached, user-owned My Mix metadata."""
+    _require_library_owner(user_id)
+    page_limit = _bounded_limit(limit)
+    offset = _offset(cursor)
+    mixes = sorted(discover_mixes(), key=lambda item: item.folder_name.casefold())
+    selected = mixes[offset : offset + page_limit]
+    metadata = youtube_video_metadata()
+    return {
+        "mixes": [_mix_summary(mix, metadata) for mix in selected],
+        "total": len(mixes),
+        "next_cursor": (
+            str(offset + len(selected))
+            if offset + len(selected) < len(mixes)
+            else None
+        ),
+    }
+
+
+def get_my_mix(
+    user_id: str,
+    mix_id: str,
+    *,
+    limit: int = 20,
+    cursor: str | None = None,
+) -> dict[str, Any] | None:
+    """Return one exact mix and a bounded ordered page of its cached tracks."""
+    _require_library_owner(user_id)
+    normalized_id = str(mix_id or "").strip()
+    if not normalized_id:
+        raise ValueError("A My Mix ID is required")
+    mix = mix_for(normalized_id)
+    if mix is None:
+        return None
+    tracks = get_collection_tracks(
+        user_id,
+        "setlist",
+        mix.folder_name,
+        limit=limit,
+        cursor=cursor,
+    )
+    return {
+        "mix": _mix_summary(mix, youtube_video_metadata()),
+        "tracks": tracks["tracks"],
+        "track_total": tracks["total"],
+        "next_cursor": tracks["next_cursor"],
     }
