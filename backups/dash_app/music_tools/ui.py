@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
-from music_library.database import tidal_indexed_playlists, watched_mixes
-from music_tools.mixes.service import discover_mixes
+from backend.music_library.database import tidal_indexed_playlists, watched_mixes
+from backend.music_tools.mixes import discover_mixes
 
 
 def sidebar(html: Any, active: str):

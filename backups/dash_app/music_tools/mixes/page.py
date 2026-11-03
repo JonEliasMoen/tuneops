@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from music_library.database import save_setlist_tidal_source, save_setlist_youtube_url
-from music_tools.track_browser import content as track_browser_content
+from backend.music_library.database import save_setlist_tidal_source, save_setlist_youtube_url
+from backend.music_tools import content as track_browser_content
 from .service import (
     MIX_ROOT,
     cover_for,

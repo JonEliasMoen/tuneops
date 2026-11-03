@@ -1,7 +1,7 @@
 [project]
 name = "tuneops"
 version = "0.1.0"
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.12,<=3.15.2"
 dependencies = [
     "cryptography>=46,<51",
     "fastapi>=0.141,<1",
@@ -16,6 +16,8 @@ dependencies = [
     "truststore>=0.10,<1; sys_platform == 'win32'",
     "uvicorn[standard]>=0.41,<1",
 ]
+[tool.setuptools]
+packages = ["backend"]
 
 [tool.vercel]
 entrypoint = "backend.app.main:app"

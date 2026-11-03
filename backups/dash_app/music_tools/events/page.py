@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from music_library.database import event_links, save_event_links
-from music_tools.mixes.service import (
+from backend.music_library.database import event_links, save_event_links
+from backend.music_tools.mixes import (
     fetch_youtube_metadata,
     youtube_thumbnail_url,
     youtube_video_id,

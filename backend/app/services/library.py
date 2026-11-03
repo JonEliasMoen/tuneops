@@ -10,12 +10,12 @@ from typing import Any
 
 import main as engine
 from backend.app.config import integer_setting
-from music_library.collection_query import (
+from backend.music_library.collection_query import (
     collection_relationships,
     collection_track_page,
     collection_track_page_with_stats,
 )
-from music_library.database import (
+from backend.music_library.database import (
     lastfm_track_stats,
     lastfm_month_top_tracks,
     lastfm_year_top_tracks,
@@ -30,7 +30,7 @@ from music_library.database import (
     tidal_watched_mixes_for_tracks,
     watched_mix,
 )
-from music_tools.liked_tracks.service import (
+from backend.music_tools.liked_tracks.service import (
     fetch_artist_tracks,
     fetch_indexed_playlist_tracks,
     fetch_indexed_setlist_tracks,
@@ -39,7 +39,7 @@ from music_tools.liked_tracks.service import (
     fetch_watched_mix_tracks,
     cached_track_rows,
 )
-from music_tools.mixes.service import mix_for
+from backend.music_tools.mixes.service import mix_for
 
 
 COLLECTION_TYPES = {

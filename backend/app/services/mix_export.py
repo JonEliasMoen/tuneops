@@ -7,7 +7,7 @@ from dataclasses import asdict
 from typing import Any
 
 import main as engine
-from music_tools.mixes.service import Mix
+from backend.music_tools.mixes.service import Mix
 
 
 def export_mix_to_spotify(

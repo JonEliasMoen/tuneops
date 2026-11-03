@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from music_library.connection import execute_batch
-from music_library.database import DATABASE_PATH, connect_readonly
+from backend.music_library.connection import execute_batch
+from backend.music_library.database import DATABASE_PATH, connect_readonly
 
 
 class McpProfileNotFound(RuntimeError):

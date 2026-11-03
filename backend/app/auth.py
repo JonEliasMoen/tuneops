@@ -17,8 +17,8 @@ from fastapi import Request
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token
 
-from music_library.credentials import CredentialConfigurationError, current_user_id
-from music_library.identities import IdentityError, bootstrap_google_identity
+from backend.music_library.credentials import CredentialConfigurationError, current_user_id
+from backend.music_library.identities import IdentityError, bootstrap_google_identity
 
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"

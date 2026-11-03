@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from music_library.database import DATABASE_PATH, connect, connect_readonly, initialize
+from backend.music_library.database import DATABASE_PATH, connect, connect_readonly, initialize
 
 
 LOGGER = logging.getLogger("musicsync")

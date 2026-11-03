@@ -7,10 +7,9 @@ from typing import Any
 from urllib.parse import quote
 
 import main as engine
-from music_library.collection_query import collection_relationships
-from music_library.connection import execute_batch
-from music_library.credentials import current_user_id
-from music_library.database import (
+from backend.music_library.collection_query import collection_relationships, execute_batch
+from backend.music_library.credentials import current_user_id
+from backend.music_library.database import (
     DATABASE_PATH,
     connect_readonly,
     lastfm_track_stats,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from music_tools.track_browser import content as track_browser_content
+from backend.music_tools import content as track_browser_content
 
 
 def content(

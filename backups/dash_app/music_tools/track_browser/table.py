@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
-from music_library.dimensions import DIMENSION_LABELS, DIMENSION_VALUES
+from backend.music_library import DIMENSION_LABELS, DIMENSION_VALUES
 
 
 COLUMNS = [
