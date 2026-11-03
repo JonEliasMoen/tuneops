@@ -16,6 +16,8 @@ type WatchedMix = { video_id: string; title: string; channel_name: string; uploa
 type Candidate = Record<string, unknown> & { id: string; label: string; score: number }
 type Pending = { id: number; artist: string; title: string; mix_position: string; mix_title: string; channel_name: string; status: string; candidates: Candidate[] }
 type StagingRow = { row_id: number; raw_line: string; timestamp: string; artist: string; title: string; status: string; matches: Candidate[]; selected_id: string }
+type AutomaticTracklist = { status: 'found' | 'empty' | 'unavailable'; source_url: string; rows: StagingRow[]; tracks_found: number; searchable: number; message: string }
+type WatchedMixCreateResult = WatchedMix & { automatic_tracklist?: AutomaticTracklist }
 type SpotifyExportResult = { spotify_playlist_url?: string; added?: number; unmatched?: number }
 
 function analyticsDuration(seconds?: number | null) {
@@ -100,14 +102,26 @@ export function MixDetailPage() {
 
 export function WatchedMixesPage() {
   const client = useQueryClient()
+  const navigate = useNavigate()
   const mixes = useQuery({ queryKey: ['watched-mixes'], queryFn: () => api<WatchedMix[]>('/watched-mixes') })
   const [url, setUrl] = useState('')
   const add = useMutation({
-    mutationFn: () => api<WatchedMix>('/watched-mixes', { method: 'POST', body: JSON.stringify({ youtube_url: url }) }),
-    onSuccess: () => { setUrl(''); client.invalidateQueries({ queryKey: ['watched-mixes'] }); client.invalidateQueries({ queryKey: ['navigation'] }) },
+    mutationFn: () => api<WatchedMixCreateResult>('/watched-mixes', { method: 'POST', body: JSON.stringify({ youtube_url: url }) }),
+    onSuccess: (saved) => {
+      setUrl('')
+      const automatic = saved.automatic_tracklist
+      saveTemporaryState(`musicsync.watched-mix-staging:${saved.video_id}`, {
+        rows: automatic?.rows ?? [],
+        order: 'artist_title' as const,
+        message: automatic?.message ?? '',
+      })
+      void client.invalidateQueries({ queryKey: ['watched-mixes'] })
+      void client.invalidateQueries({ queryKey: ['navigation'] })
+      navigate(`/watched-mixes/${encodeURIComponent(saved.video_id)}`)
+    },
   })
   return <section><h1>Watched mixes</h1><p>Save mixes where you discovered tracks.</p>
-    <form className="add-mix" onSubmit={(event) => { event.preventDefault(); add.mutate() }}><label>YouTube mix URL<input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://youtube.com/watch?v=…" /></label><button className="primary" disabled={!url || add.isPending}>Add mix</button></form>
+    <form className="add-mix" onSubmit={(event) => { event.preventDefault(); add.mutate() }}><label>YouTube mix URL<input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://youtube.com/watch?v=…" /></label><button className="primary" disabled={!url || add.isPending}>{add.isPending ? 'Adding & checking 1001Tracklists…' : 'Add mix'}</button></form>
     {add.isError ? <div className="error-banner">{add.error.message}</div> : null}
     <div className="media-grid">{mixes.data?.map((mix) => <Link className="media-card" to={`/watched-mixes/${encodeURIComponent(mix.video_id)}`} key={mix.video_id}><img src={mix.cover_url || `/api/v1/watched-mixes/${encodeURIComponent(mix.video_id)}/cover`} alt="" /><div><h2>{mix.title || 'Untitled watched mix'}</h2><p>{[mix.channel_name, mix.upload_date].filter(Boolean).join(' · ')}</p></div></Link>)}</div>
   </section>

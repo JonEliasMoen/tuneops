@@ -1,5 +1,6 @@
 """Adapted from elte0/1001-tracklists-api; see THIRD_PARTY_LICENSE.md."""
 
+import logging
 from urllib.parse import urljoin
 
 from .scraper import (
@@ -11,6 +12,8 @@ from .scraper import (
 )
 
 import re
+
+LOGGER = logging.getLogger("musicsync")
 
 SOURCES = {
 	"1": "beatport",
@@ -79,8 +82,16 @@ class Tracklist:
 			if "/tracklist/" in link["href"]
 		]
 		if len(href) == 0:
+			LOGGER.info("tracklist.search no_results")
 			raise LookupError("No 1001Tracklists result was found for that video")
-		return urljoin(BASE_URL, href[0])
+		selected = urljoin(BASE_URL, href[0])
+		selected_id = selected.split("tracklist/", 1)[1].split("/", 1)[0]
+		LOGGER.info(
+			"tracklist.search result_count=%d selected_tracklist_id=%s",
+			len(href),
+			selected_id,
+		)
+		return selected
 
 	def validate_url(self, url):
 		if is_1001tracklists_url(url):
@@ -91,22 +102,68 @@ class Tracklist:
 		""" Load Tracklist details from url. """
 		soup = get_soup(self.url)
 		left_pane = soup.find("div", id = "csLeft")
-		self.title = soup.title.text
-		self.load_metadata(left_pane)
+		self.title = soup.title.get_text(" ", strip=True) if soup.title else ""
+		self._empty_metadata()
+		if left_pane is not None:
+			try:
+				self.load_metadata(left_pane)
+			except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+				# Optional page metadata must not prevent cue/title import.
+				self._empty_metadata()
+				LOGGER.info(
+					"tracklist.page metadata_incomplete tracklist_id=%s",
+					self.tracklist_id,
+				)
+		else:
+			# The track rows are useful on their own. 1001Tracklists sometimes
+			# returns a partial document without the desktop metadata pane.
+			LOGGER.info(
+				"tracklist.page metadata_missing tracklist_id=%s",
+				self.tracklist_id,
+			)
 		
 		# Load tracks into list
 		self.tracks = []
 		track_divs = soup.find_all('div', {'class': 'tlpItem'}) # Find div objects for tracks
+		LOGGER.info(
+			"tracklist.page parsed tracklist_id=%s track_nodes=%d",
+			self.tracklist_id,
+			len(track_divs),
+		)
+		skipped_tracks = 0
 		for track_div in track_divs:
-			t = Track(track_div) # TODO Get external links?
+			try:
+				t = Track(track_div) # TODO Get external links?
+			except (AttributeError, TypeError, ValueError):
+				skipped_tracks += 1
+				continue
 			if track_div.find('i', {'title': 'mashup linked position'}): # Track part of mashup -> attach to previous entry in tracklist
-				self.tracks[-1].add_subsong(t)
+				if self.tracks:
+					self.tracks[-1].add_subsong(t)
+				else:
+					self.tracks.append(t)
 			else:
 				self.tracks.append(t)
+		if skipped_tracks:
+			LOGGER.info(
+				"tracklist.page skipped_tracks tracklist_id=%s count=%d",
+				self.tracklist_id,
+				skipped_tracks,
+			)
 
 		# Load track numbers and cues (adapted from https://github.com/globalnomad/quickCUE/blob/master/quickCUE.py)
 		self.track_nums = [span.text.strip() for span in soup.find_all('span', id=re.compile('_tracknumber_value'))]
 		self.cues = [div.text.strip() for div in soup.find_all('div', class_='cueValueField')]
+
+	def _empty_metadata(self):
+		"""Initialize optional page metadata when a partial page omits it."""
+		self.date_recorded = None
+		self.interaction_details = {}
+		self.num_tracks = 0
+		self.num_tracks_IDed = 0
+		self.genres = []
+		self.DJs = []
+		self.sources = {}
 
 	def __repr__(self):
 		return "Tracklist(" + self.tracklist_id + ")"
@@ -272,8 +329,14 @@ class Track:
 		""" Initialize Track from bs4.div with itemprop="tracks". """
 
 		# Get basic info
-		self.full_title = soup.find('span', {'class': "trackValue"}).text.strip().replace('\xa0', ' ')
-		self.full_artist, self.title = tuple(self.full_title.split(' - ', maxsplit=1))
+		track_value = soup.find('span', {'class': "trackValue"})
+		if track_value is None:
+			raise ValueError("Track row has no title")
+		self.full_title = track_value.get_text(" ", strip=True).replace('\xa0', ' ')
+		if ' - ' in self.full_title:
+			self.full_artist, self.title = self.full_title.split(' - ', maxsplit=1)
+		else:
+			self.full_artist, self.title = "", self.full_title
 
 		# Get info from metadata
 		meta_data = {meta['itemprop']: meta['content'] for meta in soup.find_all('meta')} # keys: 'name', 'byArtist', 'publisher', 'duration', 'genre', 'url'

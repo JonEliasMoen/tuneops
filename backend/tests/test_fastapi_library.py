@@ -8,7 +8,12 @@ import pytest
 from backend.app.services import library
 from backend.app.api import library as library_api
 from backend.app.schemas import EventMediaUpdate
-from backend.app.schemas import MixUrlsUpdate, WatchedMixRatingUpdate, WatchedMixUpdate
+from backend.app.schemas import (
+    MixUrlsUpdate,
+    WatchedMixCreate,
+    WatchedMixRatingUpdate,
+    WatchedMixUpdate,
+)
 from backend.app.services.navigation_cache import invalidate_navigation_snapshot
 
 
@@ -33,6 +38,73 @@ def _row(track_id: str, title: str, timestamp: float | None, bpm: str = ""):
         "_date_added_sort": timestamp,
         "dimensions": {},
     }
+
+
+def test_add_watched_mix_returns_automatic_staging_rows(monkeypatch):
+    monkeypatch.setattr(library_api, "youtube_video_id", lambda _url: "video-id")
+    monkeypatch.setattr(
+        library_api,
+        "fetch_youtube_metadata",
+        lambda _url: SimpleNamespace(
+            title="Mix title", channel_name="Channel", upload_date="2026-11-03"
+        ),
+    )
+    monkeypatch.setattr(
+        library_api,
+        "save_watched_mix",
+        lambda video_id, youtube_url, **_kwargs: {
+            "video_id": video_id,
+            "youtube_url": youtube_url,
+        },
+    )
+    monkeypatch.setattr(
+        library_api,
+        "fetch_staging_tracklist",
+        lambda _url: {
+            "source_url": "https://www.1001tracklists.com/tracklist/id/mix.html",
+            "rows": [{"row_id": 1000, "title": "Track"}],
+            "tracks_found": 1,
+            "searchable": 1,
+        },
+    )
+
+    result = library_api.create_watched_mix(
+        WatchedMixCreate(youtube_url="https://youtu.be/video-id")
+    )
+
+    assert result["video_id"] == "video-id"
+    assert result["automatic_tracklist"]["status"] == "found"
+    assert result["automatic_tracklist"]["rows"][0]["title"] == "Track"
+
+
+def test_add_watched_mix_survives_automatic_tracklist_failure(monkeypatch):
+    monkeypatch.setattr(library_api, "youtube_video_id", lambda _url: "video-id")
+    monkeypatch.setattr(
+        library_api,
+        "fetch_youtube_metadata",
+        lambda _url: SimpleNamespace(title="", channel_name="", upload_date=""),
+    )
+    monkeypatch.setattr(
+        library_api,
+        "save_watched_mix",
+        lambda video_id, youtube_url, **_kwargs: {
+            "video_id": video_id,
+            "youtube_url": youtube_url,
+        },
+    )
+
+    def fail(_url):
+        raise TimeoutError("1001Tracklists timed out")
+
+    monkeypatch.setattr(library_api, "fetch_staging_tracklist", fail)
+
+    result = library_api.create_watched_mix(
+        WatchedMixCreate(youtube_url="https://youtu.be/video-id")
+    )
+
+    assert result["video_id"] == "video-id"
+    assert result["automatic_tracklist"]["status"] == "unavailable"
+    assert result["automatic_tracklist"]["rows"] == []
 
 
 def test_collection_sort_is_global_and_keeps_missing_dates_last(monkeypatch):

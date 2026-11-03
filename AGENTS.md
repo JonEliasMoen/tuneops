@@ -18,6 +18,8 @@ commit or print secrets from `.env`, `.spotify_cache`, `.tidal_session.json`, or
   `python -m backend.utils.migrate_lastfm_aggregates --database <sqlite-file> --apply`
 - Verified Turso-to-SQLite backup:
   `python -m backend.utils.backup_turso --database <name>`
+- Explicit MCP OAuth broker migration (after backup/app stop):
+  `python -m backend.utils.migrate_mcp_oauth --apply`
 - Direct headless sync: `python main.py --sync`
 - Dependencies are declared in the repository-level `../requirements.txt`.
 
@@ -86,17 +88,19 @@ The working interpreter is:
   existing identity or use email as the authorization key. Legacy signed
   single-user sessions may temporarily resolve through `TUNEOPS_LOCAL_USER_ID`
   until the next login persists the Google identity link.
-- MCP bearer validation lives under `backend/app/mcp`. The private ChatGPT
-  connection uses a dedicated Google OAuth client: set
-  `TUNEOPS_MCP_AUTH_PROVIDER=google`, `GOOGLE_MCP_CLIENT_ID`, and
-  `TUNEOPS_MCP_RESOURCE_URL` (or `TUNEOPS_PUBLIC_URL`). Validate Google's
-  opaque access token through Google's token-info endpoint, require the exact
-  dedicated client ID, expiry, `openid`, and an existing Google
-  `(issuer, subject)` link before exposing the internal user ID to a tool.
-  `openid email profile` are the only OAuth scopes requested from Google;
-  `profile:read`, `library:read`, and future write capabilities are internal
-  TuneOps policy, not invented Google scopes. Keep synchronous Google/Turso
-  validation off the ASGI event loop. Generic JWT IdPs remain supported through
+- MCP bearer validation lives under `backend/app/mcp`. Hosted ChatGPT uses
+  TuneOps as an OAuth broker (`TUNEOPS_MCP_AUTH_PROVIDER=tuneops`) with a
+  predefined `TUNEOPS_MCP_CLIENT_ID` / `TUNEOPS_MCP_CLIENT_SECRET`. TuneOps
+  delegates interactive identity to the existing Google sign-in client, then
+  issues one-hour opaque access tokens and rotating 90-day refresh tokens.
+  Persist only token hashes; keep one-time authorization transactions/codes
+  short-lived and exact-key reads. Register
+  `<TUNEOPS_PUBLIC_URL>/mcp/oauth/google/callback` on the Google sign-in client.
+  `openid email profile` are the only scopes requested from Google;
+  `profile:read`, `library:read`, and `playlists:write` are TuneOps scopes.
+  The older direct-Google bearer mode remains a rollback option but inherits
+  Google's short access-token lifetime. Keep synchronous Google/Turso work off
+  the ASGI event loop. Generic JWT IdPs remain supported through
   `TUNEOPS_MCP_ISSUER_URL`, optional `TUNEOPS_MCP_AUDIENCE`, and optional
   `TUNEOPS_MCP_JWKS_URL`.
 - The MCP HTTP adapter is mounted only when that configuration is complete.
@@ -124,12 +128,15 @@ existing provider/session functions and SQLite functions instead of duplicating
 authentication or storage logic. Browsing, sorting, filtering, and paging are
 SQLite-only. TIDAL refreshes run as explicit background jobs.
 
-The experimental `backend/music_tools/tracklist` package is groundwork for a
-future explicit 1001Tracklists import job. It is not currently an API or UI
-feature. Preserve its third-party MIT notice, perform no network request during
-module import or page load, keep requests bounded by timeouts and exact-host
-validation, and add throttling/caching plus explicit candidate confirmation
-before wiring it into Watched Mixes.
+The `backend/music_tools/tracklist` package powers best-effort 1001Tracklists
+discovery only when a user explicitly adds a watched mix. Preserve its
+third-party MIT notice, perform no network request during module import or page
+load, and keep requests bounded by timeouts and exact-host validation. Convert
+the scraped `Track.cue` and `Track.full_title` values through the existing
+watched-mix parser into temporary frontend staging rows. A lookup miss, timeout,
+captcha, rate limit, or parsing failure must never prevent the watched mix from
+being saved; manual paste remains the fallback. Do not automatically search
+TIDAL until the user presses Search TIDAL.
 Persisted job-status polling is a one-statement read and must use
 `connect_readonly()`; progress/result writes retain explicit transactions.
 Authentication identity resolution is also a one-statement read. Never call

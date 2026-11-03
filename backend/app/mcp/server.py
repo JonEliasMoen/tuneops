@@ -24,6 +24,7 @@ from backend.app.services.mcp_library import (
 
 from .auth import token_verifier_for, tuneops_user_id
 from .config import LIBRARY_READ, PLAYLISTS_WRITE, PROFILE_READ, McpSettings
+from .oauth_provider import TuneOpsOAuthProvider
 
 
 def _current_user_id(required_scope: str | None = None) -> str:
@@ -42,10 +43,14 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
     profile_scope = None if settings.auth_provider == "google" else PROFILE_READ
     library_scope = None if settings.auth_provider == "google" else LIBRARY_READ
     playlists_scope = None if settings.auth_provider == "google" else PLAYLISTS_WRITE
+    oauth_provider = (
+        TuneOpsOAuthProvider(settings) if settings.auth_provider == "tuneops" else None
+    )
     server = MCPServer(
         "TuneOps",
         description="Search and safely manage the connected TuneOps music library.",
-        token_verifier=token_verifier_for(settings),
+        token_verifier=None if oauth_provider else token_verifier_for(settings),
+        auth_server_provider=oauth_provider,
         auth=AuthSettings(
             issuer_url=AnyHttpUrl(settings.issuer_url),
             resource_server_url=AnyHttpUrl(settings.resource_url),
@@ -53,6 +58,13 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
             validate_token_resource=True,
         ),
     )
+
+    if oauth_provider is not None:
+        @server.custom_route(
+            "/oauth/google/callback", methods=["GET"], include_in_schema=False
+        )
+        async def google_oauth_callback(request):
+            return await oauth_provider.google_callback(request)
 
     @server.tool(
         name="get_tuneops_profile",

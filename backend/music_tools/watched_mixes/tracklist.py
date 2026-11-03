@@ -17,6 +17,21 @@ SEPARATOR_RE = re.compile(r"\s+[\-–—]\s+")
 TRAILING_MARKER_RE = re.compile(r"\s+(?:\\?\*)+\s*$")
 VERSUS_RE = re.compile(r"\s+vs\.?\s+", re.IGNORECASE)
 MASHUP_SUFFIX_RE = re.compile(r"\s*\([^)]*\bmashup\b[^)]*\)\s*$", re.IGNORECASE)
+WITH_TRACK_RE = re.compile(r"^w/\s+(.+)$", re.IGNORECASE)
+TRAILING_LABEL_RE = re.compile(r"(?:\s+\[[^\]\r\n]+\])+\s*$")
+TRACKLIST_BACKLINK_RE = re.compile(
+    r"(?:please\s+set\s+a\s+backlink|https?://(?:www\.)?1001\.tl/)",
+    re.IGNORECASE,
+)
+
+
+def _is_1001tracklists_export(lines: list[str]) -> bool:
+    """Recognize the plain-text export without changing generic parsing."""
+    nonempty = [line.strip() for line in lines if line.strip()]
+    if any(TRACKLIST_BACKLINK_RE.search(line) for line in nonempty):
+        return True
+    bracketed = sum(bool(re.match(r"^\[\d{1,2}:\d{2}", line)) for line in nonempty)
+    return bracketed >= 2 and any(WITH_TRACK_RE.match(line) for line in nonempty)
 
 
 def _track_parts(artist: str, title: str) -> list[tuple[str, str]]:
@@ -32,9 +47,15 @@ def _track_parts(artist: str, title: str) -> list[tuple[str, str]]:
 def parse_tracklist(text: str, order: str = "artist_title") -> list[dict[str, Any]]:
     """Parse timestamped lines without creating canonical library records."""
     rows = []
-    for line_number, raw_line in enumerate(str(text or "").splitlines(), start=1):
+    lines = str(text or "").splitlines()
+    is_1001_export = _is_1001tracklists_export(lines)
+    previous_timestamp = ""
+    seen_1001_track = False
+    for line_number, raw_line in enumerate(lines, start=1):
         line = raw_line.strip()
         if not line:
+            continue
+        if is_1001_export and TRACKLIST_BACKLINK_RE.search(line):
             continue
         timestamp_match = TIMESTAMP_RE.match(line)
         timestamp = ""
@@ -42,6 +63,19 @@ def parse_tracklist(text: str, order: str = "artist_title") -> list[dict[str, An
         if timestamp_match:
             timestamp = timestamp_match.group("bracketed") or timestamp_match.group("plain")
             body = timestamp_match.group("body").strip()
+            if is_1001_export:
+                previous_timestamp = timestamp
+                seen_1001_track = True
+        elif is_1001_export:
+            with_track = WITH_TRACK_RE.match(line)
+            if not seen_1001_track or with_track is None:
+                # Export heading, stage notes, and other annotations are not
+                # searchable track rows.
+                continue
+            timestamp = previous_timestamp
+            body = with_track.group(1).strip()
+        if is_1001_export:
+            body = TRAILING_LABEL_RE.sub("", body).strip()
         body = TRAILING_MARKER_RE.sub("", body).strip()
         parts = SEPARATOR_RE.split(body, maxsplit=1)
         if len(parts) != 2 or not all(part.strip() for part in parts):

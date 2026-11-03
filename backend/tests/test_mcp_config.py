@@ -74,3 +74,31 @@ def test_google_mcp_requires_a_dedicated_client_id(monkeypatch):
 
     with pytest.raises(McpConfigurationError, match="GOOGLE_MCP_CLIENT_ID"):
         load_settings()
+
+
+def test_tuneops_oauth_uses_mounted_issuer_and_internal_scopes(monkeypatch):
+    monkeypatch.setenv("TUNEOPS_MCP_AUTH_PROVIDER", "tuneops")
+    monkeypatch.setenv("TUNEOPS_PUBLIC_URL", "https://tuneops.example")
+    monkeypatch.setenv("TUNEOPS_MCP_CLIENT_ID", "chatgpt-client")
+    monkeypatch.setenv("TUNEOPS_MCP_CLIENT_SECRET", "client-secret")
+    monkeypatch.delenv("TUNEOPS_MCP_ISSUER_URL", raising=False)
+
+    settings = load_settings()
+
+    assert settings.auth_provider == "tuneops"
+    assert settings.issuer_url == "https://tuneops.example/mcp/"
+    assert settings.resource_url == "https://tuneops.example/mcp/"
+    assert settings.oauth_client_id == "chatgpt-client"
+    assert settings.advertised_scopes == (
+        "profile:read", "library:read", "playlists:write"
+    )
+
+
+def test_tuneops_oauth_requires_client_credentials(monkeypatch):
+    monkeypatch.setenv("TUNEOPS_MCP_AUTH_PROVIDER", "tuneops")
+    monkeypatch.setenv("TUNEOPS_PUBLIC_URL", "https://tuneops.example")
+    monkeypatch.delenv("TUNEOPS_MCP_CLIENT_ID", raising=False)
+    monkeypatch.delenv("TUNEOPS_MCP_CLIENT_SECRET", raising=False)
+
+    with pytest.raises(McpConfigurationError, match="TUNEOPS_MCP_CLIENT_ID"):
+        load_settings()

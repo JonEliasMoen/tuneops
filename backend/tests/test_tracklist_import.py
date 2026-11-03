@@ -45,3 +45,38 @@ def test_parse_tracklist_keeps_unbalanced_versus_text_as_one_track():
 
     assert row["artist"] == "Artist A vs. Artist B"
     assert row["title"] == "One Song"
+
+
+def test_parse_1001tracklists_export_skips_notes_and_cleans_labels():
+    rows = parse_tracklist(
+        """John Summit & Subtronics @ Festival 2026-09-20
+
+[00:00] John Summit & Subtronics - ID
+[02:34] Walker & Royce ft. Nathan Nicholson - Multiply [EXPERTS ONLY]
+w/ Doechii - Anxiety (Acappella) [TOP DAWG]
+LEVEL UP on Stage
+[1:00:24] Anyma vs. Da Hool - Voices vs. Meet Her (Live Mashup) [LABEL/A]
+
+Please set a backlink to keep the tracklist up-to-date: https://1001.tl/example
+"""
+    )
+
+    assert [(row["timestamp"], row["artist"], row["title"]) for row in rows] == [
+        ("00:00", "John Summit & Subtronics", "ID"),
+        ("02:34", "Walker & Royce ft. Nathan Nicholson", "Multiply"),
+        ("02:34", "Doechii", "Anxiety (Acappella)"),
+        ("1:00:24", "Anyma", "Voices"),
+        ("1:00:24", "Da Hool", "Meet Her"),
+    ]
+    assert rows[0]["status"] == "unresolved"
+    assert all("LABEL" not in row["title"] for row in rows)
+
+
+def test_generic_tracklist_behavior_is_unchanged_by_1001_export_support():
+    rows = parse_tracklist(
+        "Mix heading\n[00:00] Artist - Track [Personal edit]\nw/ Other - Overlay"
+    )
+
+    assert rows[0]["status"] == "invalid"
+    assert rows[1]["title"] == "Track [Personal edit]"
+    assert rows[2]["artist"] == "w/ Other"

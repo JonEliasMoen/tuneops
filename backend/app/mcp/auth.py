@@ -159,6 +159,10 @@ class GoogleTokenVerifier(TokenVerifier):
 def token_verifier_for(settings: McpSettings) -> TokenVerifier:
     if settings.auth_provider == "google":
         return GoogleTokenVerifier(settings)
+    if settings.auth_provider == "tuneops":
+        from .oauth_provider import TuneOpsOAuthProvider
+
+        return TuneOpsOAuthProvider(settings)
     return TuneOpsTokenVerifier(settings)
 
 

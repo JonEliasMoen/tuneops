@@ -44,6 +44,7 @@ from backend.music_tools.mixes.service import (
     youtube_video_id,
 )
 from backend.music_tools.youtube_analytics import service as youtube_service
+from backend.music_tools.tracklist import fetch_staging_tracklist
 
 from ..schemas import (
     ArtistOverviewPage,
@@ -494,6 +495,7 @@ def create_watched_mix(body: WatchedMixCreate) -> dict[str, object]:
     video_id = youtube_video_id(body.youtube_url)
     if not video_id:
         raise HTTPException(status_code=422, detail="Enter a valid YouTube video URL")
+    engine.LOGGER.info("watched_mix.add start video_id=%s", video_id)
     metadata = fetch_youtube_metadata(body.youtube_url)
     saved = save_watched_mix(
         video_id,
@@ -502,8 +504,66 @@ def create_watched_mix(body: WatchedMixCreate) -> dict[str, object]:
         channel_name=metadata.channel_name,
         upload_date=metadata.upload_date,
     )
+    engine.LOGGER.info(
+        "watched_mix.add saved video_id=%s metadata_title=%s metadata_channel=%s",
+        video_id,
+        bool(metadata.title),
+        bool(metadata.channel_name),
+    )
+    automatic_tracklist: dict[str, object]
+    try:
+        engine.LOGGER.info("watched_mix.automatic_tracklist start video_id=%s", video_id)
+        imported = fetch_staging_tracklist(body.youtube_url)
+        rows = list(imported.get("rows") or [])
+        automatic_tracklist = {
+            **imported,
+            "status": "found" if rows else "empty",
+            "message": (
+                f"Imported {len(rows)} staging tracks from 1001Tracklists."
+                if rows
+                else "No usable tracks were found on 1001Tracklists."
+            ),
+        }
+        engine.LOGGER.info(
+            "watched_mix.automatic_tracklist complete video_id=%s status=%s "
+            "tracks_found=%d staging_rows=%d searchable=%d",
+            video_id,
+            automatic_tracklist["status"],
+            int(imported.get("tracks_found") or 0),
+            len(rows),
+            int(imported.get("searchable") or 0),
+        )
+    except Exception as exc:
+        # 1001Tracklists is an optional third-party enrichment. A miss,
+        # changed page, rate limit, captcha, or timeout must never roll back
+        # the watched mix that was already saved above.
+        engine.LOGGER.exception(
+            "watched_mix.automatic_tracklist_unavailable video_id=%s error=%s",
+            video_id,
+            type(exc).__name__,
+        )
+        automatic_tracklist = {
+            "status": "unavailable",
+            "source_url": "",
+            "rows": [],
+            "tracks_found": 0,
+            "searchable": 0,
+            "message": (
+                "No 1001Tracklists tracklist was available. "
+                "You can still paste one manually."
+            ),
+        }
     invalidate_navigation_snapshot()
-    return {**saved, "cover_url": f"/api/v1/watched-mixes/{quote(video_id, safe='')}/cover"}
+    engine.LOGGER.info(
+        "watched_mix.add complete video_id=%s automatic_tracklist_status=%s",
+        video_id,
+        automatic_tracklist["status"],
+    )
+    return {
+        **saved,
+        "cover_url": f"/api/v1/watched-mixes/{quote(video_id, safe='')}/cover",
+        "automatic_tracklist": automatic_tracklist,
+    }
 
 
 @router.get("/watched-mixes/{video_id}")

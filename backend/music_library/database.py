@@ -23,7 +23,7 @@ from backend.music_library.connection import (
 
 ROOT = Path(__file__).resolve().parents[2]
 DATABASE_PATH = Path(os.getenv("MUSICSYNC_DATABASE", ROOT / "music_library.sqlite3"))
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 _INITIALIZED_DATABASES: set[str] = set()
 _INITIALIZE_LOCK = threading.Lock()
 
@@ -36,6 +36,60 @@ CREATE TABLE IF NOT EXISTS app_schema_meta (
     schema_version INTEGER NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS oauth_authorization_transactions (
+    state_hash TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    redirect_uri_provided INTEGER NOT NULL,
+    code_challenge TEXT NOT NULL,
+    scopes_json TEXT NOT NULL,
+    resource TEXT,
+    client_state TEXT,
+    google_nonce TEXT NOT NULL,
+    google_code_verifier TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+    code_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    redirect_uri_provided INTEGER NOT NULL,
+    code_challenge TEXT NOT NULL,
+    scopes_json TEXT NOT NULL,
+    resource TEXT,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS oauth_token_grants (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    scopes_json TEXT NOT NULL,
+    resource TEXT,
+    refresh_token_hash TEXT NOT NULL UNIQUE,
+    refresh_expires_at INTEGER NOT NULL,
+    revoked_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+    token_hash TEXT PRIMARY KEY,
+    grant_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (grant_id) REFERENCES oauth_token_grants(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS oauth_access_tokens_by_grant
+    ON oauth_access_tokens(grant_id);
 
 CREATE TABLE IF NOT EXISTS tracks (
     provider TEXT NOT NULL,

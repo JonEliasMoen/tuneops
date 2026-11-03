@@ -38,6 +38,7 @@ class McpSettings:
     jwks_url: str
     auth_provider: str = "jwt"
     oauth_client_id: str = ""
+    oauth_client_secret: str = ""
 
     @property
     def advertised_scopes(self) -> tuple[str, ...]:
@@ -52,9 +53,9 @@ def load_settings() -> McpSettings:
     google_client_id = os.getenv("GOOGLE_MCP_CLIENT_ID", "").strip()
     configured_provider = os.getenv("TUNEOPS_MCP_AUTH_PROVIDER", "").strip().lower()
     auth_provider = configured_provider or ("google" if google_client_id else "jwt")
-    if auth_provider not in {"google", "jwt"}:
+    if auth_provider not in {"google", "jwt", "tuneops"}:
         raise McpConfigurationError(
-            "TUNEOPS_MCP_AUTH_PROVIDER must be either google or jwt"
+            "TUNEOPS_MCP_AUTH_PROVIDER must be google, jwt, or tuneops"
         )
     if auth_provider == "google" and not google_client_id:
         raise McpConfigurationError(
@@ -64,6 +65,11 @@ def load_settings() -> McpSettings:
     issuer_value = os.getenv("TUNEOPS_MCP_ISSUER_URL", "").strip()
     if auth_provider == "google" and not issuer_value:
         issuer_value = GOOGLE_ISSUER
+    if auth_provider == "tuneops" and not issuer_value:
+        public_url = _https_url(
+            "TUNEOPS_PUBLIC_URL", os.getenv("TUNEOPS_PUBLIC_URL", "")
+        ).rstrip("/")
+        issuer_value = f"{public_url}/mcp/"
     issuer = _https_url("TUNEOPS_MCP_ISSUER_URL", issuer_value)
     explicit_resource = os.getenv("TUNEOPS_MCP_RESOURCE_URL", "").strip()
     if explicit_resource:
@@ -88,13 +94,28 @@ def load_settings() -> McpSettings:
             else f"{issuer.rstrip('/')}/.well-known/jwks.json"
         )
     )
+    oauth_client_id = (
+        (os.getenv("TUNEOPS_MCP_CLIENT_ID") or google_client_id).strip()
+        if auth_provider == "tuneops"
+        else google_client_id
+    )
+    oauth_client_secret = (
+        os.getenv("TUNEOPS_MCP_CLIENT_SECRET")
+        or os.getenv("GOOGLE_MCP_CLIENT_SECRET")
+        or ""
+    ).strip()
+    if auth_provider == "tuneops" and (not oauth_client_id or not oauth_client_secret):
+        raise McpConfigurationError(
+            "TUNEOPS_MCP_CLIENT_ID and TUNEOPS_MCP_CLIENT_SECRET are required"
+        )
     return McpSettings(
         issuer_url=issuer,
         resource_url=resource,
         audience=audience,
         jwks_url=jwks_url,
         auth_provider=auth_provider,
-        oauth_client_id=google_client_id,
+        oauth_client_id=oauth_client_id,
+        oauth_client_secret=oauth_client_secret,
     )
 
 

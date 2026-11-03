@@ -58,3 +58,26 @@ def test_google_mcp_metadata_advertises_only_google_scopes(monkeypatch):
         "https://accounts.google.com"
     ]
     assert metadata.json()["scopes_supported"] == ["openid", "email", "profile"]
+
+
+def test_tuneops_oauth_publishes_authorization_server_metadata(monkeypatch):
+    monkeypatch.setenv("TUNEOPS_MCP_AUTH_PROVIDER", "tuneops")
+    monkeypatch.setenv("TUNEOPS_PUBLIC_URL", "https://tuneops.example")
+    monkeypatch.setenv("TUNEOPS_MCP_CLIENT_ID", "chatgpt-client")
+    monkeypatch.setenv("TUNEOPS_MCP_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("TUNEOPS_AUTH_REQUIRED", "false")
+    monkeypatch.delenv("TUNEOPS_MCP_ISSUER_URL", raising=False)
+
+    with TestClient(create_app(), base_url="https://tuneops.example") as client:
+        protected = client.get("/.well-known/oauth-protected-resource/mcp/")
+        authorization = client.get("/mcp/.well-known/oauth-authorization-server")
+
+    assert protected.status_code == 200
+    assert protected.json()["authorization_servers"] == [
+        "https://tuneops.example/mcp/"
+    ]
+    assert authorization.status_code == 200
+    assert authorization.json()["authorization_endpoint"] == (
+        "https://tuneops.example/mcp/authorize"
+    )
+    assert authorization.json()["token_endpoint"] == "https://tuneops.example/mcp/token"
