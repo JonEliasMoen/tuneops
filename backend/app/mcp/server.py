@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.auth.settings import AuthSettings
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
@@ -54,6 +54,15 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
         auth=AuthSettings(
             issuer_url=AnyHttpUrl(settings.issuer_url),
             resource_server_url=AnyHttpUrl(settings.resource_url),
+            client_registration_options=(
+                ClientRegistrationOptions(
+                    enabled=False,
+                    valid_scopes=[PROFILE_READ, LIBRARY_READ, PLAYLISTS_WRITE],
+                    default_scopes=[PROFILE_READ, LIBRARY_READ],
+                )
+                if oauth_provider is not None
+                else None
+            ),
             required_scopes=[],
             validate_token_resource=True,
         ),

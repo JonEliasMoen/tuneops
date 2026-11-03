@@ -156,6 +156,7 @@ def create_app() -> FastAPI:
                 and (
                     path.startswith("/mcp")
                     or path.startswith("/.well-known/oauth-protected-resource/")
+                    or path.startswith("/.well-known/oauth-authorization-server/")
                 )
             )
         )
@@ -208,6 +209,39 @@ def create_app() -> FastAPI:
         )
         async def mcp_resource_metadata() -> dict[str, object]:
             return resource_metadata
+
+        # RFC 8414 inserts an issuer path after the well-known prefix. Because
+        # TuneOps' authorization-server issuer is `/mcp/`, standards-compliant
+        # clients discover it at `/.well-known/oauth-authorization-server/mcp`.
+        # The MCP SDK also exposes its mount-relative variant under
+        # `/mcp/.well-known/...`; publish both rather than relying on clients to
+        # use the non-standard ordering.
+        if mcp_settings.auth_provider == "tuneops":
+            authorization_metadata = {
+                "issuer": mcp_settings.issuer_url,
+                "authorization_endpoint": (
+                    mcp_settings.issuer_url.rstrip("/") + "/authorize"
+                ),
+                "token_endpoint": mcp_settings.issuer_url.rstrip("/") + "/token",
+                "scopes_supported": list(mcp_settings.advertised_scopes),
+                "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code", "refresh_token"],
+                "token_endpoint_auth_methods_supported": [
+                    "client_secret_post", "client_secret_basic"
+                ],
+                "code_challenge_methods_supported": ["S256"],
+            }
+
+            @app.get(
+                "/.well-known/oauth-authorization-server/mcp",
+                include_in_schema=False,
+            )
+            @app.get(
+                "/.well-known/oauth-authorization-server/mcp/",
+                include_in_schema=False,
+            )
+            async def mcp_authorization_server_metadata() -> dict[str, object]:
+                return authorization_metadata
 
     @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
     async def login_page(error: str = "", return_to: str = "/"):

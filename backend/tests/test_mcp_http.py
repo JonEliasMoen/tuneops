@@ -71,6 +71,9 @@ def test_tuneops_oauth_publishes_authorization_server_metadata(monkeypatch):
     with TestClient(create_app(), base_url="https://tuneops.example") as client:
         protected = client.get("/.well-known/oauth-protected-resource/mcp/")
         authorization = client.get("/mcp/.well-known/oauth-authorization-server")
+        standard_authorization = client.get(
+            "/.well-known/oauth-authorization-server/mcp"
+        )
 
     assert protected.status_code == 200
     assert protected.json()["authorization_servers"] == [
@@ -81,3 +84,9 @@ def test_tuneops_oauth_publishes_authorization_server_metadata(monkeypatch):
         "https://tuneops.example/mcp/authorize"
     )
     assert authorization.json()["token_endpoint"] == "https://tuneops.example/mcp/token"
+    assert authorization.json()["scopes_supported"] == [
+        "profile:read", "library:read", "playlists:write"
+    ]
+    assert "registration_endpoint" not in authorization.json()
+    assert standard_authorization.status_code == 200
+    assert standard_authorization.json() == authorization.json()
