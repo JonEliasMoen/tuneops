@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import secrets
 import time
 import uuid
@@ -41,6 +42,7 @@ CODE_TTL = 10 * 60
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 ALLOWED_SCOPES = (PROFILE_READ, LIBRARY_READ, PLAYLISTS_WRITE)
+LOGGER = logging.getLogger("musicsync")
 
 
 def _now_iso() -> str:
@@ -75,7 +77,9 @@ class TuneOpsOAuthProvider(
         return self.settings.issuer_url.rstrip("/") + "/oauth/google/callback"
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        if not secrets.compare_digest(client_id, self.settings.oauth_client_id):
+        matched = secrets.compare_digest(client_id, self.settings.oauth_client_id)
+        LOGGER.info("mcp.oauth.client_lookup matched=%s", matched)
+        if not matched:
             return None
         import os
 
@@ -105,6 +109,12 @@ class TuneOpsOAuthProvider(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
     ) -> str:
         requested = params.scopes or list(ALLOWED_SCOPES)
+        LOGGER.info(
+            "mcp.oauth.authorize start scopes=%d redirect_allowed=%s resource_present=%s",
+            len(requested),
+            str(params.redirect_uri) in {str(item) for item in (client.redirect_uris or [])},
+            bool(params.resource),
+        )
         if any(scope not in ALLOWED_SCOPES for scope in requested):
             raise AuthorizeError("invalid_scope", "An unsupported TuneOps scope was requested")
         resource = params.resource or self.settings.resource_url
