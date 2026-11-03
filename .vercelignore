@@ -12,7 +12,7 @@
 *.sqlite3.*
 *.log
 *.log.*
-
+*.db
 # Development and archived sources
 .git/
 .vercel/
