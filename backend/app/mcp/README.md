@@ -13,6 +13,9 @@ TIDAL before mirroring the result into TuneOps.
 | `get_track` | `library:read` | Returns metadata and TuneOps information for one exact TIDAL track ID. |
 | `list_collections` | `library:read` | Lists indexed collections, optionally filtered by collection type and name. Includes Playlists, Events, Sources, mixes, and other supported collection types. |
 | `get_collection_tracks` | `library:read` | Returns one bounded page from an exact TuneOps collection, with cursor-based pagination and optional sorting. `kind=liked`, `collection_id=liked` reads Liked Tracks newest-first by default. |
+| `list_followed_charts` | `library:read` | Lists the Beatport charts followed in TuneOps. No provider call. |
+| `get_chart_tracks` | `library:read` | Returns one bounded page from a followed Beatport chart through the shared one-hour L1/Turso cache. |
+| `refresh_chart` | `library:read` | Loads a followed chart page through the same cache; Beatport is contacted only when the exact entry is missing or expired. |
 | `get_track_memberships` | `library:read` | Shows which TuneOps collections contain up to 50 exact TIDAL track IDs. |
 | `list_my_mixes` | `library:read` | Lists a bounded, cursor-paginated page of My Mixes with cached YouTube metadata and analytics. No provider calls. |
 | `get_my_mix` | `library:read` | Returns one exact My Mix and a bounded ordered page of its cached tracks, including BPM, key, tags, and known mix position. |
@@ -59,6 +62,7 @@ https://tuneops.vercel.app/mcp/.well-known/openid-configuration
 ## Limits
 
 - Collection and search results are bounded and cursor-paginated.
+- Chart reads are limited to followed charts and use the shared one-hour Beatport cache; MCP cannot bypass it.
 - Liked Tracks returns at most 50 rows per call and never materializes the complete catalogue.
 - Membership lookup accepts at most 50 track IDs.
 - Tools identify tracks by exact TIDAL IDs rather than title/artist guessing.

@@ -36,6 +36,9 @@ def test_profile_tool_contract_is_read_only():
         "get_track",
         "list_collections",
         "get_collection_tracks",
+        "list_followed_charts",
+        "get_chart_tracks",
+        "refresh_chart",
         "get_track_memberships",
         "list_my_mixes",
         "get_my_mix",
@@ -59,7 +62,12 @@ def test_profile_tool_contract_is_read_only():
     )
     add_tool = next(tool for tool in tools.tools if tool.name == "add_tracks_to_playlist")
     search_tool = next(tool for tool in tools.tools if tool.name == "search_tracks")
+    chart_tools = [
+        tool for tool in tools.tools
+        if tool.name in {"get_chart_tracks", "refresh_chart"}
+    ]
     assert search_tool.annotations.open_world_hint is True
+    assert all(tool.annotations.open_world_hint is True for tool in chart_tools)
     assert add_tool.annotations.read_only_hint is False
     assert add_tool.annotations.destructive_hint is False
     assert add_tool.annotations.idempotent_hint is True

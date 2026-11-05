@@ -20,6 +20,7 @@ from backend.music_library.provider_cache import ProviderResponseCache
 
 EntityType = Literal["genres", "labels", "artists", "tracks"]
 ALLOWED_ENTITY_TYPES = frozenset({"genres", "labels", "artists", "tracks"})
+BEATPORT_CACHE_SECONDS = 3600.0
 LOGGER = logging.getLogger("musicsync")
 PUBLIC_HEADERS = {
     "Accept": "application/json, text/plain, */*",
@@ -314,6 +315,6 @@ class BeatportClient:
 
 
 client = BeatportClient(
-    cache_seconds=900.0,
+    cache_seconds=BEATPORT_CACHE_SECONDS,
     persistent_cache=ProviderResponseCache("beatport"),
 )

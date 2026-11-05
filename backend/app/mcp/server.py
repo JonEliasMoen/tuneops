@@ -16,13 +16,16 @@ from backend.app.services.mcp_profile import profile_for_user
 from backend.app.services.mcp_library import (
     add_tracks_to_playlist as add_library_tracks_to_playlist,
     get_collection_tracks as read_collection_tracks,
+    get_chart_tracks as read_chart_tracks,
     get_my_mix as read_my_mix,
     get_track as read_track,
     get_track_memberships as read_track_memberships,
     list_collections as read_collections,
+    list_followed_charts as read_followed_charts,
     list_my_mixes as read_my_mixes,
     move_tracks_between_playlists as move_library_tracks_between_playlists,
     remove_tracks_from_collection as remove_library_tracks_from_collection,
+    refresh_chart as refresh_library_chart,
     search_tracks as search_library_tracks,
 )
 
@@ -209,6 +212,69 @@ def create_mcp_server(settings: McpSettings) -> MCPServer:
             cursor=cursor,
             sort_field=sort_field,
             sort_direction=sort_direction,
+        )
+
+    @server.tool(
+        name="list_followed_charts",
+        annotations=read_annotations,
+        meta=read_security,
+        structured_output=True,
+    )
+    def list_followed_charts() -> dict[str, object]:
+        """List the Beatport charts followed in TuneOps."""
+        return read_followed_charts(_current_user_id(library_scope))
+
+    chart_annotations = ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+
+    @server.tool(
+        name="get_chart_tracks",
+        annotations=chart_annotations,
+        meta=read_security,
+        structured_output=True,
+    )
+    def get_chart_tracks(
+        chart_type: str,
+        chart_id: str,
+        mode: str = "top",
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        """Read one bounded followed Beatport chart page through the shared cache."""
+        return read_chart_tracks(
+            _current_user_id(library_scope),
+            chart_type,
+            chart_id,
+            mode=mode,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    @server.tool(
+        name="refresh_chart",
+        annotations=chart_annotations,
+        meta=read_security,
+        structured_output=True,
+    )
+    def refresh_chart(
+        chart_type: str,
+        chart_id: str,
+        mode: str = "top",
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        """Load a chart cache-first; only an expired entry contacts Beatport."""
+        return refresh_library_chart(
+            _current_user_id(library_scope),
+            chart_type,
+            chart_id,
+            mode=mode,
+            limit=limit,
+            cursor=cursor,
         )
 
     @server.tool(

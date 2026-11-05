@@ -7,34 +7,20 @@ from backend.music_tools.beatport.beatport import BeatportError, client
 from backend.music_tools.tidal_matching import find_tidal_matches
 
 from ..schemas import BeatportChartReference
-from ..services.library import matched_tidal_tracks_by_isrc
+from ..services.beatport_charts import (
+    CHART_TYPES,
+    SEARCHABLE_TYPES,
+    SETTING_KEY,
+    chart_page,
+    followed_chart_references,
+    valid_chart_reference,
+)
 from ..services.navigation_cache import invalidate_navigation_snapshot
 
 
 router = APIRouter(prefix="/charts", tags=["charts"])
-SETTING_KEY = "beatport_followed_charts"
-SEARCHABLE_TYPES = frozenset({"genres", "labels", "artists"})
-CHART_TYPES = frozenset({*SEARCHABLE_TYPES, "tracks"})
-
-
-def _valid_reference(row: dict[str, object]) -> bool:
-    kind = row.get("type")
-    identifier = row.get("id")
-    return bool(
-        kind in CHART_TYPES
-        and identifier
-        and (kind != "tracks" or identifier == "top")
-    )
-
-
-def _followed() -> list[dict[str, str]]:
-    rows = engine.load_runtime_settings().get(SETTING_KEY) or []
-    return [
-        {"type": str(row.get("type")), "id": str(row.get("id")), "name": str(row.get("name"))}
-        for row in rows
-        if isinstance(row, dict) and _valid_reference(row)
-        and row.get("name")
-    ][:50]
+_valid_reference = valid_chart_reference
+_followed = followed_chart_references
 
 
 def _save(rows: list[dict[str, str]]) -> None:
@@ -154,48 +140,7 @@ def chart_detail(
         raise HTTPException(status_code=404, detail="Chart type was not found.")
     if type == "tracks" and mode != "top":
         raise HTTPException(status_code=400, detail="Top Beatport only supports Top mode.")
-    reference = next((row for row in _followed() if row["type"] == type and row["id"] == entity_id), None)
     try:
-        if mode == "top":
-            # Beatport's Top endpoint has a fixed ten-row provider page. Its
-            # trailing `/100` selects the bounded chart, not the page size.
-            provider_page_size = 10
-            top = client.top_tracks(
-                type,
-                entity_id,
-                page=offset // provider_page_size + 1,
-                chart_size=100,
-            )
-            items = top["items"]
-            for position, item in enumerate(items, start=offset + 1):
-                item["position"] = position
-            has_more = bool(top["has_more"])
-            total = int(top["total"])
-            limit = int(top["per_page"])
-        else:
-            page = offset // limit + 1
-            recent = client.recent_tracks(
-                type, entity_id, page=page, per_page=limit,
-            )
-            items = recent["items"]
-            for position, item in enumerate(items, start=offset + 1):
-                item["position"] = position
-            has_more = bool(recent["has_more"])
-            total = int(recent["total"])
+        return chart_page(type, entity_id, mode=mode, offset=offset, limit=limit)
     except BeatportError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    matches = matched_tidal_tracks_by_isrc([
-        str(item.get("isrc") or "") for item in items
-    ])
-    for item in items:
-        normalized_isrc = str(item.get("isrc") or "").strip().upper().replace("-", "")
-        item["tidal_track"] = matches.get(normalized_isrc)
-    return {
-        "chart": reference or {"type": type, "id": entity_id, "name": entity_id},
-        "mode": mode,
-        "items": items,
-        "offset": offset,
-        "limit": limit,
-        "total": total,
-        "has_more": has_more,
-    }

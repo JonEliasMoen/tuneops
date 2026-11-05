@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from backend.app.api import charts
+from backend.app.services import beatport_charts
 from backend.app.schemas import BeatportChartReference
-from backend.music_tools.beatport.beatport import BeatportClient
+from backend.music_tools.beatport.beatport import (
+    BEATPORT_CACHE_SECONDS,
+    BeatportClient,
+    client,
+)
 from backend.music_library.database import connect, initialize, tidal_tracks_by_isrcs
 
 
@@ -65,6 +70,11 @@ class PersistentCache:
     def set(self, key, value, *, ttl_seconds):
         assert ttl_seconds > 0
         self.values[key] = value
+
+
+def test_shared_beatport_cache_uses_one_hour_ttl():
+    assert BEATPORT_CACHE_SECONDS == 3600.0
+    assert client.cache_seconds == BEATPORT_CACHE_SECONDS
 
 
 def test_type_driven_client_reuses_token_and_cached_response():
@@ -213,14 +223,14 @@ def test_following_chart_uses_existing_settings_document(monkeypatch):
 
 
 def test_chart_detail_attaches_local_tidal_match_by_isrc(monkeypatch):
-    monkeypatch.setattr(charts, "_followed", lambda: [
+    monkeypatch.setattr(beatport_charts, "followed_chart_references", lambda: [
         {"type": "genres", "id": "15", "name": "Progressive House"},
     ])
-    monkeypatch.setattr(charts.client, "top_tracks", lambda *_args, **_kwargs: {
+    monkeypatch.setattr(beatport_charts.client, "top_tracks", lambda *_args, **_kwargs: {
         "items": [{"id": "beatport-1", "title": "Track", "isrc": "GB-ABC-12-34567"}],
         "has_more": False, "total": 1, "page": 1, "per_page": 10,
     })
-    monkeypatch.setattr(charts, "matched_tidal_tracks_by_isrc", lambda values: {
+    monkeypatch.setattr(beatport_charts, "matched_tidal_tracks_by_isrc", lambda values: {
         "GBABC1234567": {"id": "tidal-1", "title": "Track", "tidal_uri": "tidal://track/tidal-1"},
     })
 
@@ -230,7 +240,7 @@ def test_chart_detail_attaches_local_tidal_match_by_isrc(monkeypatch):
 
 
 def test_top_chart_exposes_bounded_second_page(monkeypatch):
-    monkeypatch.setattr(charts, "_followed", lambda: [])
+    monkeypatch.setattr(beatport_charts, "followed_chart_references", lambda: [])
     calls = []
     def top_tracks(*_args, page, chart_size, **_kwargs):
         calls.append((page, chart_size))
@@ -240,8 +250,8 @@ def test_top_chart_exposes_bounded_second_page(monkeypatch):
                       for position in range(start, start + 10)],
             "has_more": page < 10, "total": 100, "page": page, "per_page": 10,
         }
-    monkeypatch.setattr(charts.client, "top_tracks", top_tracks)
-    monkeypatch.setattr(charts, "matched_tidal_tracks_by_isrc", lambda _values: {})
+    monkeypatch.setattr(beatport_charts.client, "top_tracks", top_tracks)
+    monkeypatch.setattr(beatport_charts, "matched_tidal_tracks_by_isrc", lambda _values: {})
 
     result = charts.chart_detail("genres", "15", mode="top", offset=20, limit=10)
 
@@ -253,17 +263,17 @@ def test_top_chart_exposes_bounded_second_page(monkeypatch):
 
 
 def test_global_top_chart_uses_fixed_tracks_reference(monkeypatch):
-    monkeypatch.setattr(charts, "_followed", lambda: [
+    monkeypatch.setattr(beatport_charts, "followed_chart_references", lambda: [
         {"type": "tracks", "id": "top", "name": "Top Beatport"},
     ])
     calls = []
-    monkeypatch.setattr(charts.client, "top_tracks", lambda kind, identifier, **kwargs: (
+    monkeypatch.setattr(beatport_charts.client, "top_tracks", lambda kind, identifier, **kwargs: (
         calls.append((kind, identifier, kwargs)) or {
             "items": [{"id": "1", "position": 1, "isrc": ""}],
             "has_more": True, "total": 100, "page": 1, "per_page": 10,
         }
     ))
-    monkeypatch.setattr(charts, "matched_tidal_tracks_by_isrc", lambda _values: {})
+    monkeypatch.setattr(beatport_charts, "matched_tidal_tracks_by_isrc", lambda _values: {})
 
     result = charts.chart_detail("tracks", "top", mode="top", offset=0, limit=10)
 

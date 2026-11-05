@@ -185,6 +185,115 @@ def test_liked_collection_is_bounded_and_defaults_to_newest_first(monkeypatch):
     assert result["next_cursor"] == "1"
 
 
+def test_list_followed_charts_returns_mcp_paths(monkeypatch):
+    configure_owner(monkeypatch)
+    monkeypatch.setattr(mcp_library, "followed_chart_references", lambda: [
+        {"type": "genres", "id": "12", "name": "Progressive House"},
+        {"type": "tracks", "id": "top", "name": "Top Beatport"},
+    ])
+
+    result = mcp_library.list_followed_charts(USER_ID)
+
+    assert result == {
+        "charts": [
+            {
+                "type": "genres", "id": "12", "name": "Progressive House",
+                "path": "/charts/genres/12",
+            },
+            {
+                "type": "tracks", "id": "top", "name": "Top Beatport",
+                "path": "/charts/tracks/top",
+            },
+        ],
+        "total": 2,
+    }
+
+
+def test_get_chart_tracks_is_bounded_and_uses_shared_chart_page(monkeypatch):
+    configure_owner(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(mcp_library, "followed_chart_references", lambda: [
+        {"type": "genres", "id": "12", "name": "Progressive House"},
+    ])
+    monkeypatch.setattr(
+        mcp_library,
+        "chart_page",
+        lambda chart_type, chart_id, **kwargs: captured.update(
+            chart_type=chart_type, chart_id=chart_id, **kwargs,
+        ) or {
+            "mode": "recent",
+            "items": [{
+                "position": 11,
+                "id": "beatport-1",
+                "title": "Track",
+                "mix": "Extended Mix",
+                "artists": "Artist",
+                "artist_refs": [{"id": "84", "name": "Artist"}],
+                "label": "Colorize",
+                "label_id": "42",
+                "genre": "Progressive House",
+                "genre_id": "12",
+                "isrc": "GBTEST",
+                "tidal_track": {"id": "tidal-1", "title": "Track", "artist": "Artist"},
+            }],
+            "total": 100,
+            "has_more": True,
+        },
+    )
+
+    result = mcp_library.get_chart_tracks(
+        USER_ID, "genres", "12", mode="recent", limit=500, cursor="10"
+    )
+
+    assert captured == {
+        "chart_type": "genres", "chart_id": "12", "mode": "recent",
+        "offset": 10, "limit": 50,
+        "reference": {"type": "genres", "id": "12", "name": "Progressive House"},
+    }
+    assert result["chart"]["path"] == "/charts/genres/12"
+    assert result["tracks"][0]["beatport_track_id"] == "beatport-1"
+    assert result["tracks"][0]["tidal_match"]["tidal_track_id"] == "tidal-1"
+    assert result["next_cursor"] == "11"
+    assert result["cache"] == {
+        "provider": "beatport", "shared": True, "ttl_seconds": 3600,
+    }
+
+
+def test_chart_tools_reject_unfollowed_chart_before_provider_read(monkeypatch):
+    configure_owner(monkeypatch)
+    monkeypatch.setattr(mcp_library, "followed_chart_references", lambda: [])
+    monkeypatch.setattr(
+        mcp_library,
+        "chart_page",
+        lambda *_args, **_kwargs: pytest.fail("unfollowed chart must not be loaded"),
+    )
+
+    with pytest.raises(ValueError, match="not followed"):
+        mcp_library.get_chart_tracks(USER_ID, "genres", "12")
+
+
+def test_refresh_chart_uses_the_same_cache_aware_read(monkeypatch):
+    configure_owner(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(
+        mcp_library,
+        "get_chart_tracks",
+        lambda user_id, chart_type, chart_id, **kwargs: captured.update(
+            user_id=user_id, chart_type=chart_type, chart_id=chart_id, **kwargs,
+        ) or {"cache": {"ttl_seconds": 3600}},
+    )
+
+    result = mcp_library.refresh_chart(
+        USER_ID, "labels", "42", mode="recent", limit=25, cursor="25"
+    )
+
+    assert captured == {
+        "user_id": USER_ID, "chart_type": "labels", "chart_id": "42",
+        "mode": "recent", "limit": 25, "cursor": "25",
+    }
+    assert result["cache"]["ttl_seconds"] == 3600
+
+
 def test_list_my_mixes_is_bounded_and_uses_cached_metadata(monkeypatch):
     configure_owner(monkeypatch)
     mixes = [

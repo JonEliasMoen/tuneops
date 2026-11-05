@@ -122,6 +122,9 @@ The working interpreter is:
   metadata and mirror the playlist membership in TuneOps only after provider
   success. MCP writability follows the TIDAL backing playlist, so TuneOps
   collection types `playlist`, `event`, and `source` are all valid add targets.
+  Beatport MCP tools may list followed charts and read bounded chart pages only.
+  Both `get_chart_tracks` and `refresh_chart` use the normal shared cache path;
+  neither may bypass the cache or load an unfollowed chart.
 
 New HTTP routes belong in `backend/app/api`, use cases in
 `backend/app/services`, and browser UI in `frontend/src/features`. Keep provider
@@ -528,7 +531,7 @@ rematching.
   expiry predicate. Never scan or clean this table on a request path, persist
   anonymous access tokens, or include raw search text in telemetry. Cache
   failure falls back to bounded provider access; provider data remains the
-  authority.
+  authority. Both levels use a one-hour TTL.
 
 ## Watched mixes
 

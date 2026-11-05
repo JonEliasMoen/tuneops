@@ -24,8 +24,10 @@ from backend.music_tools.mixes.service import (
     youtube_thumbnail_url,
     youtube_video_id,
 )
+from backend.music_tools.beatport.beatport import BEATPORT_CACHE_SECONDS
 
 from .actions import TrackActionError, mutate_playlist_tracks
+from .beatport_charts import chart_page, followed_chart_references
 from .library import collection_page, descriptor
 
 
@@ -108,6 +110,126 @@ def _track_summary(row: dict[str, Any]) -> dict[str, Any]:
         "memberships": relationships,
         "tidal_uri": f"tidal://track/{row.get('id')}",
     }
+
+
+def _chart_path(chart_type: str, chart_id: str) -> str:
+    return f"/charts/{quote(chart_type, safe='')}/{quote(chart_id, safe='')}"
+
+
+def _chart_track_summary(row: dict[str, Any]) -> dict[str, Any]:
+    tidal_track = row.get("tidal_track") or {}
+    tidal_track_id = str(tidal_track.get("id") or "")
+    return {
+        "position": int(row.get("position") or 0),
+        "beatport_track_id": str(row.get("id") or ""),
+        "title": str(row.get("title") or ""),
+        "mix": str(row.get("mix") or ""),
+        "artists": list(row.get("artist_refs") or []),
+        "artist_text": str(row.get("artists") or ""),
+        "bpm": row.get("bpm"),
+        "key": str(row.get("key") or ""),
+        "label": {
+            "id": str(row.get("label_id") or ""),
+            "name": str(row.get("label") or ""),
+        },
+        "genre": {
+            "id": str(row.get("genre_id") or ""),
+            "name": str(row.get("genre") or ""),
+        },
+        "isrc": str(row.get("isrc") or ""),
+        "release_date": str(row.get("release_date") or ""),
+        "exclusive": bool(row.get("exclusive")),
+        "tidal_match": (
+            {
+                "tidal_track_id": tidal_track_id,
+                "title": str(tidal_track.get("title") or ""),
+                "artist": str(tidal_track.get("artist") or ""),
+                "tidal_uri": f"tidal://track/{tidal_track_id}",
+            }
+            if tidal_track_id
+            else None
+        ),
+    }
+
+
+def list_followed_charts(user_id: str) -> dict[str, Any]:
+    """Return the deployment owner's bounded followed Beatport chart list."""
+    _require_library_owner(user_id)
+    charts = followed_chart_references()
+    return {
+        "charts": [
+            {**chart, "path": _chart_path(chart["type"], chart["id"])}
+            for chart in charts
+        ],
+        "total": len(charts),
+    }
+
+
+def get_chart_tracks(
+    user_id: str,
+    chart_type: str,
+    chart_id: str,
+    *,
+    mode: str = "top",
+    limit: int = 20,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """Return one bounded followed-chart page through the shared Beatport cache."""
+    _require_library_owner(user_id)
+    normalized_type = str(chart_type or "").strip()
+    normalized_id = str(chart_id or "").strip()
+    followed = next(
+        (
+            chart
+            for chart in followed_chart_references()
+            if chart["type"] == normalized_type and chart["id"] == normalized_id
+        ),
+        None,
+    )
+    if followed is None:
+        raise ValueError("Chart is not followed")
+    offset = _offset(cursor)
+    page = chart_page(
+        normalized_type,
+        normalized_id,
+        mode=mode,
+        offset=offset,
+        limit=_bounded_limit(limit),
+        reference=followed,
+    )
+    items = list(page["items"])
+    return {
+        "chart": {**followed, "path": _chart_path(normalized_type, normalized_id)},
+        "mode": page["mode"],
+        "tracks": [_chart_track_summary(row) for row in items],
+        "total": int(page["total"]),
+        "next_cursor": str(offset + len(items)) if page["has_more"] else None,
+        "cache": {
+            "provider": "beatport",
+            "shared": True,
+            "ttl_seconds": int(BEATPORT_CACHE_SECONDS),
+        },
+    }
+
+
+def refresh_chart(
+    user_id: str,
+    chart_type: str,
+    chart_id: str,
+    *,
+    mode: str = "top",
+    limit: int = 20,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """Load a chart page cache-first; expired entries are refreshed from Beatport."""
+    return get_chart_tracks(
+        user_id,
+        chart_type,
+        chart_id,
+        mode=mode,
+        limit=limit,
+        cursor=cursor,
+    )
 
 
 def search_tracks(
