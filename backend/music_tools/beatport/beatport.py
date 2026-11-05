@@ -15,7 +15,6 @@ body = requests.get("https://api.beatport.com/v4/catalog/genres/?page=1&per_page
 res = body.json()
 
 genres = {v["name"] : v["id"] for v in res["results"]}
-
 toGetGenre = ["Organic House", "Progressive House", "Melodic House & Techno"]
 # QUERIES
 def chartsResponse(query):
@@ -29,6 +28,8 @@ def chartsResponse(query):
         "release_date": [t["new_release_date"] for t in res["results"]],
         "length": [t["length"] for t in res["results"]],
         "artists": [", ".join(a["name"] for a in t["artists"]) for t in res["results"]],
+        "label" : [t["release"]["label"]["name"] for t in res["results"]],
+        "key" : [t["key"]["camelot_letter"]+str(t["key"]["camelot_number"]) for t in res["results"]],
         "isrc" : [t["isrc"] for t in res["results"]],
         "mix" : [t["mix_name"] for t in res["results"]],
         "exclusive" : [t["exclusive"] for t in res["results"]],
