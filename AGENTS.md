@@ -519,9 +519,9 @@ rematching.
   explicit row-button click. Reuse the shared TIDAL catalogue matcher rather
   than coupling Charts to watched-mix parsing. Keep the temporary result in the
   frontend React Query cache for the current SPA session; do not insert it into
-  TuneOps or add a server-side cache. Label cells link to temporary label chart
-  routes without following them; only the explicit Follow action persists a
-  chart.
+  TuneOps or add a server-side cache. Search results and artist, label, and
+  genre cells link to temporary chart routes without following them; only the
+  explicit Follow action persists a chart.
 - Beatport uses a two-level non-authoritative cache: a process-local L1 and the
   independent Turso `provider_response_cache` L2. L2 keys are SHA-256 hashes
   of canonical path/parameters and reads are exact primary-key lookups with an

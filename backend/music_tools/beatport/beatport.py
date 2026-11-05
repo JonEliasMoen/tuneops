@@ -267,6 +267,14 @@ class BeatportClient:
                          for artist in row.get("artists") or []
                          if isinstance(artist, dict) and artist.get("name"))
 
+    @staticmethod
+    def _artist_refs(row: dict[str, Any]) -> list[dict[str, str]]:
+        return [
+            {"id": str(artist["id"]), "name": str(artist["name"]).strip()}
+            for artist in row.get("artists") or []
+            if isinstance(artist, dict) and artist.get("id") and artist.get("name")
+        ]
+
     @classmethod
     def _tracks(cls, rows: list[Any]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
@@ -283,10 +291,12 @@ class BeatportClient:
             result.append({
                 "position": position, "id": str(raw.get("id") or ""),
                 "title": str(raw.get("name") or ""), "mix": str(raw.get("mix_name") or ""),
-                "artists": cls._artists(raw), "bpm": raw.get("bpm"), "key": camelot,
+                "artists": cls._artists(raw), "artist_refs": cls._artist_refs(raw),
+                "bpm": raw.get("bpm"), "key": camelot,
                 "label": str(label.get("name") or ""),
                 "label_id": str(label.get("id") or ""),
                 "genre": str(genre.get("name") or ""),
+                "genre_id": str(genre.get("id") or ""),
                 "isrc": str(raw.get("isrc") or ""),
                 "release_date": str(raw.get("publish_date") or raw.get("new_release_date") or ""),
                 "length_ms": raw.get("length_ms") or raw.get("length"),

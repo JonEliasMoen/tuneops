@@ -101,11 +101,13 @@ export type BeatportChartTrack = {
   title: string
   mix?: string
   artists: string
+  artist_refs?: Array<{ id: string; name: string }>
   bpm?: number | null
   key?: string
   label?: string
   label_id?: string
   genre?: string
+  genre_id?: string
   isrc?: string
   release_date?: string
   exclusive?: boolean

@@ -40,14 +40,17 @@ class Session:
         if url.endswith("tracks/"):
             return Response({"count": 30, "page": "2/2", "per_page": 25, "next": None, "results": [{
                 "id": 11, "name": "Recent Track", "publish_date": "2026-11-05",
-                "artists": [{"name": "Artist"}], "genre": {"name": "Progressive House"},
+                "artists": [{"id": 84, "name": "Artist"}],
+                "genre": {"id": 12, "name": "Progressive House"},
                 "release": {"label": {"name": "Colorize"}},
             }]})
         return Response({"count": 100, "page": kwargs.get("params", {}).get("page", "1"),
                          "per_page": 10, "next": "page-2", "results": [{
             "id": 9, "name": "Track", "mix_name": "Extended Mix", "bpm": 124,
-            "artists": [{"name": "Artist"}], "key": {"camelot_number": 8, "camelot_letter": "A"},
-            "release": {"label": {"id": 42, "name": "Colorize"}}, "genre": {"name": "Progressive House"},
+            "artists": [{"id": 84, "name": "Artist"}],
+            "key": {"camelot_number": 8, "camelot_letter": "A"},
+            "release": {"label": {"id": 42, "name": "Colorize"}},
+            "genre": {"id": 12, "name": "Progressive House"},
             "isrc": "GB-TEST", "new_release_date": "2026-11-01",
         }]})
 
@@ -128,6 +131,9 @@ def test_track_chart_normalizes_camelot_and_metadata():
     assert rows[0]["label"] == "Colorize"
     assert rows[0]["label_id"] == "42"
     assert rows[0]["artists"] == "Artist"
+    assert rows[0]["artist_refs"] == [{"id": "84", "name": "Artist"}]
+    assert rows[0]["genre"] == "Progressive House"
+    assert rows[0]["genre_id"] == "12"
     assert result["total"] == 100
     assert result["has_more"] is True
     assert result["page"] == 2
