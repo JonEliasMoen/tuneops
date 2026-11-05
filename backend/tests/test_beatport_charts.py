@@ -144,40 +144,34 @@ def test_global_top_chart_uses_tracks_top_path():
     assert session.calls[1][1]["params"] == {"page": "3"}
 
 
-def test_explicit_tidal_isrc_lookup_returns_temporary_play_target(monkeypatch):
-    class Artist:
-        id = "artist-1"
-        name = "Artist"
+def test_explicit_tidal_title_artist_lookup_returns_best_temporary_match(monkeypatch):
+    tidal_session = object()
+    monkeypatch.setattr(charts.engine, "tidal_client", lambda interactive=False: tidal_session)
+    monkeypatch.setattr(
+        charts,
+        "find_tidal_matches",
+        lambda engine, session, row, limit: [{
+            "id": "tidal-123",
+            "title": "Found Track",
+            "artist": "Artist",
+            "isrc": "GBABC1234567",
+            "score": 10,
+        }] if engine is charts.engine and session is tidal_session and row == {
+            "artist": "Artist", "title": "Track",
+        } and limit == 5 else [],
+    )
 
-    class Track:
-        id = "tidal-123"
-        name = "Found Track"
-        version = ""
-        artists = [Artist()]
-        artist = Artist()
-        album = None
-        duration = 180
-        bpm = 124
-        key = "A"
-        key_scale = "MINOR"
-        isrc = "GBABC1234567"
-
-    class Tidal:
-        def get_tracks_by_isrc(self, isrc):
-            assert isrc == "GBABC1234567"
-            return [Track()]
-
-    monkeypatch.setattr(charts.engine, "tidal_client", lambda interactive=False: Tidal())
-
-    result = charts.search_tidal_by_isrc("gb-abc-12-34567")
+    result = charts.search_tidal_by_artist_and_track(" Artist ", " Track ")
 
     assert result == {
-        "isrc": "GBABC1234567",
+        "query": "Artist - Track",
         "track": {
             "id": "tidal-123",
             "title": "Found Track",
             "artist": "Artist",
             "tidal_uri": "tidal://track/tidal-123",
+            "isrc": "GBABC1234567",
+            "match_score": 10,
         },
     }
 

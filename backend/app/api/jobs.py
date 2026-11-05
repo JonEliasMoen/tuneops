@@ -11,7 +11,7 @@ from backend.music_library.database import lastfm_import_summary
 from backend.music_library.database import pending_track, pending_tracks, update_pending_track_candidates, watched_mix
 from backend.music_tools.lastfm.service import import_scrobbles
 from backend.music_tools.mixes.service import discover_tidal_mixes, import_tidal_setlist, mix_for
-from backend.music_tools.watched_mixes.tracklist import find_tidal_matches
+from backend.music_tools.tidal_matching import find_tidal_matches
 
 from ..config import number_setting
 from ..jobs import JOBS

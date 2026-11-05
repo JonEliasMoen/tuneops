@@ -4,12 +4,11 @@ from fastapi import APIRouter, HTTPException, Query
 
 import main as engine
 from backend.music_tools.beatport.beatport import BeatportError, client
-from backend.music_tools.liked_tracks.service import track_row
+from backend.music_tools.tidal_matching import find_tidal_matches
 
 from ..schemas import BeatportChartReference
 from ..services.library import matched_tidal_tracks_by_isrc
 from ..services.navigation_cache import invalidate_navigation_snapshot
-from backend.music_tools.watched_mixes.tracklist import find_tidal_matches
 
 
 router = APIRouter(prefix="/charts", tags=["charts"])

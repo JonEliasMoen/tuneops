@@ -3,3 +3,6 @@ Jon core:
 nvm i figures it out myself
 
 - the track row gets fatter with the "play in tidal button" and its annoying. please fix it
+
+# NEWS
+mcp and sidebar page. from all the followed lists display tracks that was released within the current week. i.e /top but with a query parameter on released date. if possible.
