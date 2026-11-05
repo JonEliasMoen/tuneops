@@ -53,16 +53,16 @@ def releasesResponse(query):
 def search(query):
     body = requests.get(f'https://api.beatport.com/v4/catalog/search/?q={query}', headers={"Authorization": "Bearer "+auth})
     return body.json()
-def searchType(type, query):
+def searchType(type, query): # type=genres,labels,artists,sub-genres,tracks
     body = requests.get(f'https://api.beatport.com/v4/catalog/search/?q={query}&type={type}', headers={"Authorization": "Bearer "+auth})
     return body.json()[type]
 
-def findId(type, query):
+def findId(type, query): # type=genres,labels,artists,sub-genres,tracks
     return searchType(type, query)[0]["id"]
 
 # LIST RESPONSES
 # type=genres,labels,artists,sub-genres,tracks
-def getChart(type, id, n=10):
+def getChart(type, id, n=10): # nmax=100
     return chartsResponse(f'https://api.beatport.com/v4/catalog/{type}/{id}/top/{n}')
 def getReleases(type, id):
     return releasesResponse(f'https://api.beatport.com/v4/catalog/{type}/{id}/releases')
