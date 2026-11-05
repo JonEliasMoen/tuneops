@@ -3,6 +3,8 @@ import pandas as pd
 import requests_cache
 
 # https://gist.github.com/kemo/506ca56e35b9506ee5233bc4d773c1c8
+# Notice how it has pagination. I default is 25 per page. do not over request!
+
 session = requests_cache.CachedSession('demo_cache')
 
 body = requests.get("https://www.beatport.com/api/auth/refresh-anon-token?")
