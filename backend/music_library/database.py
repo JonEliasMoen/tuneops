@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS app_schema_meta (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS provider_response_cache (
+    provider TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (provider, cache_key)
+);
+
 CREATE TABLE IF NOT EXISTS oauth_authorization_transactions (
     state_hash TEXT PRIMARY KEY,
     client_id TEXT NOT NULL,
@@ -3419,6 +3428,45 @@ def tidal_tracks_by_ids(
             unique_ids,
         ).fetchall()
     return {str(row["id"]): dict(row) for row in rows}
+
+
+def tidal_tracks_by_isrcs(
+    isrcs: list[str], path: Path = DATABASE_PATH,
+) -> dict[str, dict[str, Any]]:
+    """Match a bounded provider result page to cached TIDAL tracks by ISRC.
+
+    Prefer the lowest stable TIDAL ID when the catalogue contains duplicate
+    editions with the same ISRC. Callers must keep this page-sized; it is not a
+    replacement for a schema-level ISRC index if the local catalogue grows
+    beyond the normal interactive-query budget.
+    """
+    normalized = list(dict.fromkeys(
+        str(value or "").strip().upper().replace("-", "")
+        for value in isrcs
+        if str(value or "").strip()
+    ))[:100]
+    if not normalized:
+        return {}
+    initialize(path)
+    placeholders = ",".join("?" for _ in normalized)
+    with connect_readonly(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT provider_track_id AS id, title, artist, remix, album,
+                   album_art_url, duration_seconds, bpm, musical_key,
+                   key_scale, release_year AS year, isrc
+            FROM tracks
+            WHERE provider='tidal'
+              AND UPPER(REPLACE(isrc, '-', '')) IN ({placeholders})
+            ORDER BY CAST(provider_track_id AS INTEGER), provider_track_id
+            """,
+            normalized,
+        ).fetchall()
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = str(row["isrc"] or "").strip().upper().replace("-", "")
+        result.setdefault(key, dict(row))
+    return result
 
 
 def tidal_liked_membership_ids(

@@ -25,6 +25,7 @@ from backend.music_library.database import (
     tidal_artists_for_tracks,
     tidal_dimensions_for_tracks,
     tidal_indexed_playlist,
+    tidal_tracks_by_isrcs,
     tidal_playlists_for_tracks,
     tidal_setlists_for_tracks,
     tidal_watched_mixes_for_tracks,
@@ -167,6 +168,43 @@ def _attach_related(rows: list[dict[str, Any]], collection: dict[str, str]) -> N
         )
         row["tidal_uri"] = f"tidal://track/{track_id}"
         row["_source_order"] = source_order
+
+
+def matched_tidal_tracks_by_isrc(isrcs: list[str]) -> dict[str, dict[str, Any]]:
+    """Return inspector-ready cached TIDAL tracks for a bounded ISRC page."""
+    records = tidal_tracks_by_isrcs(isrcs)
+    if not records:
+        return {}
+    keyed_rows = [
+        (isrc, cached_track_rows([record])[0])
+        for isrc, record in records.items()
+    ]
+    rows = [row for _isrc, row in keyed_rows]
+    track_ids = [str(row.get("id") or "") for row in rows]
+    relationships = collection_relationships(track_ids)
+    username = str(engine.load_runtime_settings().get("lastfm_username", "") or "").strip()
+    listening = lastfm_track_stats(username, track_ids) if username else {}
+    result: dict[str, dict[str, Any]] = {}
+    for source_order, (isrc, row) in enumerate(keyed_rows):
+        track_id = str(row.get("id") or "")
+        related = relationships.get(track_id, {})
+        row["playlists"] = related.get("playlists", [])
+        row["events"] = related.get("events", [])
+        row["sources"] = related.get("sources", [])
+        row["mixes"] = related.get("mixes", [])
+        row["djmi"] = related.get("djmi", [])
+        row["artists"] = related.get("artists", [])
+        row["dimensions"] = related.get("dimensions", {})
+        stats = listening.get(track_id, {})
+        row["play_count"] = int(stats["play_count"]) if stats.get("play_count") is not None else None
+        row["last_played"] = (
+            datetime.fromtimestamp(int(stats["last_played"])).strftime("%Y-%m-%d %H:%M")
+            if stats.get("last_played") else ""
+        )
+        row["tidal_uri"] = f"tidal://track/{track_id}"
+        row["_source_order"] = source_order
+        result[isrc] = row
+    return result
 
 
 def _matches(row: dict[str, Any], filters: dict[str, Any]) -> bool:

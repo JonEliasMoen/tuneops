@@ -55,6 +55,12 @@ class NavigationResponse(BaseModel):
     groups: list[NavigationGroup]
 
 
+class BeatportChartReference(BaseModel):
+    type: Literal["genres", "labels", "artists", "tracks"]
+    id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=200)
+
+
 class CollectionDescriptor(BaseModel):
     type: CollectionType
     id: str = ""

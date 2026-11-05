@@ -88,6 +88,30 @@ export type Navigation = {
   groups: Array<{ id: string; label: string; items: NavigationItem[] }>
 }
 
+export type BeatportChartReference = {
+  type: 'genres' | 'labels' | 'artists' | 'tracks'
+  id: string
+  name: string
+  slug?: string
+}
+
+export type BeatportChartTrack = {
+  position: number
+  id: string
+  title: string
+  mix?: string
+  artists: string
+  bpm?: number | null
+  key?: string
+  label?: string
+  label_id?: string
+  genre?: string
+  isrc?: string
+  release_date?: string
+  exclusive?: boolean
+  tidal_track?: Track | null
+}
+
 export type PublicSettings = {
   dark_mode: boolean
   tags_collapsed_by_default: boolean
