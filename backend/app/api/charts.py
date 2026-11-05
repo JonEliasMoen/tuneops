@@ -9,6 +9,7 @@ from backend.music_tools.liked_tracks.service import track_row
 from ..schemas import BeatportChartReference
 from ..services.library import matched_tidal_tracks_by_isrc
 from ..services.navigation_cache import invalidate_navigation_snapshot
+from backend.music_tools.watched_mixes.tracklist import find_tidal_matches
 
 
 router = APIRouter(prefix="/charts", tags=["charts"])
@@ -60,45 +61,58 @@ def search_charts(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+
+
 @router.get("/tidal-match")
-def search_tidal_by_isrc(
-    isrc: str = Query(min_length=8, max_length=20),
+def search_tidal_by_artist_and_track(
+    artists: str = Query(..., description="Artist name(s)", max_length=100),
+    track: str = Query(..., description="Track title", max_length=100)
 ) -> dict[str, object]:
-    """Resolve one Beatport ISRC on explicit user action without indexing it."""
-    normalized = "".join(character for character in isrc.upper() if character.isalnum())
-    if len(normalized) != 12:
-        raise HTTPException(status_code=422, detail="A valid 12-character ISRC is required.")
+    """Søker på TIDAL ved å bruke separate artist- og spor-paramtere, og returnerer beste treff basert på vektet poengsum."""
+    
+    # 1. Forbered input-data i tråd med forventet 'row'-format
+    row_input = {
+        "artist": artists.strip(),
+        "title": track.strip()
+    }
+    
+    if not row_input["artist"] or not row_input["title"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Både 'artists' og 'track' må inneholde tekst."
+        )
+
     try:
         session = engine.tidal_client(interactive=False)
-        candidates = list(session.get_tracks_by_isrc(normalized) or [])
+        # 2. Kall den importerte match-funksjonen som håndterer søk og poengberegning
+        candidates = find_tidal_matches(engine=engine, session=session, row=row_input, limit=5)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        engine.LOGGER.warning("beatport.tidal_isrc_lookup_failed error=%s", type(exc).__name__)
-        raise HTTPException(status_code=502, detail="TIDAL search is temporarily unavailable.") from exc
-    exact = next(
-        (
-            track for track in candidates
-            if "".join(
-                character for character in str(getattr(track, "isrc", "") or "").upper()
-                if character.isalnum()
-            ) == normalized
-        ),
-        candidates[0] if candidates else None,
-    )
-    if exact is None:
-        raise HTTPException(status_code=404, detail="No TIDAL track was found for this ISRC.")
-    row = track_row(exact)
-    track_id = str(row.get("id") or "")
+        engine.LOGGER.warning("beatport.tidal_search_failed error=%s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="TIDAL-søk er midlertidig utilgjengelig.") from exc
+
+    # 3. Sjekk om vi fikk noen treff overhodet
+    if not candidates:
+        raise HTTPException(status_code=404, detail="Ingen TIDAL-spor ble funnet for dette søket.")
+
+    # Siden find_tidal_matches sorterer etter høyest score, er det første elementet det beste treffet
+    best_match = candidates[0]
+    track_id = str(best_match.get("id") or "")
+    
     if not track_id:
-        raise HTTPException(status_code=404, detail="No playable TIDAL track was found for this ISRC.")
+        raise HTTPException(status_code=404, detail="Fant ingen spillbare TIDAL-spor for dette søket.")
+
+    # 4. Returner strukturert data i henhold til API-kontrakten
     return {
-        "isrc": normalized,
+        "query": f"{row_input['artist']} - {row_input['title']}",
         "track": {
             "id": track_id,
-            "title": str(row.get("title") or ""),
-            "artist": str(row.get("artist") or ""),
+            "title": str(best_match.get("title") or ""),
+            "artist": str(best_match.get("artist") or ""),
             "tidal_uri": f"tidal://track/{track_id}",
+            "isrc": str(best_match.get("isrc") or ""),
+            "match_score": best_match.get("score", 0)  # Inkludert for enklere debugging av treffsikkerhet
         },
     }
 

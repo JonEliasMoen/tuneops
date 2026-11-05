@@ -25,11 +25,11 @@ const RECENT_PAGE_SIZE = 25
 const TOP_PAGE_SIZE = 10
 const GLOBAL_TOP: BeatportChartReference = { type: 'tracks', id: 'top', name: 'Top Beatport' }
 
-function TidalSearchCell({ isrc }: { isrc: string }) {
-  const normalized = isrc.trim().toUpperCase().replaceAll('-', '')
+function TidalSearchCell({ query }: { query: BeatportChartTrack }) {
+  const normalized = `${query.artists} - ${query.title}`
   const lookup = useQuery({
     queryKey: ['beatport-tidal-isrc', normalized],
-    queryFn: () => api<TidalLookupResponse>(`/charts/tidal-match${queryString({ isrc: normalized })}`),
+    queryFn: () => api<TidalLookupResponse>(`/charts/tidal-match${queryString({ artists: query.artists, track: query.title })}`),
     enabled: false,
     staleTime: Infinity,
     gcTime: Infinity,
@@ -140,7 +140,7 @@ export function ChartDetailPage({ forcedType }: { forcedType?: 'labels' } = {}) 
     {detail.data ? <div className="library-layout">
       <div className="track-list-pane"><div ref={tableRef} className="track-table-wrap chart-table-wrap" tabIndex={0} onKeyDown={navigation.onKeyDown} aria-label="Beatport chart table"><table className="track-table"><thead><tr><th>#</th><th>Track</th><th>Artist</th><th>BPM</th><th>Key</th><th>Label</th><th>Genre</th><th>TIDAL</th><th>Released</th></tr></thead><tbody>{rows.map((item) => {
         const key = `${item.id}:${item.position}`
-        return <tr key={key} className={navigation.selectedKey === key ? 'selected' : ''} aria-selected={navigation.selectedKey === key} onClick={() => navigation.setSelectedKey(key)}><td>{item.position}</td><td>{item.title}{item.mix ? <small className="chart-mix-name"> {item.mix}</small> : null}</td><td>{item.artists || '—'}</td><td className="numeric">{item.bpm ?? '—'}</td><td><span className="camelot-key" data-key={item.key}>{item.key || '—'}</span></td><td>{item.label_id && item.label ? <Link className="chart-label-link" to={`/charts/label/${encodeURIComponent(item.label_id)}`} state={{ chartName: item.label }} onClick={(event) => { event.stopPropagation(); sessionStorage.setItem('musicsync.react.focus-track-list', `/charts/label/${encodeURIComponent(item.label_id!)}`) }}>{item.label}</Link> : item.label || '—'}</td><td>{item.genre || '—'}</td><td>{item.tidal_track ? <span className="status-badge matched">Matched</span> : <TidalSearchCell isrc={item.isrc ?? ''} />}</td><td>{item.release_date || '—'}</td></tr>
+        return <tr key={key} className={navigation.selectedKey === key ? 'selected' : ''} aria-selected={navigation.selectedKey === key} onClick={() => navigation.setSelectedKey(key)}><td>{item.position}</td><td>{item.title}{item.mix ? <small className="chart-mix-name"> {item.mix}</small> : null}</td><td>{item.artists || '—'}</td><td className="numeric">{item.bpm ?? '—'}</td><td><span className="camelot-key" data-key={item.key}>{item.key || '—'}</span></td><td>{item.label_id && item.label ? <Link className="chart-label-link" to={`/charts/label/${encodeURIComponent(item.label_id)}`} state={{ chartName: item.label }} onClick={(event) => { event.stopPropagation(); sessionStorage.setItem('musicsync.react.focus-track-list', `/charts/label/${encodeURIComponent(item.label_id!)}`) }}>{item.label}</Link> : item.label || '—'}</td><td>{item.genre || '—'}</td><td>{item.tidal_track ? <span className="status-badge matched">Matched</span> : <TidalSearchCell query={item} />}</td><td>{item.release_date || '—'}</td></tr>
       })}</tbody></table><div ref={sentinelRef} className="load-sentinel">{detail.hasNextPage ? <button type="button" className="quiet" disabled={detail.isFetchingNextPage} onClick={() => void detail.fetchNextPage()}>{detail.isFetchingNextPage ? 'Loading more…' : 'Load more'}</button> : null}</div></div></div>
       <Inspector track={selectedTrack} selectedTracks={selectedTrack ? [selectedTrack] : []} queryKey={['beatport-inspector-track', type, id]} collapsedDefault={settings.data?.tags_collapsed_by_default ?? true} collectionType="search" collectionId="beatport" />
     </div> : null}
