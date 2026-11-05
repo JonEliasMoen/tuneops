@@ -18,6 +18,8 @@ commit or print secrets from `.env`, `.spotify_cache`, `.tidal_session.json`, or
   `python -m backend.utils.migrate_lastfm_aggregates --database <sqlite-file> --apply`
 - Verified Turso-to-SQLite backup:
   `python -m backend.utils.backup_turso --database <name>`
+- Idempotent provider-cache table setup:
+  `python -m backend.utils.migrate_provider_cache --apply`
 - Explicit MCP OAuth broker migration (after backup/app stop):
   `python -m backend.utils.migrate_mcp_oauth --apply`
 - Direct headless sync: `python main.py --sync`
@@ -487,6 +489,44 @@ rematching.
 - The reused track browser must retain its full mouse and keyboard behavior on
   `/mixes/<folder>` routes, including row selection, Up/Down navigation,
   sidebar focus, and the Actions panel.
+
+## Beatport charts
+
+- `/charts` is the explicit Beatport discovery page. Users may search for and
+  follow genres, labels, or artists, and may follow the fixed global **Top
+  Beatport** chart; followed references are stored as the bounded
+  `settings.beatport_followed_charts` list and appear under the collapsible
+  **Charts** sidebar group. This feature requires no database schema migration.
+- Preserve the type-driven provider client: search, top tracks, and releases
+  accept an allowlisted entity type plus ID. Do not duplicate one function per
+  genre/label/artist endpoint.
+- Never contact Beatport while assembling navigation, importing the module, or
+  loading unrelated pages. Provider calls occur only on Charts search/detail
+  routes, have strict timeouts, and fail without affecting the local library.
+- Each followed chart switches between Beatport's bounded Top list and the
+  paginated Recent track feed. Recent genre/label filters use the provider's
+  singular `genre_id` / `label_id` parameters and `next` pagination. Append
+  25-row pages through the shared infinite-scroll interaction pattern.
+- Beatport's `/top/100` suffix selects a 100-track chart; it does not request
+  100 response rows. Top responses are provider-paginated in fixed 10-row
+  pages through `page` and `next`. Preserve that distinction and expose the
+  effective 10-row page size to infinite-query callers.
+- Match each returned chart page to already-indexed TIDAL tracks by normalized
+  ISRC only. Never search TIDAL while browsing Beatport. A match may reuse the
+  standard selected-track inspector and native TIDAL link; an unmatched row
+  remains provider-only.
+- An unmatched Beatport row may search TIDAL by ISRC only after an explicit
+  row-button click. Keep the temporary ISRC-to-track result in the frontend
+  React Query cache for the current SPA session; do not insert it into TuneOps
+  or add a server-side cache. Label cells link to temporary label chart routes
+  without following them; only the explicit Follow action persists a chart.
+- Beatport uses a two-level non-authoritative cache: a process-local L1 and the
+  independent Turso `provider_response_cache` L2. L2 keys are SHA-256 hashes
+  of canonical path/parameters and reads are exact primary-key lookups with an
+  expiry predicate. Never scan or clean this table on a request path, persist
+  anonymous access tokens, or include raw search text in telemetry. Cache
+  failure falls back to bounded provider access; provider data remains the
+  authority.
 
 ## Watched mixes
 

@@ -10,6 +10,7 @@ import { SettingsPage } from '../features/settings/SettingsPage'
 import { MyMixSettingsPage } from '../features/settings/MyMixSettingsPage'
 import { MixDetailPage, MixesPage, PendingPage, WatchedMixDetailPage, WatchedMixesPage } from '../features/mixes/MixPages'
 import { ArtistsPage } from '../features/artists/ArtistsPage'
+import { ChartDetailPage, ChartsOverviewPage } from '../features/charts/ChartsPages'
 
 function TrackRoute({ type }: { type: 'liked' | 'playlist' | 'event' | 'source' | 'setlist' | 'watched_mix' | 'artist' | 'search' | 'history' }) {
   const { id = '' } = useParams()
@@ -32,6 +33,9 @@ export function App() {
         <Route path="/liked-tracks" element={<TrackRoute type="liked" />} />
         <Route path="/search" element={<TrackRoute type="search" />} />
         <Route path="/artists" element={<ArtistsPage />} />
+        <Route path="/charts" element={<ChartsOverviewPage />} />
+        <Route path="/charts/label/:id" element={<ChartDetailPage forcedType="labels" />} />
+        <Route path="/charts/:type/:id" element={<ChartDetailPage />} />
         <Route path="/history/:id" element={<TrackRoute type="history" />} />
         <Route path="/artists/:id" element={<TrackRoute type="artist" />} />
         <Route path="/playlists/:id" element={<TrackRoute type="playlist" />} />

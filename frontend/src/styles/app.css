@@ -128,6 +128,17 @@ a { color: inherit; }
 .artist-overview-search label { width: min(460px, 100%); }
 .artist-overview-table { height: calc(100vh - 220px); }
 .artist-overview-table th.numeric .sort-button { text-align: right; }
+.charts-page { display: grid; gap: 16px; }
+.chart-search-panel { display: grid; grid-template-columns: 180px minmax(260px, 560px); gap: 10px; align-items: end; padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.chart-result-list { display: grid; gap: 7px; }
+.chart-result-list article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.chart-result-list article div { display: grid; gap: 3px; }
+.chart-result-list small, .chart-mix-name { color: var(--muted); }
+.chart-label-link { color: var(--text); text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent); text-underline-offset: 3px; }
+.chart-label-link:hover { color: var(--accent); }
+.chart-search-tidal, .chart-tidal-link { padding: 4px 7px; min-height: 0; font-size: 11px; white-space: nowrap; }
+.followed-charts { display: grid; gap: 10px; margin-top: 5px; }
+.chart-table-wrap { height: calc(100vh - 175px); }
 .track-table-wrap { height: calc(100vh - 245px); min-height: 370px; overflow: auto; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--panel) 94%, black); scrollbar-gutter: stable; }
 .track-table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 13px; }
 .track-table th { position: sticky; z-index: 3; top: 0; padding: 0; background: color-mix(in srgb, var(--panel-3) 90%, black); text-align: left; }

@@ -131,6 +131,33 @@ def navigation() -> NavigationResponse:
             )
         )
     settings = engine.load_runtime_settings()
+    chart_items = [
+        NavigationItem(
+            id=f"{row.get('type')}:{row.get('id')}",
+            label=str(row.get("name") or row.get("id") or "Chart"),
+            path=_path(f"charts/{row.get('type')}", str(row.get("id") or "")),
+            kind="beatport_chart",
+            icon="♬",
+        )
+        for row in settings.get("beatport_followed_charts", [])
+        if isinstance(row, dict)
+        and row.get("type") in {"genres", "labels", "artists", "tracks"}
+        and row.get("id")
+        and (row.get("type") != "tracks" or row.get("id") == "top")
+    ][:50]
+    groups.append(
+        NavigationGroup(
+            id="charts",
+            label="Charts",
+            items=[
+                NavigationItem(
+                    id="overview", label="Overview", path="/charts",
+                    kind="beatport_chart_overview", icon="◫",
+                ),
+                *chart_items,
+            ],
+        )
+    )
     history_limit = max(1, min(100, int(settings.get("history_top_tracks", 20) or 20)))
     history_username = str(settings.get("lastfm_username", "") or "")
     history = lastfm_history_navigation(history_username, history_limit)
